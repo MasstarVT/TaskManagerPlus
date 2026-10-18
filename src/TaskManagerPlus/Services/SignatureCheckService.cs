@@ -471,6 +471,8 @@ public static class SignatureCheckService
     private const int CertERevoked = unchecked((int)0x800B010C);
     private const int CryptERevocationOffline = unchecked((int)0x80092013);
     private const int TrustETimeStamp = unchecked((int)0x80096005);
+    private const int TrustEBadDigest = unchecked((int)0x80096010);
+    private const int TrustEExplicitDistrust = unchecked((int)0x800B0111);
 
     private static bool IsNoSignatureCode(int hr) =>
         hr == TrustENoSignature || hr == TrustESubjectFormUnknown || hr == TrustEProviderUnknown;
@@ -480,9 +482,12 @@ public static class SignatureCheckService
     /// as one UntrustedChain bucket rather than four separate enum values, since the actionable
     /// takeaway ("don't trust this chain") is the same for all four. Revocation checking is off by
     /// default (see class remarks), so CERT_E_REVOKED only appears here when a caller explicitly
-    /// used a revocation-checking path.</summary>
+    /// used a revocation-checking path. TRUST_E_BAD_DIGEST (the file was modified after signing)
+    /// and TRUST_E_EXPLICIT_DISTRUST (the signer is in the Disallowed store) share the bucket -
+    /// left as Unknown, a tampered signed binary was never flagged.</summary>
     private static bool IsUntrustedChainCode(int hr) =>
-        hr == TrustESubjectNotTrusted || hr == CertEUntrustedRoot || hr == CertEChaining || hr == CertERevoked;
+        hr == TrustESubjectNotTrusted || hr == CertEUntrustedRoot || hr == CertEChaining || hr == CertERevoked
+        || hr == TrustEBadDigest || hr == TrustEExplicitDistrust;
 
     // ---- WinVerifyTrust P/Invoke ------------------------------------------------------------
     // Verified against real embedded-signed (explorer.exe/svchost.exe -> S_OK), catalog-signed-

@@ -110,5 +110,12 @@ public static class AutorunsBaselineService
         return result;
     }
 
-    private static string KeyOf(AutorunEntry e) => $"{e.Category}␟{e.Location}␟{e.Name}";
+    private static string KeyOf(AutorunEntry e)
+    {
+        // Active Setup's re-run suffix is state, not identity (and older baselines saved it).
+        string name = e.Name ?? string.Empty;
+        if (name.EndsWith(AutorunsService.ActiveSetupRerunSuffix, StringComparison.Ordinal))
+            name = name[..^AutorunsService.ActiveSetupRerunSuffix.Length];
+        return $"{e.Category}␟{e.Location}␟{name}";
+    }
 }

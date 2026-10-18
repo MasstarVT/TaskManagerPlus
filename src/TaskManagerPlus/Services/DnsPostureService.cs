@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Management;
+using Microsoft.Win32;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -46,13 +47,13 @@ public static class DnsPostureService
         try
         {
             using var searcher = new ManagementObjectSearcher(
-                "SELECT Description, DHCPEnabled, DNSServerSearchOrder FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE");
+                "SELECT Description, DHCPEnabled, DNSServerSearchOrder, SettingID FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE");
             foreach (ManagementObject mo in searcher.Get())
             {
                 string desc = mo["Description"] as string ?? "Unknown adapter";
                 bool dhcp = mo["DHCPEnabled"] is bool b && b;
                 var servers = (mo["DNSServerSearchOrder"] as string[])?.ToList() ?? new List<string>();
-                bool staticOnDhcp = dhcp && servers.Count > 0;
+                bool staticOnDhcp = dhcp && HasStaticNameServer(mo["SettingID"] as string);
                 adapters.Add(new DnsAdapterInfo(desc, dhcp, servers, staticOnDhcp));
             }
         }
@@ -72,6 +73,23 @@ public static class DnsPostureService
             NrptRules = nrptRules,
             NrptCmdletAvailable = nrptAvailable,
         };
+    }
+
+    /// <summary>DNSServerSearchOrder also lists the servers DHCP handed out, so it can't tell a
+    /// pinned server from a leased one. A manually set server lives in the interface's Tcpip
+    /// NameServer value (the leased ones are in DhcpNameServer); unreadable means "not flagged".</summary>
+    private static bool HasStaticNameServer(string? settingId)
+    {
+        if (string.IsNullOrWhiteSpace(settingId)) return false;
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{settingId}");
+            return key?.GetValue("NameServer") is string nameServer && !string.IsNullOrWhiteSpace(nameServer);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>Medium finding, mirrored to the Security tab, for the specific

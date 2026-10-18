@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using TaskManagerPlus.Models;
 
@@ -48,73 +49,88 @@ public static class BitsTransferService
     private static List<BitsTransferRow> ParseVerboseOutput(string output)
     {
         var rows = new List<BitsTransferRow>();
-        string? displayName = null, jobId = null, typeText = null, stateText = null, owner = null, priorityText = null;
-        long bytesTransferred = 0, bytesTotal = 0;
-        bool haveJob = false;
-
-        void Flush()
+        foreach (var job in ParseJobBlocks(output))
         {
-            if (!haveJob) return;
+            var f = job.Fields;
+            long bytesTransferred = 0, bytesTotal = 0;
+            if (f.TryGetValue("BYTES", out var bytes) && BytesRegex.Match(bytes) is { Success: true } m)
+            {
+                long.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out bytesTransferred);
+                long.TryParse(m.Groups[2].Value, NumberStyles.None, CultureInfo.InvariantCulture, out bytesTotal);
+            }
             rows.Add(new BitsTransferRow
             {
-                DisplayName = displayName ?? "(unnamed)",
-                JobId = jobId ?? string.Empty,
-                TypeText = typeText ?? "Unknown",
-                StateText = stateText ?? "Unknown",
-                Owner = owner ?? string.Empty,
-                PriorityText = priorityText ?? "Unknown",
+                DisplayName = f.TryGetValue("DISPLAY", out var display) ? display : "(unnamed)",
+                JobId = f.TryGetValue("GUID", out var guid) ? guid : string.Empty,
+                TypeText = f.TryGetValue("TYPE", out var type) ? type : "Unknown",
+                StateText = f.TryGetValue("STATE", out var state) ? state : "Unknown",
+                Owner = f.TryGetValue("OWNER", out var owner) ? owner : string.Empty,
+                PriorityText = f.TryGetValue("PRIORITY", out var priority) ? priority : "Unknown",
                 BytesTransferred = bytesTransferred,
                 BytesTotal = bytesTotal,
             });
-            displayName = jobId = typeText = stateText = owner = priorityText = null;
-            bytesTransferred = bytesTotal = 0;
-            haveJob = false;
         }
-
-        foreach (var raw in output.Split('\n'))
-        {
-            string line = raw.Trim().TrimEnd('\r');
-            if (line.Length == 0) continue;
-
-            if (line.StartsWith("DISPLAY:", StringComparison.OrdinalIgnoreCase))
-            {
-                Flush();
-                haveJob = true;
-                string rest = line["DISPLAY:".Length..].Trim();
-                displayName = rest.Trim('\'', '"');
-                continue;
-            }
-            if (!haveJob) continue;
-
-            if (StartsWithLabel(line, "JOB ID", out string v1)) jobId = v1;
-            else if (StartsWithLabel(line, "TYPE", out string v2)) typeText = v2;
-            else if (StartsWithLabel(line, "STATE", out string v3)) stateText = v3;
-            else if (StartsWithLabel(line, "OWNER", out string v4)) owner = v4;
-            else if (StartsWithLabel(line, "PRIORITY", out string v5)) priorityText = v5;
-            else if (line.Contains("BYTES", StringComparison.OrdinalIgnoreCase))
-            {
-                var m = BytesRegex.Match(line);
-                if (m.Success)
-                {
-                    long.TryParse(m.Groups[1].Value, out bytesTransferred);
-                    long.TryParse(m.Groups[2].Value, out bytesTotal);
-                }
-            }
-        }
-        Flush();
         return rows;
     }
 
-    private static bool StartsWithLabel(string line, string label, out string value)
+    /// <summary>One job from `bitsadmin /list /verbose`: its LABEL: value fields plus the
+    /// "remote -> local" pairs listed under JOB FILES.</summary>
+    internal sealed class BitsJobBlock
     {
-        int idx = line.IndexOf(':');
-        if (idx < 0 || !line[..idx].Trim().Equals(label, StringComparison.OrdinalIgnoreCase))
+        public Dictionary<string, string> Fields { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<(string Remote, string Local)> Files { get; } = new();
+    }
+
+    // bitsadmin packs several fields onto one line ("GUID: {..} DISPLAY: 'name'", "TYPE: DOWNLOAD
+    // STATE: SUSPENDED OWNER: PC\user", "PRIORITY: NORMAL FILES: 0 / 1 BYTES: 0 / UNKNOWN"), so a
+    // value runs until the next known label rather than to the end of the line. Upper-case only,
+    // as bitsadmin prints them; "JOB ID" is accepted as a GUID alias.
+    private static readonly Regex JobLabelRegex = new(
+        @"(?<![A-Za-z0-9])(GUID|JOB ID|DISPLAY|TYPE|STATE|OWNER|PRIORITY|FILES|BYTES|CREATION TIME|MODIFICATION TIME|COMPLETION TIME|ACL FLAGS|NOTIFY INTERFACE|NOTIFICATION FLAGS|RETRY DELAY|NO PROGRESS TIMEOUT|ERROR COUNT|ERROR FILE|ERROR CODE|ERROR CONTEXT|PROXY USAGE|PROXY LIST|PROXY BYPASS LIST|DESCRIPTION|JOB FILES|NOTIFICATION COMMAND LINE)\s*:",
+        RegexOptions.Compiled);
+
+    private static readonly Regex JobFileRegex = new(@"(\S+)\s+->\s+(.+)$", RegexOptions.Compiled);
+
+    /// <summary>A GUID label (or a DISPLAY label when the current job already has one) starts a
+    /// new job, so both the one-line "GUID: .. DISPLAY: .." shape and a DISPLAY-first shape parse.
+    /// Text before the first job (the banner) is ignored.</summary>
+    internal static List<BitsJobBlock> ParseJobBlocks(string output)
+    {
+        var jobs = new List<BitsJobBlock>();
+        BitsJobBlock? current = null;
+
+        foreach (var raw in output.Split('\n'))
         {
-            value = string.Empty;
-            return false;
+            string line = raw.TrimEnd('\r').Trim();
+            if (line.Length == 0) continue;
+
+            var labels = JobLabelRegex.Matches(line);
+            var lineFields = new List<(string Label, string Value)>();
+            for (int i = 0; i < labels.Count; i++)
+            {
+                int valueStart = labels[i].Index + labels[i].Length;
+                int valueEnd = i + 1 < labels.Count ? labels[i + 1].Index : line.Length;
+                string label = labels[i].Groups[1].Value == "JOB ID" ? "GUID" : labels[i].Groups[1].Value;
+                lineFields.Add((label, line[valueStart..valueEnd].Trim().Trim('\'', '"').Trim()));
+            }
+
+            bool startsJob = lineFields.Any(lf => lf.Label == "GUID")
+                || (lineFields.Any(lf => lf.Label == "DISPLAY") && (current is null || current.Fields.ContainsKey("DISPLAY")));
+            if (startsJob)
+            {
+                current = new BitsJobBlock();
+                jobs.Add(current);
+            }
+            if (current is null) continue;
+
+            foreach (var (label, value) in lineFields)
+                if (value.Length > 0) current.Fields.TryAdd(label, value); // first occurrence wins
+
+            // JOB FILES rows: "<bytes> / <total> <STATE> <remote> -> <local>" (ERROR FILE uses the same arrow).
+            if (line.Contains(" -> ", StringComparison.Ordinal) && JobFileRegex.Match(line) is { Success: true } fm)
+                current.Files.Add((fm.Groups[1].Value, fm.Groups[2].Value.Trim()));
         }
-        value = line[(idx + 1)..].Trim();
-        return true;
+        return jobs;
     }
 
     /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout

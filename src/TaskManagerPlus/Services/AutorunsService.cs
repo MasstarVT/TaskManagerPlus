@@ -238,10 +238,16 @@ public static class AutorunsService
             flagged = !raw.Trim().Equals("explorer.exe", StringComparison.OrdinalIgnoreCase);
             reason = "Shell is normally the bare value \"explorer.exe\"; a different value replaces the entire desktop shell for every user who signs in.";
         }
+        else if (valueName == "VmApplet")
+        {
+            // Windows 10/11 ship VmApplet set to the Performance Options > Virtual memory dialog.
+            flagged = !raw.Trim().Equals("SystemPropertiesPerformance.exe /pagefile", StringComparison.OrdinalIgnoreCase);
+            reason = "VmApplet is normally \"SystemPropertiesPerformance.exe /pagefile\" (the virtual-memory settings dialog); a different value runs something else from this logon hook.";
+        }
         else
         {
-            // Taskman/System/VmApplet/AppSetup/GinaDLL: any non-empty value at all is unusual on
-            // modern Windows - these are Windows NT-era hooks with almost no legitimate use left.
+            // Taskman/System/AppSetup/GinaDLL: any non-empty value at all is unusual on modern
+            // Windows - these are Windows NT-era hooks with almost no legitimate use left.
             flagged = true;
             reason = $"{valueName} is normally empty on Windows 10/11; a value here is an old (or unusual) logon hook worth a manual check.";
         }
@@ -695,21 +701,24 @@ public static class AutorunsService
             if (key is null) return;
 
             string location = $@"HKLM\{KnownDllsKeyPath}";
-            var expectedDllDirectory = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32");
+            var windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
 
             foreach (var valueName in key.GetValueNames())
             {
-                if (valueName.Equals("DllDirectory", StringComparison.OrdinalIgnoreCase))
+                // DllDirectory32 (older builds) is the WOW64 twin of DllDirectory and points at SysWOW64.
+                bool isDllDirectory32 = valueName.Equals("DllDirectory32", StringComparison.OrdinalIgnoreCase);
+                if (isDllDirectory32 || valueName.Equals("DllDirectory", StringComparison.OrdinalIgnoreCase))
                 {
                     var dllDirectory = key.GetValue(valueName) as string;
                     if (string.IsNullOrWhiteSpace(dllDirectory)) continue;
 
+                    var expectedDllDirectory = System.IO.Path.Combine(windowsDir, isDllDirectory32 ? "SysWOW64" : "System32");
                     var expanded = Environment.ExpandEnvironmentVariables(dllDirectory);
-                    var loc = $@"{location}\DllDirectory";
+                    var loc = $@"{location}\{valueName}";
                     var entry = new AutorunEntry
                     {
                         Category = "KnownDLLs",
-                        Name = "DllDirectory",
+                        Name = valueName,
                         RawCommand = dllDirectory,
                         ResolvedPath = expanded,
                         Publisher = GetPublisher(expanded),
@@ -724,10 +733,10 @@ public static class AutorunsService
                         findings.Add(new SecurityFinding
                         {
                             Severity = FindingSeverity.High,
-                            Title = "KnownDLLs DllDirectory is non-standard",
-                            Reason = $"DllDirectory is normally \"{expectedDllDirectory}\"; this system has \"{dllDirectory}\" instead, which changes where every KnownDLLs entry actually loads from.",
+                            Title = $"KnownDLLs {valueName} is non-standard",
+                            Reason = $"{valueName} is normally \"{expectedDllDirectory}\"; this system has \"{dllDirectory}\" instead, which changes where every KnownDLLs entry actually loads from.",
                             Path = loc,
-                            WhatDisablingDoes = "Restoring DllDirectory to the stock System32 path (or deleting the value) is safest if you don't recognize the change. Quick flag, not a verdict.",
+                            WhatDisablingDoes = $"Restoring {valueName} to the stock \"{expectedDllDirectory}\" path (or deleting the value) is safest if you don't recognize the change. Quick flag, not a verdict.",
                             RelatedEntry = entry,
                         });
                     }
@@ -752,7 +761,8 @@ public static class AutorunsService
                 };
                 items.Add(mainEntry);
 
-                if (!nameWithoutExtension.Equals(valueName, StringComparison.OrdinalIgnoreCase))
+                // Stock names carry a '*' or '_' prefix ("*kernel32", "_wow64cpu", "_xtajit").
+                if (!nameWithoutExtension.Equals(valueName.TrimStart('*', '_'), StringComparison.OrdinalIgnoreCase))
                 {
                     findings.Add(new SecurityFinding
                     {
@@ -1125,7 +1135,7 @@ public static class AutorunsService
     // netsh.exe and parses its text output - the same known-tool-over-raw-interop tradeoff
     // ScheduledTaskService/NetworkDiagnosticsService already take elsewhere in this app. The
     // output's exact structure varies by Windows version, so this is a defensive best-effort scan:
-    // every line shaped like "Path : <file>.dll" is taken as one catalog entry; if none match that
+    // every line shaped like "Provider Path : <file>.dll" is taken as one catalog entry; if none match that
     // shape, every distinct .dll path mentioned anywhere in the output is used instead.
     private static void AddWinsockLspItems(List<AutorunEntry> items, List<SecurityFinding> findings)
     {
@@ -1134,22 +1144,24 @@ public static class AutorunsService
             string output = RunCapturedSync("netsh.exe", "winsock show catalog", TimeSpan.FromSeconds(10));
             if (string.IsNullOrWhiteSpace(output)) return;
 
+            // netsh prints "Provider Path:   %SystemRoot%\system32\mswsock.dll" - an unexpanded
+            // environment-variable path, not a drive-letter one.
             var dllPaths = new List<string>();
             foreach (var rawLine in output.Split('\n'))
             {
                 var trimmed = rawLine.Trim().TrimEnd('\r');
-                var match = System.Text.RegularExpressions.Regex.Match(trimmed, @"^Path\s*:\s*(.+\.dll)\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                if (match.Success) dllPaths.Add(match.Groups[1].Value.Trim());
+                var match = System.Text.RegularExpressions.Regex.Match(trimmed, @"^(?:Provider\s+)?Path\s*:\s*(.+\.dll)\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (match.Success) dllPaths.Add(Environment.ExpandEnvironmentVariables(match.Groups[1].Value.Trim()));
             }
 
             if (dllPaths.Count == 0)
             {
-                // Structure didn't match what we expected - fall back to scraping every distinct
-                // .dll path mentioned anywhere in the output.
+                // Structure didn't match what we expected (e.g. localized labels) - fall back to
+                // scraping every distinct drive-letter or %VAR% .dll path mentioned anywhere.
                 foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
-                    output, @"[A-Za-z]:\\[^\r\n:]*?\.dll", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    output, @"(?:[A-Za-z]:|%[^%\s]+%)\\[^\r\n:]*?\.dll", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                 {
-                    dllPaths.Add(m.Value.Trim());
+                    dllPaths.Add(Environment.ExpandEnvironmentVariables(m.Value.Trim()));
                 }
             }
 
@@ -1379,6 +1391,8 @@ public static class AutorunsService
             if (servicesKey is null) return;
 
             var standardDriverDir = System.IO.Path.Combine(Environment.SystemDirectory, "drivers");
+            // Inbox and PnP drivers are commonly loaded straight from their driver-store package.
+            var driverStoreDir = System.IO.Path.Combine(Environment.SystemDirectory, "DriverStore", "FileRepository") + System.IO.Path.DirectorySeparatorChar;
 
             foreach (var serviceName in servicesKey.GetSubKeyNames())
             {
@@ -1406,7 +1420,9 @@ public static class AutorunsService
                     bool exists = !string.IsNullOrWhiteSpace(resolved) && System.IO.File.Exists(resolved);
                     string status = exists ? SignatureCheckService.GetStatus(resolved) : "Unknown";
                     string? resolvedDir = exists ? System.IO.Path.GetDirectoryName(resolved) : null;
-                    bool outsideStandardPath = exists && resolvedDir is not null && !resolvedDir.Equals(standardDriverDir, StringComparison.OrdinalIgnoreCase);
+                    bool outsideStandardPath = exists && resolvedDir is not null
+                        && !resolvedDir.Equals(standardDriverDir, StringComparison.OrdinalIgnoreCase)
+                        && !resolvedDir.StartsWith(driverStoreDir, StringComparison.OrdinalIgnoreCase);
 
                     var location = $@"HKLM\{keyPath}\{serviceName}\ImagePath";
                     var entry = new AutorunEntry
@@ -1729,9 +1745,20 @@ public static class AutorunsService
                     };
                     items.Add(entry);
 
+                    // Only a CommandLine/ActiveScript consumer runs code; the other consumer classes
+                    // log/mail. Windows itself ships one binding (SCM Event Log Filter ->
+                    // NTEventLogEventConsumer "SCM Event Log Consumer"), which raised a High on every PC.
+                    int classEnd = consumerKey.IndexOf('.');
+                    string consumerClass = classEnd > 0 ? consumerKey[..classEnd] : consumerKey;
+                    bool runsCode = consumerClass.Equals("CommandLineEventConsumer", StringComparison.OrdinalIgnoreCase)
+                        || consumerClass.Equals("ActiveScriptEventConsumer", StringComparison.OrdinalIgnoreCase);
+                    bool isStockScmBinding = consumerKey.Equals("NTEventLogEventConsumer.Name=\"SCM Event Log Consumer\"", StringComparison.OrdinalIgnoreCase)
+                        && filterKey.Equals("__EventFilter.Name=\"SCM Event Log Filter\"", StringComparison.OrdinalIgnoreCase);
+                    if (isStockScmBinding) continue;
+
                     findings.Add(new SecurityFinding
                     {
-                        Severity = FindingSeverity.High,
+                        Severity = runsCode ? FindingSeverity.High : FindingSeverity.Low,
                         Title = "WMI permanent event subscription bound",
                         Reason = $"Fileless WMI persistence is invisible to Task Manager entirely; a bound CommandLine/ActiveScript consumer runs its command/script whenever its filter's WQL condition fires. Filter: {filterDesc}. Consumer: {consumerDesc}.",
                         Path = location,
@@ -1757,6 +1784,10 @@ public static class AutorunsService
         int idx = wmiRefPath.LastIndexOf(':');
         return idx >= 0 ? wmiRefPath[(idx + 1)..] : wmiRefPath;
     }
+
+    /// <summary>Display-only state, so AutorunsBaselineService strips it from the diff key - otherwise
+    /// a component's re-run state flipping reads as one entry Removed and another Added.</summary>
+    internal const string ActiveSetupRerunSuffix = " (will re-run at next logon)";
 
     // #823: Active Setup stub commands - StubPath runs once per user the first time that user logs
     // on after the component's Version differs from what's recorded in that user's own HKCU mirror,
@@ -1795,7 +1826,7 @@ public static class AutorunsService
 
                     var friendlyName = sub?.GetValue(null) as string;
                     var displayName = string.IsNullOrWhiteSpace(friendlyName) ? subName : friendlyName;
-                    if (willRerun) displayName += " (will re-run at next logon)";
+                    if (willRerun) displayName += ActiveSetupRerunSuffix;
 
                     var location = $@"HKLM\{keyPath}\{subName}\StubPath";
                     var entry = BuildEntry("Active Setup", displayName, stubPath, location);
@@ -2540,12 +2571,12 @@ public static class AutorunsService
     }
 
     // #832: BITS transfer job audit - `bitsadmin.exe /list /allusers /verbose` output isn't a
-    // documented stable contract, so this parses leniently: each job's block is delimited by the
-    // next "DISPLAY:" line (bitsadmin always starts a job's block with that field), then every
-    // "LABEL: value" line within a block is captured into a dictionary and only the fields this
-    // method actually wants are read back out - an unexpected/reordered/missing field degrades
-    // that one field rather than the whole row. bitsadmin.exe is a deprecated tool (absent on some
-    // newer Windows builds/SKUs) - wrapped in one broad try/catch, degrades to empty on failure.
+    // documented stable contract, so this parses leniently via BitsTransferService.ParseJobBlocks
+    // (bitsadmin packs several "LABEL: value" pairs per line, starting each job with
+    // "GUID: {..} DISPLAY: 'name'") and only the fields this method actually wants are read back
+    // out - an unexpected/reordered/missing field degrades that one field rather than the whole
+    // row. bitsadmin.exe is a deprecated tool (absent on some newer Windows builds/SKUs) - wrapped
+    // in one broad try/catch, degrades to empty on failure.
     private static void AddBitsJobItems(List<AutorunEntry> items, List<SecurityFinding> findings)
     {
         try
@@ -2553,9 +2584,9 @@ public static class AutorunsService
             string output = RunCapturedSync("bitsadmin.exe", "/list /allusers /verbose", TimeSpan.FromSeconds(15));
             if (string.IsNullOrWhiteSpace(output)) return;
 
-            foreach (var block in SplitBitsJobBlocks(output))
+            foreach (var job in BitsTransferService.ParseJobBlocks(output))
             {
-                var fields = ParseLabeledLines(block);
+                var fields = job.Fields;
                 // DISPLAY is present on essentially every bitsadmin verbose job block - use it as
                 // the "is this actually a job block" signal, not just leftover header/footer text.
                 if (!fields.TryGetValue("DISPLAY", out var display) || string.IsNullOrWhiteSpace(display)) continue;
@@ -2563,8 +2594,9 @@ public static class AutorunsService
                 fields.TryGetValue("TYPE", out var type);
                 fields.TryGetValue("STATE", out var state);
                 fields.TryGetValue("OWNER", out var owner);
-                string? remote = FirstPresent(fields, "REMOTE FILE NAME", "REMOTE NAME", "REMOTE URL", "URL");
-                string? local = FirstPresent(fields, "LOCAL FILE NAME", "LOCAL NAME");
+                // Remote/local come from the first JOB FILES row ("remote -> local").
+                string? remote = job.Files.Count > 0 ? job.Files[0].Remote : null;
+                string? local = job.Files.Count > 0 ? job.Files[0].Local : null;
 
                 var rawParts = new List<string>();
                 if (!string.IsNullOrWhiteSpace(type)) rawParts.Add($"Type: {type}");
@@ -2608,53 +2640,6 @@ public static class AutorunsService
             // failed/timed out - contribute nothing, same tradeoff as this file's other
             // shelled-out data sources.
         }
-    }
-
-    private static List<string> SplitBitsJobBlocks(string output)
-    {
-        var blocks = new List<string>();
-        var current = new List<string>();
-        foreach (var rawLine in output.Replace("\r\n", "\n").Split('\n'))
-        {
-            if (rawLine.TrimStart().StartsWith("DISPLAY", StringComparison.OrdinalIgnoreCase) &&
-                rawLine.TrimStart()["DISPLAY".Length..].TrimStart().StartsWith(":", StringComparison.Ordinal) &&
-                current.Count > 0)
-            {
-                blocks.Add(string.Join("\n", current));
-                current.Clear();
-            }
-            current.Add(rawLine);
-        }
-        if (current.Count > 0) blocks.Add(string.Join("\n", current));
-        return blocks;
-    }
-
-    private static Dictionary<string, string> ParseLabeledLines(string block)
-    {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var rawLine in block.Split('\n'))
-        {
-            var line = rawLine.TrimEnd('\r').Trim();
-            if (line.Length == 0) continue;
-
-            int colonIdx = line.IndexOf(':');
-            if (colonIdx <= 0) continue;
-
-            var key = line[..colonIdx].Trim().ToUpperInvariant();
-            var value = line[(colonIdx + 1)..].Trim().Trim('\'', '"');
-            if (key.Length == 0 || value.Length == 0) continue;
-            if (!result.ContainsKey(key)) result[key] = value; // first occurrence wins
-        }
-        return result;
-    }
-
-    private static string? FirstPresent(Dictionary<string, string> fields, params string[] keys)
-    {
-        foreach (var k in keys)
-        {
-            if (fields.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) return v;
-        }
-        return null;
     }
 
     // #833: Office/Outlook COM add-in inventory - HKCU/HKLM (and Wow6432Node) Addins subkeys per
@@ -3057,7 +3042,50 @@ public static class AutorunsService
     // (SecurityViewModel wires this to its own "Check write permissions" button), the same
     // "expensive, so make it explicit" discipline this app already uses for Scheduled Tasks/
     // browser extensions/shell extensions and the #818 netsh Winsock catalog walk.
-    private static readonly string[] WeakAclPrincipals = { "Users", "Authenticated Users", "Everyone", @"BUILTIN\Users" };
+    // Compared against the account part of an ACE's principal ("BUILTIN\Users" -> "Users").
+    private static readonly HashSet<string> WeakAclPrincipalNames = new(StringComparer.OrdinalIgnoreCase) { "Users", "Authenticated Users", "Everyone" };
+
+    /// <summary>Quotes a path for icacls. A trailing backslash (a drive root) would escape the
+    /// closing quote - icacls then reads "C:\" as C:" and fails - so it's doubled.</summary>
+    internal static string IcaclsPathArgument(string path)
+    {
+        int trailing = path.Length - path.TrimEnd('\\').Length;
+        return $"\"{path}{new string('\\', trailing)}\"";
+    }
+
+    /// <summary>The ACE lines of icacls output that grant write to a broad group. icacls prints the
+    /// queried path in front of the first ACE ("C:\Users\x\AppData NT AUTHORITY\SYSTEM:(I)(F)"), so
+    /// that prefix is dropped and only the principal before ":(" is compared - matching anywhere on
+    /// the line let a "Users" in the path flag every SYSTEM/Administrators full-control ACE.</summary>
+    internal static List<string> FindWeakWriteGrantLines(string icaclsOutput, string path)
+    {
+        var lines = new List<string>();
+        bool first = true;
+        foreach (var rawLine in icaclsOutput.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r').Trim();
+            if (line.Length == 0) continue;
+            if (first)
+            {
+                first = false;
+                if (line.StartsWith(path, StringComparison.OrdinalIgnoreCase)) line = line[path.Length..].Trim();
+            }
+
+            int separator = line.IndexOf(":(", StringComparison.Ordinal);
+            if (separator <= 0) continue; // not an ACE line (summary/error text)
+
+            string principal = line[..separator];
+            string account = principal[(principal.LastIndexOf('\\') + 1)..];
+            if (!WeakAclPrincipalNames.Contains(account)) continue;
+
+            string rights = line[separator..];
+            bool hasWriteGrant = rights.Contains("(W)", StringComparison.OrdinalIgnoreCase)
+                || rights.Contains("(F)", StringComparison.OrdinalIgnoreCase)
+                || rights.Contains("(M)", StringComparison.OrdinalIgnoreCase);
+            if (hasWriteGrant) lines.Add(line);
+        }
+        return lines;
+    }
 
     public static List<SecurityFinding> CheckWritePermissions(IEnumerable<AutorunEntry> entries)
     {
@@ -3089,9 +3117,9 @@ public static class AutorunsService
     }
 
     /// <summary>Shells out to icacls.exe for one path and looks for a write-capable grant to a
-    /// broad, low-privilege principal. Deliberately loose/over-inclusive: a plain case-insensitive
-    /// substring match on the principal name (not a parsed SID), and any of (W)/(F)/(M) anywhere on
-    /// that line counts as "write" (icacls's own grant-flag shorthand, e.g.
+    /// broad, low-privilege principal. Deliberately loose/over-inclusive: a case-insensitive match
+    /// on the principal's account name (not a parsed SID), and any of (W)/(F)/(M) in that ACE's
+    /// flags counts as "write" (icacls's own grant-flag shorthand, e.g.
     /// "BUILTIN\Users:(OI)(CI)(W)") - being a little over-inclusive here is safer than missing a
     /// real finding, per #845's own guidance.</summary>
     private static void CheckOnePathAcl(List<SecurityFinding> findings, AutorunEntry entry, string path, string pathKind, HashSet<string> checkedPaths)
@@ -3101,7 +3129,7 @@ public static class AutorunsService
         string output;
         try
         {
-            output = RunCapturedSync("icacls.exe", $"\"{path}\"", TimeSpan.FromSeconds(10));
+            output = RunCapturedSync("icacls.exe", IcaclsPathArgument(path), TimeSpan.FromSeconds(10));
         }
         catch
         {
@@ -3109,24 +3137,13 @@ public static class AutorunsService
         }
         if (string.IsNullOrWhiteSpace(output)) return;
 
-        foreach (var rawLine in output.Split('\n'))
+        foreach (var line in FindWeakWriteGrantLines(output, path))
         {
-            var line = rawLine.TrimEnd('\r').Trim();
-            if (line.Length == 0) continue;
-
-            bool mentionsWeakPrincipal = WeakAclPrincipals.Any(p => line.Contains(p, StringComparison.OrdinalIgnoreCase));
-            if (!mentionsWeakPrincipal) continue;
-
-            bool hasWriteGrant = line.Contains("(W)", StringComparison.OrdinalIgnoreCase)
-                || line.Contains("(F)", StringComparison.OrdinalIgnoreCase)
-                || line.Contains("(M)", StringComparison.OrdinalIgnoreCase);
-            if (!hasWriteGrant) continue;
-
             findings.Add(new SecurityFinding
             {
                 Severity = FindingSeverity.High,
                 Title = $"Writable {pathKind} for a persistence target: {entry.Name}",
-                Reason = $"icacls reports a write-capable permission for a broad group on \"{path}\" ({line}). A boot-start/autorun target (or its containing folder) that any ordinary user can overwrite is a real, actionable finding - anyone who can write here can replace what actually runs. This match is deliberately loose/over-inclusive (any (W)/(F)/(M) grant to Users/Authenticated Users/Everyone/BUILTIN\\Users, matched by a plain substring on the principal name) - always confirm with icacls yourself before acting.",
+                Reason = $"icacls reports a write-capable permission for a broad group on \"{path}\" ({line}). A boot-start/autorun target (or its containing folder) that any ordinary user can overwrite is a real, actionable finding - anyone who can write here can replace what actually runs. This match is deliberately loose/over-inclusive (any (W)/(F)/(M) grant to Users/Authenticated Users/Everyone/BUILTIN\\Users, matched by account name) - always confirm with icacls yourself before acting.",
                 Path = path,
                 WhatDisablingDoes = "Tighten this path's ACL (remove the write grant for the broad group) if you don't have a specific reason for it to be writable by ordinary users.",
                 RelatedEntry = entry,

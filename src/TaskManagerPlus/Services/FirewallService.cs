@@ -327,9 +327,20 @@ public static class FirewallService
         try { return mo[name]; } catch { return null; }
     }
 
+    /// <remarks>MSFT_NetFirewallProfile's Enabled/NotifyOnListen/Log* are UInt16 GpoBoolean values
+    /// (0 False, 1 True, 2 NotConfigured), not CIM booleans - anything but 0/1 is Unknown.</remarks>
     private static bool? TryBool(ManagementBaseObject mo, string name)
     {
-        try { return mo[name] as bool?; } catch { return null; }
+        try
+        {
+            return mo[name] switch
+            {
+                bool b => b,
+                null => null,
+                var v => Convert.ToInt32(v, System.Globalization.CultureInfo.InvariantCulture) switch { 1 => true, 0 => false, _ => null },
+            };
+        }
+        catch { return null; }
     }
 
     /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> (run tool, capture

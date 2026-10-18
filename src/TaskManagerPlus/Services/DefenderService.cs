@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
+using System.Globalization;
 using System.IO;
 using System.Management;
 using System.ServiceProcess;
@@ -507,9 +508,14 @@ public static class DefenderService
     {
         DefenderScanType.Quick => "-Scan -ScanType 1",
         DefenderScanType.Full => "-Scan -ScanType 2",
-        DefenderScanType.Custom => $"-Scan -ScanType 3 -File \"{customPath}\"",
+        DefenderScanType.Custom => $"-Scan -ScanType 3 -File \"{QuotableScanPath(customPath)}\"",
         _ => "-Scan -ScanType 1",
     };
+
+    // A drive root's trailing backslash would escape the closing quote ("E:\" arrives as E:");
+    // "E:\." names the same folder without that ambiguity.
+    private static string? QuotableScanPath(string? path) =>
+        path is not null && path.EndsWith('\\') ? path + "." : path;
 
     /// <summary>#864: Defender Offline scan trigger - MpCmdRun has no clean offline-scan switch;
     /// Start-MpWDOScan (Defender's own documented PowerShell cmdlet) is the reliable trigger, per
@@ -794,8 +800,9 @@ public static class DefenderService
         ["A8F5898E-1DC8-49A9-9878-85004B8A61E6"] = "Block Webshell creation for servers",
     };
 
-    private static string AsrActionText(int action) => action switch
+    private static string AsrActionText(int? action) => action switch
     {
+        null => "Unknown",
         0 => "Not configured",
         1 => "Block",
         2 => "Audit",
@@ -809,7 +816,7 @@ public static class DefenderService
     public static List<AsrRuleStatus> ReadAsrRules(out bool queryOk)
     {
         queryOk = false;
-        var configured = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var configured = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
         try
         {
             using var searcher = new ManagementObjectSearcher(DefenderNamespace,
@@ -825,7 +832,7 @@ public static class DefenderService
                     {
                         var id = ids[i].Trim('{', '}');
                         if (id.Length == 0) continue;
-                        configured[id] = actions is not null && i < actions.Length ? actions[i] : 1; // action array shorter than ids - assume Block, the documented default when configured at all
+                        configured[id] = actions is not null && i < actions.Length ? actions[i] : null; // no action recorded for this id - Unknown, not a guessed Block
                     }
                 }
                 break;
@@ -1149,9 +1156,18 @@ public static class DefenderService
         try { return mo[property] as string[]; } catch { return null; }
     }
 
+    /// <remarks>Accepts any numeric array: AttackSurfaceReductionRules_Actions is a UInt8Array, which
+    /// System.Management hands back as byte[], not int[].</remarks>
     private static int[]? TryGetIntArray(ManagementBaseObject mo, string property)
     {
-        try { return mo[property] as int[]; } catch { return null; }
+        try
+        {
+            if (mo[property] is not Array values) return null;
+            var result = new int[values.Length];
+            for (int i = 0; i < values.Length; i++) result[i] = Convert.ToInt32(values.GetValue(i), CultureInfo.InvariantCulture);
+            return result;
+        }
+        catch { return null; }
     }
 
     private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";

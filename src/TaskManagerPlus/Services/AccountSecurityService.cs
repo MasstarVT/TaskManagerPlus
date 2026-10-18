@@ -14,13 +14,10 @@ namespace TaskManagerPlus.Services;
 /// since all four are read together and shown together as "who can get onto this machine, and
 /// how would you know."
 ///
-/// "Prefer a known Windows tool over a WMI association join": local-group membership (891's
-/// Administrators check, 893's "Remote Desktop Users" check) shells out to `net localgroup`
-/// and parses its plain-text member list, rather than a Win32_Group/Win32_GroupUser
-/// association query - the item's own text calls this the simpler, acceptable fallback when the
-/// join "isn't too awkward" is itself awkward (it needs the exact machine-name-qualified
-/// Win32_Group.Name path string), the same "known tool over raw plumbing" tradeoff this app
-/// takes everywhere else (schtasks.exe, sc.exe, icacls.exe, netsh, ...).
+/// Local-group membership (891's Administrators check, 893's "Remote Desktop Users" check) is a
+/// Win32_Group/Win32_GroupUser association query keyed by the group's well-known SID. It used to
+/// shell out to `net localgroup "Administrators"`, but both the group name and net.exe's output are
+/// localized, so on a non-English install that read no members at all.
 /// </summary>
 public static class AccountSecurityService
 {
@@ -33,7 +30,7 @@ public static class AccountSecurityService
         var accounts = new List<LocalAccountInfo>();
         var findings = new List<SecurityFinding>();
 
-        var adminNames = ReadLocalGroupMembers("Administrators");
+        var adminNames = ReadLocalGroupMembers(AdministratorsSid);
         var hiddenNames = ReadHiddenAccountNames();
 
         try
@@ -86,31 +83,52 @@ public static class AccountSecurityService
         return (accounts.OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase).ToList(), findings);
     }
 
-    /// <summary>Shells `net localgroup "&lt;name&gt;"` and parses the member list between the
-    /// dashed separator line and the trailing "The command completed successfully." line - the
-    /// same plain-text shape for any local group, reused for both Administrators (#891) and
-    /// "Remote Desktop Users" (#893).</summary>
-    private static HashSet<string> ReadLocalGroupMembers(string groupName)
+    private const string AdministratorsSid = "S-1-5-32-544";
+    private const string RemoteDesktopUsersSid = "S-1-5-32-555";
+
+    /// <summary>Members of a BUILTIN local group, found by its well-known SID - reused for both
+    /// Administrators (#891) and Remote Desktop Users (#893). Group names (and `net localgroup`'s
+    /// output, including its completion line) are localized, so the English names read nothing on
+    /// e.g. a German install ("Administratoren"). Win32_Group gives the localized name, then
+    /// Win32_GroupUser lists the members; a member from another domain is reported as
+    /// DOMAIN\name, the same shape `net localgroup` printed.</summary>
+    private static HashSet<string> ReadLocalGroupMembers(string groupSid)
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            string output = RunCapturedSync("net.exe", $"localgroup \"{groupName}\"", TimeSpan.FromSeconds(10));
-            var lines = output.Replace("\r\n", "\n").Split('\n');
-            bool inMembers = false;
-            foreach (var raw in lines)
+            string? groupDomain = null, groupName = null;
+            using (var groupSearcher = new ManagementObjectSearcher(
+                $"SELECT Domain, Name FROM Win32_Group WHERE LocalAccount = TRUE AND SID = '{groupSid}'"))
             {
-                var line = raw.TrimEnd();
-                if (line.StartsWith("---", StringComparison.Ordinal)) { inMembers = true; continue; }
-                if (!inMembers) continue;
-                if (line.Length == 0) continue;
-                if (line.StartsWith("The command completed", StringComparison.OrdinalIgnoreCase)) break;
-                result.Add(line.Trim());
+                foreach (ManagementObject mo in groupSearcher.Get())
+                {
+                    using (mo)
+                    {
+                        groupDomain = mo["Domain"] as string;
+                        groupName = mo["Name"] as string;
+                    }
+                    break;
+                }
+            }
+            if (string.IsNullOrEmpty(groupDomain) || string.IsNullOrEmpty(groupName)) return result; // group absent (e.g. no Remote Desktop Users on Home)
+
+            static string Escape(string s) => s.Replace("\\", "\\\\").Replace("'", "\\'");
+            using var memberSearcher = new ManagementObjectSearcher(
+                $"ASSOCIATORS OF {{Win32_Group.Domain='{Escape(groupDomain)}',Name='{Escape(groupName)}'}} WHERE AssocClass = Win32_GroupUser Role = GroupComponent");
+            foreach (ManagementObject mo in memberSearcher.Get())
+            {
+                using (mo)
+                {
+                    if (mo["Name"] is not string name || name.Length == 0) continue;
+                    string domain = mo["Domain"] as string ?? string.Empty;
+                    result.Add(domain.Length == 0 || domain.Equals(groupDomain, StringComparison.OrdinalIgnoreCase) ? name : $@"{domain}\{name}");
+                }
             }
         }
         catch
         {
-            // net.exe unavailable/failed - "Unknown membership", an empty set (never fabricated).
+            // WMI unavailable/failed - "Unknown membership", an empty set (never fabricated).
         }
         return result;
     }
@@ -235,7 +253,7 @@ public static class AccountSecurityService
             _ => $"Unrecognized value ({shadowValue})",
         };
 
-        var members = ReadLocalGroupMembers("Remote Desktop Users").OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+        var members = ReadLocalGroupMembers(RemoteDesktopUsersSid).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
 
         var info = new RdpExposureInfo(rdpEnabled, nlaRequired, port, restrictedAdminDisabled, shadowValue, shadowDescription, members);
 
@@ -427,9 +445,4 @@ public static class AccountSecurityService
             },
         };
     }
-
-    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> (run tool, capture
-    /// stdout+stderr, kill the whole process tree on timeout).</summary>
-    private static string RunCapturedSync(string exe, string args, TimeSpan timeout)
-        => ToolRunner.RunCaptured(exe, args, timeout).Output;
 }

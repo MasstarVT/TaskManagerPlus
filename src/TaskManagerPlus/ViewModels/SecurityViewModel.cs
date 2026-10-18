@@ -241,8 +241,8 @@ public sealed class SecurityViewModel : ObservableObject
     public AsyncRelayCommand LoadScanHistoryCommand { get; }
     public AsyncRelayCommand LoadThreatHistoryCommand { get; }
     public AsyncRelayCommand LoadQuarantineCommand { get; }
-    public RelayCommand RestoreQuarantineItemCommand { get; }
-    public RelayCommand PurgeQuarantineItemCommand { get; }
+    public AsyncRelayCommand RestoreQuarantineItemCommand { get; }
+    public AsyncRelayCommand PurgeQuarantineItemCommand { get; }
     public AsyncRelayCommand LoadAsrEventsCommand { get; }
     public RelayCommand RunQuickScanCommand { get; }
     public RelayCommand RunFullScanCommand { get; }
@@ -277,20 +277,24 @@ public sealed class SecurityViewModel : ObservableObject
         LoadScanHistoryCommand = new AsyncRelayCommand(LoadScanHistoryAsync);
         LoadThreatHistoryCommand = new AsyncRelayCommand(LoadThreatHistoryAsync);
         LoadQuarantineCommand = new AsyncRelayCommand(LoadQuarantineAsync);
-        RestoreQuarantineItemCommand = new RelayCommand(param => RestoreQuarantineItem(param as DefenderService.QuarantineItem));
-        PurgeQuarantineItemCommand = new RelayCommand(param => PurgeQuarantineItem(param as DefenderService.QuarantineItem));
+        // Read-only mode gates every command below that changes the PC: quarantine restore/purge,
+        // Defender scans (MpCmdRun -Scan remediates what it detects; the offline scan reboots),
+        // firewall rule toggles, the proxy/Winsock reset, OEM disables, file quarantine and the
+        // journal's undo.
+        RestoreQuarantineItemCommand = new AsyncRelayCommand(param => RestoreQuarantineItemAsync(param as DefenderService.QuarantineItem), _ => !ReadOnlyModeService.IsReadOnly);
+        PurgeQuarantineItemCommand = new AsyncRelayCommand(param => PurgeQuarantineItemAsync(param as DefenderService.QuarantineItem), _ => !ReadOnlyModeService.IsReadOnly);
         LoadAsrEventsCommand = new AsyncRelayCommand(LoadAsrEventsAsync);
-        RunQuickScanCommand = new RelayCommand(_ => RunScan(DefenderService.DefenderScanType.Quick), _ => !IsScanRunning);
-        RunFullScanCommand = new RelayCommand(_ => RunScan(DefenderService.DefenderScanType.Full), _ => !IsScanRunning);
-        RunFolderScanCommand = new RelayCommand(_ => RunFolderScan(), _ => !IsScanRunning);
-        RunOfflineScanCommand = new RelayCommand(_ => RunOfflineScan(), _ => !IsScanRunning);
+        RunQuickScanCommand = new RelayCommand(_ => RunScan(DefenderService.DefenderScanType.Quick), _ => !IsScanRunning && !ReadOnlyModeService.IsReadOnly);
+        RunFullScanCommand = new RelayCommand(_ => RunScan(DefenderService.DefenderScanType.Full), _ => !IsScanRunning && !ReadOnlyModeService.IsReadOnly);
+        RunFolderScanCommand = new RelayCommand(_ => RunFolderScan(), _ => !IsScanRunning && !ReadOnlyModeService.IsReadOnly);
+        RunOfflineScanCommand = new RelayCommand(_ => RunOfflineScan(), _ => !IsScanRunning && !ReadOnlyModeService.IsReadOnly);
         CancelScanCommand = new RelayCommand(_ => CancelScan(), _ => IsScanRunning);
 
         // Round 19, #881-890: "Network exposure" section.
         RefreshFirewallPostureCommand = new AsyncRelayCommand(RefreshFirewallPostureAsync);
         ScanFirewallRulesCommand = new AsyncRelayCommand(ScanFirewallRulesAsync);
-        DisableFirewallRuleCommand = new AsyncRelayCommand(param => DisableFirewallRuleAsync(param as FirewallService.FirewallRuleInfo));
-        UndoDisableFirewallRuleCommand = new AsyncRelayCommand(param => UndoDisableFirewallRuleAsync(param as string));
+        DisableFirewallRuleCommand = new AsyncRelayCommand(param => DisableFirewallRuleAsync(param as FirewallService.FirewallRuleInfo), _ => !ReadOnlyModeService.IsReadOnly);
+        UndoDisableFirewallRuleCommand = new AsyncRelayCommand(param => UndoDisableFirewallRuleAsync(param as string), _ => !ReadOnlyModeService.IsReadOnly);
         ScanExposedListenersCommand = new AsyncRelayCommand(ScanExposedListenersAsync);
         RefreshSmbPostureCommand = new AsyncRelayCommand(RefreshSmbPostureAsync);
         ScanSharesCommand = new AsyncRelayCommand(ScanSharesAsync);
@@ -299,7 +303,7 @@ public sealed class SecurityViewModel : ObservableObject
         OpenHostsFileInNotepadCommand = new RelayCommand(_ => OpenHostsFileInNotepad());
         CheckDnsPostureForFindingsCommand = new AsyncRelayCommand(CheckDnsPostureForFindingsAsync);
         RefreshProxyPostureCommand = new AsyncRelayCommand(RefreshProxyPostureAsync);
-        ResetProxyAndWinsockCommand = new AsyncRelayCommand(ResetProxyAndWinsockAsync);
+        ResetProxyAndWinsockCommand = new AsyncRelayCommand(ResetProxyAndWinsockAsync, () => !ReadOnlyModeService.IsReadOnly);
         ScanCertificateStoreCommand = new AsyncRelayCommand(ScanCertificateStoreAsync);
         OpenCertificateManagerCommand = new RelayCommand(_ => OpenCertificateManager());
 
@@ -310,10 +314,10 @@ public sealed class SecurityViewModel : ObservableObject
         ScanSignInTimelineCommand = new AsyncRelayCommand(ScanSignInTimelineAsync);
         ScanBloatwareCommand = new AsyncRelayCommand(ScanBloatwareAsync);
         ScanOemCleanupCommand = new AsyncRelayCommand(ScanOemCleanupAsync, () => BloatwareEntries.Count > 0);
-        DisableOemCleanupCandidateCommand = new AsyncRelayCommand(param => DisableOemCleanupCandidateAsync(param as OemCleanupCandidate));
+        DisableOemCleanupCandidateCommand = new AsyncRelayCommand(param => DisableOemCleanupCandidateAsync(param as OemCleanupCandidate), _ => !ReadOnlyModeService.IsReadOnly);
         ScanBrowserHijackCommand = new AsyncRelayCommand(ScanBrowserHijackAsync);
-        QuarantineSelectedFileCommand = new RelayCommand(param => QuarantineSelectedFile(param as AutorunEntry));
-        UndoJournalEntryCommand = new AsyncRelayCommand(param => UndoJournalEntryAsync(param as SecurityActionJournalEntry));
+        QuarantineSelectedFileCommand = new RelayCommand(param => QuarantineSelectedFile(param as AutorunEntry), _ => !ReadOnlyModeService.IsReadOnly);
+        UndoJournalEntryCommand = new AsyncRelayCommand(param => UndoJournalEntryAsync(param as SecurityActionJournalEntry), _ => !ReadOnlyModeService.IsReadOnly);
         OpenSecondOpinionToolCommand = new RelayCommand(param => OpenSecondOpinionTool(param as SecondOpinionTool));
         BuildEvidenceBundleCommand = new AsyncRelayCommand(BuildEvidenceBundleAsync);
 
@@ -478,7 +482,10 @@ public sealed class SecurityViewModel : ObservableObject
 
     /// <summary>#863: owner-initiated only - never runs automatically. Confirmation dialog matches
     /// ProcessesViewModel.EndSelected's MessageBox.Show(YesNo, Warning) convention.</summary>
-    private void RestoreQuarantineItem(DefenderService.QuarantineItem? item)
+    /// <remarks>MpCmdRun can take up to its 30s timeout, so it runs off the UI thread. The item's
+    /// FilePath is passed so the restore targets this item, not the newest one sharing its threat
+    /// name.</remarks>
+    private async Task RestoreQuarantineItemAsync(DefenderService.QuarantineItem? item)
     {
         if (item is null) return;
         var confirm = MessageBox.Show(
@@ -486,13 +493,14 @@ public sealed class SecurityViewModel : ObservableObject
             "Restore quarantined item", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
-        var (success, output) = DefenderService.RestoreQuarantineItem(item.ThreatName);
+        QuarantineStatus = $"Restoring \"{item.ThreatName}\"...";
+        var (success, output) = await Task.Run(() => DefenderService.RestoreQuarantineItem(item.ThreatName, item.FilePath));
         QuarantineStatus = success ? $"Restored \"{item.ThreatName}\": {output}" : $"Restore failed for \"{item.ThreatName}\": {output}";
     }
 
     /// <summary>#863: MpCmdRun has no cleanly-documented per-item permanent-purge switch - implemented
     /// as restore, then delete the restored file, per the item's own allowed interpretation.</summary>
-    private void PurgeQuarantineItem(DefenderService.QuarantineItem? item)
+    private async Task PurgeQuarantineItemAsync(DefenderService.QuarantineItem? item)
     {
         if (item is null) return;
         var confirm = MessageBox.Show(
@@ -500,7 +508,8 @@ public sealed class SecurityViewModel : ObservableObject
             "Purge quarantined item", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
-        var (success, output) = DefenderService.PurgeQuarantineItem(item.ThreatName, item.FilePath);
+        QuarantineStatus = $"Purging \"{item.ThreatName}\"...";
+        var (success, output) = await Task.Run(() => DefenderService.PurgeQuarantineItem(item.ThreatName, item.FilePath));
         QuarantineStatus = success ? $"Purged \"{item.ThreatName}\": {output}" : $"Purge failed for \"{item.ThreatName}\": {output}";
     }
 

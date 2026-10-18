@@ -33,7 +33,6 @@ public static class ShareAuditService
     }
 
     private static readonly string[] WeakSharePrincipals = { "Everyone", "Authenticated Users" };
-    private static readonly string[] WeakAclPrincipals = { "Users", "Authenticated Users", "Everyone", @"BUILTIN\Users" };
 
     private static bool IsWeakPrincipal(string account) => WeakSharePrincipals.Any(p => account.Contains(p, StringComparison.OrdinalIgnoreCase));
 
@@ -146,33 +145,20 @@ public static class ShareAuditService
         }
     }
 
-    /// <summary>NTFS weak-grant check on the share's target path - mirrors
-    /// AutorunsService.CheckWritePermissions's icacls parsing (same principal list, same loose
-    /// (W)/(F)/(M) substring match) rather than reinventing that logic.</summary>
+    /// <summary>NTFS weak-grant check on the share's target path - reuses
+    /// AutorunsService.CheckWritePermissions's icacls quoting and ACE parsing (same principal list,
+    /// same loose (W)/(F)/(M) match) rather than reinventing that logic.</summary>
     private static List<string> ReadNtfsWeakGrants(string path)
     {
         var grants = new List<string>();
         if (!Directory.Exists(path) && !File.Exists(path)) return grants;
 
         string output;
-        try { output = RunCapturedSync("icacls.exe", $"\"{path}\"", TimeSpan.FromSeconds(10)); }
+        try { output = RunCapturedSync("icacls.exe", AutorunsService.IcaclsPathArgument(path), TimeSpan.FromSeconds(10)); }
         catch { return grants; }
         if (string.IsNullOrWhiteSpace(output)) return grants;
 
-        foreach (var rawLine in output.Split('\n'))
-        {
-            var line = rawLine.TrimEnd('\r').Trim();
-            if (line.Length == 0) continue;
-
-            bool mentionsWeakPrincipal = WeakAclPrincipals.Any(p => line.Contains(p, StringComparison.OrdinalIgnoreCase));
-            if (!mentionsWeakPrincipal) continue;
-
-            bool hasWriteGrant = line.Contains("(W)", StringComparison.OrdinalIgnoreCase)
-                || line.Contains("(F)", StringComparison.OrdinalIgnoreCase)
-                || line.Contains("(M)", StringComparison.OrdinalIgnoreCase);
-            if (hasWriteGrant) grants.Add(line);
-        }
-        return grants;
+        return AutorunsService.FindWeakWriteGrantLines(output, path);
     }
 
     /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> (run tool, capture

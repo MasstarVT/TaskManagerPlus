@@ -34,6 +34,14 @@ public static class QuarantineService
             }
 
             File.Move(filePath, finalDestination);
+
+            // Across volumes File.Move is copy-then-delete, and Windows reports success even when
+            // the delete fails (a running or locked binary) - the original would still be in place.
+            if (File.Exists(filePath))
+            {
+                try { File.Delete(finalDestination); } catch { /* best-effort - leave the copy rather than fail differently */ }
+                return (false, null, "The file was copied but the original couldn't be removed (it may be running or locked), so nothing was quarantined.");
+            }
             return (true, finalDestination, null);
         }
         catch (Exception ex)
