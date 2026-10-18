@@ -88,18 +88,24 @@ public static class BootEtwTraceService
         return (true, error);
     }
 
-    /// <summary>Called once at startup: if a trace is pending, runs `wpr -boottrace -stopboot` to
-    /// collect it. Clears the pending state regardless of outcome - a failed collection attempt
-    /// shouldn't retry forever on every future launch.</summary>
-    public static async Task<(bool Collected, string? Error, string? OutputPath)> CollectIfPendingAsync()
+    /// <summary>Called once at startup: if a trace is pending AND the machine has restarted since it
+    /// was armed, runs `wpr -boottrace -stopboot` to collect it, then clears the pending state
+    /// regardless of outcome - a failed collection attempt shouldn't retry forever on every future
+    /// launch. An app relaunch before that restart leaves the state armed (AwaitingReboot) instead
+    /// of stopping a boot trace that hasn't run yet. "Restarted" uses the tick-count (last cold
+    /// boot) time: the arm step asks for a Restart, which never takes the Fast Startup path.</summary>
+    public static async Task<(bool Collected, string? Error, string? OutputPath, bool AwaitingReboot)> CollectIfPendingAsync()
     {
         var state = LoadState();
-        if (!state.IsArmed || string.IsNullOrEmpty(state.OutputPath)) return (false, null, null);
+        if (!state.IsArmed || string.IsNullOrEmpty(state.OutputPath)) return (false, null, null, false);
+
+        var lastRestartUtc = DateTime.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
+        if (state.ArmedAtUtc is { } armedAt && lastRestartUtc <= armedAt) return (false, null, null, true);
 
         if (!IsAvailable)
         {
             SaveState(new BootEtwTraceState());
-            return (false, "wpr.exe not found.", null);
+            return (false, "wpr.exe not found.", null, false);
         }
 
         try
@@ -114,8 +120,8 @@ public static class BootEtwTraceService
 
         bool collected = exitCode == 0 && File.Exists(state.OutputPath);
         return collected
-            ? (true, null, state.OutputPath)
-            : (false, string.IsNullOrWhiteSpace(output) ? "wpr failed to collect the boot trace." : output.Trim(), null);
+            ? (true, null, state.OutputPath, false)
+            : (false, string.IsNullOrWhiteSpace(output) ? "wpr failed to collect the boot trace." : output.Trim(), null, false);
     }
 
     /// <summary>Best-effort "open in WPA" - falls back to selecting the file in Explorer when the

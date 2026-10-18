@@ -89,12 +89,20 @@ public static class BootLogCaptureService
             var info = new FileInfo(path);
             if (info.LastWriteTimeUtc < armedAtUtc) return null;
 
+            // Windows appends a new session to ntbtlog.txt on every logged boot, each opening with a
+            // "Microsoft (R) Windows (R) Version ..." header line - restart the list at each header
+            // so only the newest boot's drivers are reported (a file with no header is read whole).
             var entries = new List<NtbtlogEntry>();
             int order = 0;
             foreach (var line in File.ReadLines(path))
             {
                 var trimmed = line.Trim();
-                if (trimmed.StartsWith("Did not load driver", StringComparison.OrdinalIgnoreCase))
+                if (trimmed.StartsWith("Microsoft (R) Windows", StringComparison.OrdinalIgnoreCase))
+                {
+                    entries.Clear();
+                    order = 0;
+                }
+                else if (trimmed.StartsWith("Did not load driver", StringComparison.OrdinalIgnoreCase))
                 {
                     order++;
                     entries.Add(new NtbtlogEntry { Order = order, Loaded = false, DriverPath = trimmed["Did not load driver".Length..].Trim() });

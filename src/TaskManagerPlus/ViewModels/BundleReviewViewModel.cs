@@ -40,16 +40,16 @@ public sealed class BundleReviewViewModel : ObservableObject
     private string _statusText = "No bundle loaded yet - use \"Open bundle...\" to review one someone sent you.";
     public string StatusText { get => _statusText; private set => SetProperty(ref _statusText, value); }
 
-    public RelayCommand OpenBundleCommand { get; }
+    public AsyncRelayCommand OpenBundleCommand { get; }
     public RelayCommand CloseBundleCommand { get; }
 
     public BundleReviewViewModel()
     {
-        OpenBundleCommand = new RelayCommand(_ => OpenBundle());
+        OpenBundleCommand = new AsyncRelayCommand(OpenBundleAsync);
         CloseBundleCommand = new RelayCommand(_ => CloseBundle(), _ => IsBundleLoaded);
     }
 
-    private void OpenBundle()
+    private async Task OpenBundleAsync()
     {
         var dialog = new OpenFileDialog
         {
@@ -61,8 +61,12 @@ public sealed class BundleReviewViewModel : ObservableObject
         try
         {
             CloseBundle(); // release any previously loaded bundle's temp folder first
+            StatusText = $"Opening \"{System.IO.Path.GetFileName(dialog.FileName)}\"...";
 
-            var loaded = BundleReviewService.Extract(dialog.FileName);
+            // Unzipping (a bundle can carry minidumps and .evtx exports) and the JSON parse run
+            // off the dispatcher.
+            string zipPath = dialog.FileName;
+            var loaded = await Task.Run(() => BundleReviewService.Extract(zipPath));
             _extractedDirectory = loaded.ExtractedDirectory;
 
             Findings.Clear();

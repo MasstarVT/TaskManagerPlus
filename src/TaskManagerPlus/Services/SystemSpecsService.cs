@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Management;
 using System.Runtime.InteropServices;
@@ -20,7 +21,11 @@ public sealed class SystemSpecsService
 {
     private const string DisplayClassGuid = "{4d36e968-e325-11ce-bfc1-08002be10318}";
 
-    public async Task<SystemSpecs> QueryAsync()
+    // Nearly every Read* below is synchronous WMI/registry/event-log work, so the body runs under
+    // Task.Run rather than on whichever (possibly UI) thread called it.
+    public Task<SystemSpecs> QueryAsync() => Task.Run(QueryCoreAsync);
+
+    private async Task<SystemSpecs> QueryCoreAsync()
     {
         var (osName, osVersion, osArch, osInstallDate, osInstallAgeDays) = ReadOperatingSystem();
         var (manufacturer, model, systemType) = ReadComputerSystem();
@@ -1566,9 +1571,12 @@ public sealed class SystemSpecsService
                 if (hotFixId.Length == 0) continue;
 
                 DateTime? installedOn = null;
-                // InstalledOn comes back as a plain culture-formatted date string (not the usual
-                // WMI CIM_DATETIME format) for this particular class - parse it directly.
-                if (mo["InstalledOn"] is string raw && DateTime.TryParse(raw, out var parsed))
+                // InstalledOn comes back as a plain date string (not the usual WMI CIM_DATETIME
+                // format) for this class, written M/d/yyyy whatever the locale - so invariant first;
+                // a current-culture parse first would swap day/month on en-GB/de-DE.
+                if (mo["InstalledOn"] is string raw &&
+                    (DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed) ||
+                     DateTime.TryParse(raw, CultureInfo.CurrentCulture, DateTimeStyles.None, out parsed)))
                     installedOn = parsed;
 
                 updates.Add(new UpdateInfo
@@ -1662,12 +1670,13 @@ public sealed class SystemSpecsService
                 IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
             if (handle.IsInvalid) return null;
 
-            var outBuffer = Marshal.AllocHGlobal(1);
+            // FSCTL_IS_VOLUME_DIRTY's output is a ULONG; a smaller buffer fails the call outright.
+            var outBuffer = Marshal.AllocHGlobal(sizeof(uint));
             try
             {
-                bool ok = DeviceIoControl(handle, FsctlIsVolumeDirty, IntPtr.Zero, 0, outBuffer, 1, out _, IntPtr.Zero);
+                bool ok = DeviceIoControl(handle, FsctlIsVolumeDirty, IntPtr.Zero, 0, outBuffer, sizeof(uint), out _, IntPtr.Zero);
                 if (!ok) return null;
-                int flags = Marshal.ReadByte(outBuffer);
+                int flags = Marshal.ReadInt32(outBuffer);
                 return (flags & 0x1) != 0; // VOLUME_IS_DIRTY bit
             }
             finally
@@ -1816,8 +1825,10 @@ public sealed class SystemSpecsService
             using var searcher = new ManagementObjectSearcher(@"root\wmi", "SELECT InstanceName, VideoOutputTechnology FROM WmiMonitorConnectionParams");
             foreach (ManagementObject mo in searcher.Get())
             {
-                int tech = 0;
-                try { tech = Convert.ToInt32(mo["VideoOutputTechnology"] ?? 0); } catch { /* leave 0 -> "VGA" bucket avoided below via Other fallback */ }
+                // UInt32 in WMI: OTHER (0xFFFFFFFF) and INTERNAL (0x80000000) overflow a checked
+                // Convert.ToInt32, so reinterpret the bits. -2 is no D3DKMDT value -> "Unknown".
+                int tech = -2;
+                try { if (mo["VideoOutputTechnology"] is { } rawTech) tech = unchecked((int)Convert.ToUInt32(rawTech)); } catch { /* leave -2 */ }
                 connectionTypes.Add(VideoOutputTechnologyName(tech));
                 instanceNames.Add(mo["InstanceName"] as string ?? string.Empty);
             }

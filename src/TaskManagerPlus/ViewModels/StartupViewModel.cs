@@ -502,43 +502,45 @@ public sealed class StartupViewModel : ObservableObject
         // flag, so it's a mutation like any other toggle on this tab.
         ToggleShellExtensionApprovedCommand = new RelayCommand(param => ToggleShellExtensionApproved(param as ShellExtensionInfo ?? SelectedShellExtension), _ => !ReadOnlyModeService.IsReadOnly);
 
-        ArmBootLogCaptureCommand = new AsyncRelayCommand(ArmBootLogCaptureAsync, () => !IsBootLogCaptureArmed);
-        DisarmBootLogCaptureCommand = new AsyncRelayCommand(DisarmBootLogCaptureAsync, () => IsBootLogCaptureArmed);
+        ArmBootLogCaptureCommand = new AsyncRelayCommand(ArmBootLogCaptureAsync, () => !IsBootLogCaptureArmed && !ReadOnlyModeService.IsReadOnly);
+        DisarmBootLogCaptureCommand = new AsyncRelayCommand(DisarmBootLogCaptureAsync, () => IsBootLogCaptureArmed && !ReadOnlyModeService.IsReadOnly);
 
-        ArmBootEtwTraceCommand = new AsyncRelayCommand(ArmBootEtwTraceAsync, () => IsBootEtwTraceAvailable && !IsBootEtwTraceArmed);
-        DisarmBootEtwTraceCommand = new AsyncRelayCommand(DisarmBootEtwTraceAsync, () => IsBootEtwTraceArmed);
+        ArmBootEtwTraceCommand = new AsyncRelayCommand(ArmBootEtwTraceAsync, () => IsBootEtwTraceAvailable && !IsBootEtwTraceArmed && !ReadOnlyModeService.IsReadOnly);
+        DisarmBootEtwTraceCommand = new AsyncRelayCommand(DisarmBootEtwTraceAsync, () => IsBootEtwTraceArmed && !ReadOnlyModeService.IsReadOnly);
         OpenEtlInWpaCommand = new RelayCommand(_ => { if (LastEtlPath is not null) BootEtwTraceService.OpenInWpa(LastEtlPath); }, _ => LastEtlPath is not null);
 
-        RestorePrefetchDefaultsCommand = new AsyncRelayCommand(RestorePrefetchDefaultsAsync);
-        EnableDiagnosticsChannelCommand = new AsyncRelayCommand(EnableDiagnosticsChannelAsync, () => BootDataAvailability?.CanOfferEnable == true);
+        RestorePrefetchDefaultsCommand = new AsyncRelayCommand(RestorePrefetchDefaultsAsync, () => !ReadOnlyModeService.IsReadOnly);
+        EnableDiagnosticsChannelCommand = new AsyncRelayCommand(EnableDiagnosticsChannelAsync, () => BootDataAvailability?.CanOfferEnable == true && !ReadOnlyModeService.IsReadOnly);
 
         MeasureProfileSizeCommand = new AsyncRelayCommand(param => MeasureProfileSizeAsync(param as ProfileListEntry));
 
         // #724-731: Boot configuration (BCD inspector) commands - every mutating one confirms
         // the exact bcdedit command first (see each handler below).
-        ClearBootModeFlagCommand = new AsyncRelayCommand(param => ClearBootModeFlagAsync(param as BootModeFlag));
-        RestoreBootStatusPolicyCommand = new AsyncRelayCommand(RestoreBootStatusPolicyAsync, () => BootStatusPolicy?.DisablesStartupRepair == true);
-        SetBootTimeoutCommand = new AsyncRelayCommand(SetBootTimeoutAsync);
-        SetDefaultEntryCommand = new AsyncRelayCommand(param => SetDefaultEntryAsync(param as BootMenuEntryRef));
+        ClearBootModeFlagCommand = new AsyncRelayCommand(param => ClearBootModeFlagAsync(param as BootModeFlag), _ => !ReadOnlyModeService.IsReadOnly);
+        RestoreBootStatusPolicyCommand = new AsyncRelayCommand(RestoreBootStatusPolicyAsync, () => BootStatusPolicy?.DisablesStartupRepair == true && !ReadOnlyModeService.IsReadOnly);
+        SetBootTimeoutCommand = new AsyncRelayCommand(SetBootTimeoutAsync, () => !ReadOnlyModeService.IsReadOnly);
+        SetDefaultEntryCommand = new AsyncRelayCommand(param => SetDefaultEntryAsync(param as BootMenuEntryRef), _ => !ReadOnlyModeService.IsReadOnly);
         CopyFirmwareDisplayOrderFixCommand = new RelayCommand(_ => CopyFirmwareDisplayOrderFix(), _ => FirmwareBootOrder?.SuggestedFixCommand is not null);
         ExportBcdBackupCommand = new AsyncRelayCommand(ExportBcdBackupAsync);
 
         // #734-737: Fast Startup, hibernation, and the recovery path.
-        FullRestartCommand = new AsyncRelayCommand(FullRestartAsync);
+        FullRestartCommand = new AsyncRelayCommand(FullRestartAsync, () => !ReadOnlyModeService.IsReadOnly);
         DismissFullRestartPromptCommand = new RelayCommand(_ => DismissFullRestartPrompt());
-        DisableHibernationCommand = new AsyncRelayCommand(DisableHibernationAsync);
-        EnableHibernationCommand = new AsyncRelayCommand(EnableHibernationAsync);
-        ReduceHiberFileTypeCommand = new AsyncRelayCommand(ReduceHiberFileTypeAsync);
-        SetHiberFileSizeCommand = new AsyncRelayCommand(SetHiberFileSizeAsync);
-        DisableFastStartupCommand = new AsyncRelayCommand(DisableFastStartupAsync, () => FastStartupInfo?.IsFastStartupEnabled == true);
+        DisableHibernationCommand = new AsyncRelayCommand(DisableHibernationAsync, () => !ReadOnlyModeService.IsReadOnly);
+        EnableHibernationCommand = new AsyncRelayCommand(EnableHibernationAsync, () => !ReadOnlyModeService.IsReadOnly);
+        ReduceHiberFileTypeCommand = new AsyncRelayCommand(ReduceHiberFileTypeAsync, () => !ReadOnlyModeService.IsReadOnly);
+        SetHiberFileSizeCommand = new AsyncRelayCommand(SetHiberFileSizeAsync, () => !ReadOnlyModeService.IsReadOnly);
+        DisableFastStartupCommand = new AsyncRelayCommand(DisableFastStartupAsync, () => FastStartupInfo?.IsFastStartupEnabled == true && !ReadOnlyModeService.IsReadOnly);
 
         // #738-740: System partitions (ESP, WinRE, recovery layout).
-        MeasureEspFreeSpaceCommand = new AsyncRelayCommand(MeasureEspFreeSpaceAsync, () => PartitionLayout?.Esp is not null);
-        EnableWinReCommand = new AsyncRelayCommand(EnableWinReAsync, () => WinReStatus?.Enabled == false);
-        MeasureRecoveryFreeSpaceCommand = new AsyncRelayCommand(MeasureRecoveryFreeSpaceAsync, () => PartitionLayout?.Recovery is not null);
+        // Both measurements temporarily mount a letter-less partition (mountvol), so they count as a
+        // change for read-only mode even though the mount is always removed again.
+        MeasureEspFreeSpaceCommand = new AsyncRelayCommand(MeasureEspFreeSpaceAsync, () => PartitionLayout?.Esp is not null && !ReadOnlyModeService.IsReadOnly);
+        EnableWinReCommand = new AsyncRelayCommand(EnableWinReAsync, () => WinReStatus?.Enabled == false && !ReadOnlyModeService.IsReadOnly);
+        MeasureRecoveryFreeSpaceCommand = new AsyncRelayCommand(MeasureRecoveryFreeSpaceAsync, () => PartitionLayout?.Recovery is not null && !ReadOnlyModeService.IsReadOnly);
 
         // #764-768: Task failures / run-duration history.
-        EnableTaskFailureLogCommand = new AsyncRelayCommand(EnableTaskFailureLogAsync, () => !IsTaskSchedulerLogEnabled);
+        EnableTaskFailureLogCommand = new AsyncRelayCommand(EnableTaskFailureLogAsync, () => !IsTaskSchedulerLogEnabled && !ReadOnlyModeService.IsReadOnly);
         LoadTaskFailuresCommand = new AsyncRelayCommand(LoadTaskFailuresAsync);
 
         Refresh();
@@ -1044,7 +1046,7 @@ public sealed class StartupViewModel : ObservableObject
     /// rows Refresh() already populated. Runs the same #91/#22 delay/impact scan and #18 signature
     /// check the rest of the grid gets, so a still-running boot/logon task looks like every other
     /// row rather than a second-class one.</summary>
-    private async Task LoadScheduledTaskStartupRowsAsync()
+    private async Task LoadScheduledTaskStartupRowsAsync(int refreshGeneration)
     {
         List<ScheduledTaskTriggerInfo> triggered;
         try
@@ -1057,6 +1059,9 @@ public sealed class StartupViewModel : ObservableObject
             return;
         }
 
+        // A newer Refresh() cleared Items while this scan ran and started its own - appending this
+        // stale result too would duplicate every task row.
+        if (refreshGeneration != _refreshGeneration) return;
         if (triggered.Count == 0) return;
 
         var newItems = triggered.Select(t => new StartupItem
@@ -1296,10 +1301,12 @@ public sealed class StartupViewModel : ObservableObject
         var etwState = await Task.Run(BootEtwTraceService.LoadState);
         if (etwState.IsArmed)
         {
-            var (collected, error, path) = await BootEtwTraceService.CollectIfPendingAsync();
+            var (collected, error, path, awaitingReboot) = await BootEtwTraceService.CollectIfPendingAsync();
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
-                IsBootEtwTraceArmed = false; // CollectIfPendingAsync always clears the pending state, success or not
+                // Still armed only when no restart has happened yet; otherwise CollectIfPendingAsync
+                // cleared the pending state, success or not.
+                IsBootEtwTraceArmed = awaitingReboot;
                 if (collected)
                 {
                     LastEtlPath = path;
@@ -1519,8 +1526,13 @@ public sealed class StartupViewModel : ObservableObject
         }
     }
 
+    /// <summary>Bumped by every Refresh() so a slower scheduled-task row load from an earlier
+    /// Refresh can tell its Items.Clear() has been superseded (UI-thread only).</summary>
+    private int _refreshGeneration;
+
     private void Refresh()
     {
+        int refreshGeneration = ++_refreshGeneration;
         Items.Clear();
         var items = _service.Sample();
         foreach (var item in items)
@@ -1580,7 +1592,7 @@ public sealed class StartupViewModel : ObservableObject
         // #747: boot/logon-triggered scheduled tasks, folded into this same grid as first-class
         // rows - see LoadScheduledTaskStartupRowsAsync's remarks for why this rides alongside
         // Refresh() rather than needing its own button.
-        _ = LoadScheduledTaskStartupRowsAsync();
+        _ = LoadScheduledTaskStartupRowsAsync(refreshGeneration);
     }
 
     private void Toggle(StartupItem? item)

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Diagnostics.Eventing.Reader;
+using System.Globalization;
 using System.IO;
 using TaskManagerPlus.Models;
 
@@ -9,8 +11,7 @@ namespace TaskManagerPlus.Services;
 /// observed delay rather than Task Manager's own estimated "startup impact" rating. Only works
 /// for an item whose process is still running: matches the executable named in the item's Command
 /// against Process.GetProcesses() by process name, then computes Process.StartTime minus the
-/// system's approximate boot time (Environment.TickCount64, the same approximation
-/// EventLogService already uses for its own last-boot correlation). When more than one process
+/// current session's boot time (see SessionBootTime). When more than one process
 /// shares that name, the one with the smallest plausible (non-negative, under 6 hours) delay is
 /// taken as the actual startup-launched instance, since a later relaunch by the user would show a
 /// much larger, implausible delay instead.
@@ -31,10 +32,42 @@ public static class StartupDelayService
     // genuinely busy background process shows a nonzero delta.
     private const int ImpactSampleWindowMs = 250;
 
+    /// <summary>When the current session booted (local time). Environment.TickCount64 alone counts
+    /// from the last COLD boot - with Fast Startup on (the default) an ordinary power-on is a hybrid
+    /// boot that doesn't reset it, so every item measured hours or days "after boot" and fell past
+    /// MaxPlausibleDelay. The newest Kernel-Boot 27 event with BootType 0 (cold) or 1 (hybrid) marks
+    /// this session's real start; 2 (resume from hibernation) is skipped, since items launched
+    /// before the hibernate would then read as starting before boot. Falls back to the tick count.
+    /// Lazy because no session boot happens while this process is alive.</summary>
+    private static readonly Lazy<DateTime> SessionBootTimeLazy = new(ReadSessionBootTime);
+    internal static DateTime SessionBootTime => SessionBootTimeLazy.Value;
+
+    private static DateTime ReadSessionBootTime()
+    {
+        var tickBoot = DateTime.Now - TimeSpan.FromMilliseconds(Environment.TickCount64);
+        try
+        {
+            var query = new EventLogQuery("System", PathType.LogName,
+                "*[System[Provider[@Name='Microsoft-Windows-Kernel-Boot'] and EventID=27]]") { ReverseDirection = true };
+            using var reader = new EventLogReader(query);
+            for (int i = 0; i < 20 && reader.ReadEvent() is { } record; i++)
+            {
+                using (record)
+                {
+                    if (record.TimeCreated is not { } created || record.Properties.Count == 0) continue;
+                    if (Convert.ToInt64(record.Properties[0].Value, CultureInfo.InvariantCulture) is not (0 or 1)) continue;
+                    return created > tickBoot && created <= DateTime.Now ? created : tickBoot;
+                }
+            }
+        }
+        catch { /* log unavailable/denied - tick-count approximation below */ }
+        return tickBoot;
+    }
+
     public static Dictionary<StartupItem, StartupMeasurement> ComputeDelays(IEnumerable<StartupItem> items)
     {
         var result = new Dictionary<StartupItem, StartupMeasurement>();
-        var bootTime = DateTime.Now - TimeSpan.FromMilliseconds(Environment.TickCount64);
+        var bootTime = SessionBootTime;
 
         Process[] processes;
         try { processes = Process.GetProcesses(); }

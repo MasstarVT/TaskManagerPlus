@@ -7,8 +7,8 @@ namespace TaskManagerPlus.Services;
 /// <summary>
 /// #748: persists each scan's measured startup delay per item, keyed by item Name, to
 /// startup-history.json under AppPaths.SettingsDirectory - same small-JSON/fail-silently-to-
-/// defaults settings pattern as boot-history.json (BootPerformanceService). Written once per scan
-/// (whenever StartupViewModel.Refresh's #91 delay scan measures a real delay for a still-running
+/// defaults settings pattern as boot-history.json (BootPerformanceService). At most one sample per
+/// item per boot (the first scan of a session that measures a real delay for a still-running
 /// item), not on any timer - the Startup tab itself is on-demand (initial load + manual Refresh),
 /// so this rides that same cadence rather than adding a new one.
 ///
@@ -65,8 +65,23 @@ public static class StartupHistoryService
     /// same item Name the caller passed in, so it maps straight back onto StartupItem rows.</summary>
     public static Dictionary<string, StartupCostStats> RecordAndCompute(IEnumerable<(string Name, double? DelaySeconds)> measurements)
     {
+        // Refresh() and the scheduled-task row load each call this from their own Task.Run, so the
+        // load-modify-save is serialized - two unlocked passes would each drop the other's batch.
+        lock (FileGate)
+            return RecordAndComputeLocked(measurements);
+    }
+
+    private static readonly object FileGate = new();
+
+    private static Dictionary<string, StartupCostStats> RecordAndComputeLocked(IEnumerable<(string Name, double? DelaySeconds)> measurements)
+    {
         var data = Load();
         bool changed = false;
+
+        // One sample per item per boot: every scan in the same session measures the same process
+        // launch, so recording each Refresh would fill the 20-sample window with duplicates of one
+        // boot and make "over your last N boots" untrue.
+        DateTime sessionBootUtc = StartupDelayService.SessionBootTime.ToUniversalTime();
 
         foreach (var (name, delaySeconds) in measurements)
         {
@@ -78,6 +93,7 @@ public static class StartupHistoryService
                 samples = new List<StartupCostSample>();
                 data[name] = samples;
             }
+            if (samples.Count > 0 && samples[^1].RecordedAtUtc >= sessionBootUtc) continue; // this boot already sampled
             samples.Add(new StartupCostSample { RecordedAtUtc = DateTime.UtcNow, DelaySeconds = seconds });
             if (samples.Count > MaxSamplesPerItem) samples.RemoveRange(0, samples.Count - MaxSamplesPerItem);
             changed = true;

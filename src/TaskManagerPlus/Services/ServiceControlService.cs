@@ -361,8 +361,8 @@ public sealed class ServiceControlService
     /// out to `sc.exe config ... start= &lt;type&gt;` - the same "known tool, not raw SCM interop"
     /// tradeoff ReadFailureActionsTextAsync below already takes for qfailure, and NEVER deletes
     /// the service. Returns the PREVIOUS start type (as sc.exe's own start= vocabulary: "auto"/
-    /// "demand"/"disabled") so a caller can record enough to Undo by calling this again with that
-    /// exact string.
+    /// "delayed-auto"/"demand"/"disabled"/"boot"/"system") so a caller can record enough to Undo
+    /// by calling this again with that exact string.
     /// </summary>
     public static (bool Success, string PreviousStartType, string? Error) SetStartupType(string serviceName, string startType)
     {
@@ -370,10 +370,14 @@ public sealed class ServiceControlService
         try
         {
             using var sc = new ServiceController(serviceName);
+            // ServiceStartMode has no delayed-auto member (it reports Automatic), so the registry
+            // flag decides; Boot/System are driver start types an undo must put back as-is.
             previous = sc.StartType switch
             {
-                ServiceStartMode.Automatic => "auto",
+                ServiceStartMode.Automatic => ReadDelayedAutostart(serviceName) ? "delayed-auto" : "auto",
                 ServiceStartMode.Disabled => "disabled",
+                ServiceStartMode.Boot => "boot",
+                ServiceStartMode.System => "system",
                 _ => "demand",
             };
         }
@@ -650,10 +654,25 @@ public sealed class ServiceControlService
             if (dllPath.StartsWith(@"\SystemRoot\", StringComparison.OrdinalIgnoreCase))
                 dllPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), dllPath[@"\SystemRoot\".Length..]);
 
-            return File.Exists(dllPath) ? (false, string.Empty) : (true, dllPath);
+            return ImageFileExists(dllPath) ? (false, string.Empty) : (true, dllPath);
         }
 
-        return File.Exists(exePath) ? (false, string.Empty) : (true, exePath);
+        return ImageFileExists(exePath) ? (false, string.Empty) : (true, exePath);
+    }
+
+    /// <summary>A root-less ImagePath - nearly every kernel driver's "System32\drivers\x.sys" (~190
+    /// on a stock install) - is relative to %SystemRoot%, which is where the loader resolves it;
+    /// File.Exists alone would test it against this process's current directory instead. A bare
+    /// file name additionally gets the System32/Windows/PATH search.</summary>
+    private static bool ImageFileExists(string path)
+    {
+        if (Path.IsPathRooted(path)) return File.Exists(path);
+        try
+        {
+            if (File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), path))) return true;
+        }
+        catch { /* malformed path - fall through */ }
+        return ResolvesToAnExistingFile(path);
     }
 
     /// <summary>Splits a resolved ImagePath command line down to just the executable portion - the
@@ -959,7 +978,9 @@ public sealed class ServiceControlService
         return result.OrderBy(e => e.ServiceName, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    private static readonly Regex RunProcessCommandLineRegex = new(@"COMMAND_LINE\s*:\s*(.*)", RegexOptions.IgnoreCase);
+    // [ \t]* rather than \s*, so an empty COMMAND_LINE value can't run on into the next line.
+    private static readonly Regex RunProcessCommandLineRegex = new(@"COMMAND_LINE[ \t]*:[ \t]*(.*)", RegexOptions.IgnoreCase);
+    private static readonly Regex ScLabelLineRegex = new(@"^[A-Z_]+[ \t]*:", RegexOptions.IgnoreCase);
 
     /// <summary>#757: parses one service's `sc qfailure` text (see ReadFailureActionsTextAsync) into
     /// outlier flags. No "FAILURE_ACTIONS" section at all means no recovery action is configured
@@ -972,6 +993,9 @@ public sealed class ServiceControlService
         // parentheses (e.g. "(sc.exe timed out)") - never mistake "couldn't read this" for "no
         // recovery action configured" and report a false outlier.
         if (qfailureText.Length == 0 || qfailureText.StartsWith('(')) return null;
+        // An sc.exe failure ("[SC] OpenService FAILED 5: ...") or empty output has no SERVICE_NAME
+        // header - also "couldn't read", not "no recovery action configured".
+        if (!qfailureText.Contains("SERVICE_NAME", StringComparison.OrdinalIgnoreCase)) return null;
 
         bool hasFailureActionsSection = qfailureText.Contains("FAILURE_ACTIONS", StringComparison.OrdinalIgnoreCase);
         bool noneConfigured = isAutomaticStart && !hasFailureActionsSection;
@@ -981,8 +1005,28 @@ public sealed class ServiceControlService
 
         if (hasFailureActionsSection)
         {
-            var lines = qfailureText.Replace("\r\n", "\n").Split('\n').Select(l => l.Trim());
-            foreach (var line in lines)
+            // Only the FAILURE_ACTIONS block holds actions: its first action sits on the label line
+            // itself ("FAILURE_ACTIONS : RESTART -- Delay = ..."), later ones on unlabelled
+            // continuation lines. The REBOOT_MESSAGE label sc.exe always prints is not an action.
+            var actions = new List<string>();
+            bool inActions = false;
+            foreach (var raw in qfailureText.Replace("\r\n", "\n").Split('\n'))
+            {
+                string line = raw.Trim();
+                if (line.StartsWith("FAILURE_ACTIONS", StringComparison.OrdinalIgnoreCase))
+                {
+                    inActions = true;
+                    int colon = line.IndexOf(':');
+                    if (colon >= 0) actions.Add(line[(colon + 1)..].Trim());
+                }
+                else if (inActions)
+                {
+                    if (line.Length == 0 || ScLabelLineRegex.IsMatch(line)) break;
+                    actions.Add(line);
+                }
+            }
+
+            foreach (var line in actions)
             {
                 if (line.StartsWith("REBOOT", StringComparison.OrdinalIgnoreCase))
                 {

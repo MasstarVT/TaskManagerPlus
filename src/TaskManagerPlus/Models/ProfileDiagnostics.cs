@@ -66,7 +66,21 @@ public sealed class ProfileListEntry : ObservableObject
     /// worth surfacing rather than decoding individual bit meanings.</summary>
     public bool StateLooksUnhealthy => State is not null and not 0;
 
-    public bool RefCountStuck => RefCount is > 0;
+    /// <summary>RefCount counts loads of the profile's hive, so it is legitimately nonzero for any
+    /// profile in use: LocalSystem/LocalService/NetworkService (S-1-5-18/19/20) stay loaded for the
+    /// life of the system, and so does the profile of the account running this app. Only a nonzero
+    /// count on some other profile reads as possibly stuck.</summary>
+    public bool RefCountStuck => RefCount is > 0 && !IsAlwaysLoadedSid(Sid);
+
+    private static readonly Lazy<string?> CurrentUserSid = new(() =>
+    {
+        try { return System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value; }
+        catch { return null; }
+    });
+
+    private static bool IsAlwaysLoadedSid(string sid)
+        => sid is "S-1-5-18" or "S-1-5-19" or "S-1-5-20"
+           || string.Equals(sid, CurrentUserSid.Value, StringComparison.OrdinalIgnoreCase);
 
     public bool PathMissing => !string.IsNullOrEmpty(ProfileImagePath) && !ProfileImagePathExists;
 

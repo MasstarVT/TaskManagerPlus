@@ -367,7 +367,21 @@ public static class CrashCorrelationService
 
     private const int WhatChangedWindowHours = 48;
 
-    public static async Task<WhatChangedResult> BuildWhatChangedAsync(DateTime clusterFirstSeen)
+    /// <summary>XPath time filter bounded on BOTH ends. A timediff()-only "newer than start" filter
+    /// read newest-first filled each query's event cap with events from after the window whenever
+    /// the cluster was more than a few days old, so the window itself was never reached.</summary>
+    private static string TimeWindowXPath(DateTime start, DateTime end)
+    {
+        static string Iso(DateTime t) => t.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+        return $"TimeCreated[@SystemTime >= '{Iso(start)}' and @SystemTime <= '{Iso(end)}']";
+    }
+
+    // Every reader below is synchronous (a full setupapi.dev.log scan, event-log queries, WMI,
+    // registry sweeps) and the callers await this straight from the dispatcher.
+    public static Task<WhatChangedResult> BuildWhatChangedAsync(DateTime clusterFirstSeen)
+        => Task.Run(() => BuildWhatChangedCoreAsync(clusterFirstSeen));
+
+    private static async Task<WhatChangedResult> BuildWhatChangedCoreAsync(DateTime clusterFirstSeen)
     {
         var start = clusterFirstSeen.AddHours(-WhatChangedWindowHours);
         try
@@ -408,37 +422,55 @@ public static class CrashCorrelationService
     /// install writes a "Section start"-timestamped block to, in a stable, well-known shape
     /// (">>>  [Device Install ... - <device>]" immediately followed by ">>>  Section start
     /// yyyy/MM/dd HH:mm:ss.fff") that's been consistent since Windows Vista. Read forwards (the
-    /// log is append-only, oldest first) with a bounded line count as a safety valve for an old
-    /// machine's multi-year log.</summary>
+    /// log is append-only, oldest first) up to the end of the window.</summary>
     private static List<WhatChangedEntry> ReadDriverInstallsFromSetupApiLog(DateTime start, DateTime end)
     {
         var results = new List<WhatChangedEntry>();
         try
         {
-            string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "INF", "setupapi.dev.log");
-            if (!File.Exists(path)) return results;
-
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var reader = new StreamReader(stream);
-            string? pendingHeader = null;
-            int linesScanned = 0;
-            const int maxLines = 500_000;
-            const int maxResults = 100;
-
-            string? line;
-            while ((line = reader.ReadLine()) is not null)
+            // Newer Windows rolls the log over into setupapi.dev.<yyyyMMdd_HHmmss>.log; a file last
+            // written before the window starts can't hold any of it. Each file is read whole (no
+            // line cap - a cap on a forward read only ever kept the OLDEST entries) and stops once
+            // its chronological entries pass the window's end.
+            var infDir = new DirectoryInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "INF"));
+            if (!infDir.Exists) return results;
+            foreach (var file in infDir.EnumerateFiles("setupapi.dev*.log").Where(f => f.LastWriteTime >= start))
             {
-                if (++linesScanned > maxLines || results.Count >= maxResults) break;
+                try { ScanSetupApiLog(file.FullName, start, end, results); }
+                catch { /* one locked/unreadable file - keep the others */ }
+            }
+        }
+        catch
+        {
+            // INF folder unreadable - contributes nothing, degrades gracefully.
+        }
+        return results;
+    }
 
-                var headerMatch = SetupApiHeaderRegex.Match(line);
-                if (headerMatch.Success) { pendingHeader = headerMatch.Groups[1].Value; continue; }
+    private static void ScanSetupApiLog(string path, DateTime start, DateTime end, List<WhatChangedEntry> results)
+    {
+        const int maxResults = 100;
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        string? pendingHeader = null;
 
-                var startMatch = SetupApiSectionStartRegex.Match(line);
-                if (!startMatch.Success) continue;
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            if (results.Count >= maxResults) break;
+            if (!line.StartsWith(">>>", StringComparison.Ordinal)) continue; // both patterns start with it - skip the regexes for the bulk
 
-                if (DateTime.TryParseExact(startMatch.Groups[1].Value, "yyyy/MM/dd HH:mm:ss.fff",
-                        CultureInfo.InvariantCulture, DateTimeStyles.None, out var ts)
-                    && ts >= start && ts <= end && pendingHeader is not null)
+            var headerMatch = SetupApiHeaderRegex.Match(line);
+            if (headerMatch.Success) { pendingHeader = headerMatch.Groups[1].Value; continue; }
+
+            var startMatch = SetupApiSectionStartRegex.Match(line);
+            if (!startMatch.Success) continue;
+
+            if (DateTime.TryParseExact(startMatch.Groups[1].Value, "yyyy/MM/dd HH:mm:ss.fff",
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var ts))
+            {
+                if (ts > end) break; // append-only, oldest first - nothing later in this file is in the window
+                if (ts >= start && pendingHeader is not null)
                 {
                     results.Add(new WhatChangedEntry
                     {
@@ -448,14 +480,9 @@ public static class CrashCorrelationService
                         Source = "setupapi.dev.log",
                     });
                 }
-                pendingHeader = null;
             }
+            pendingHeader = null;
         }
-        catch
-        {
-            // Log missing/locked/unreadable - contributes nothing, degrades gracefully.
-        }
-        return results;
     }
 
     /// <summary>Item 92: Microsoft-Windows-UserPnp event 20001 ("Driver Management concluded the
@@ -466,9 +493,8 @@ public static class CrashCorrelationService
         var results = new List<WhatChangedEntry>();
         try
         {
-            long maxAgeMs = (long)Math.Max(1, (DateTime.Now - start).TotalMilliseconds);
             var query = new EventLogQuery("System", PathType.LogName,
-                $"*[System[Provider[@Name='Microsoft-Windows-UserPnp'] and (EventID=20001) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+                $"*[System[Provider[@Name='Microsoft-Windows-UserPnp'] and (EventID=20001) and {TimeWindowXPath(start, end)}]]")
             {
                 ReverseDirection = true,
             };
@@ -574,9 +600,8 @@ public static class CrashCorrelationService
         var results = new List<WhatChangedEntry>();
         try
         {
-            long maxAgeMs = (long)Math.Max(1, (DateTime.Now - start).TotalMilliseconds);
             var query = new EventLogQuery("System", PathType.LogName,
-                $"*[System[Provider[@Name='Microsoft-Windows-WindowsUpdateClient'] and (EventID=19) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+                $"*[System[Provider[@Name='Microsoft-Windows-WindowsUpdateClient'] and (EventID=19) and {TimeWindowXPath(start, end)}]]")
             {
                 ReverseDirection = true,
             };
@@ -632,8 +657,10 @@ public static class CrashCorrelationService
                 {
                     string? installedOnRaw = mo["InstalledOn"] as string;
                     if (string.IsNullOrWhiteSpace(installedOnRaw)) continue;
-                    if (!DateTime.TryParse(installedOnRaw, CultureInfo.CurrentCulture, DateTimeStyles.None, out var date)
-                        && !DateTime.TryParse(installedOnRaw, CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
+                    // InstalledOn is written M/d/yyyy whatever the locale - invariant first, or a
+                    // current-culture parse swaps day and month on en-GB/de-DE/fr-FR.
+                    if (!DateTime.TryParse(installedOnRaw, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
+                        && !DateTime.TryParse(installedOnRaw, CultureInfo.CurrentCulture, DateTimeStyles.None, out date))
                         continue;
                     if (date.Date < start.Date || date.Date > end.Date) continue;
 
@@ -669,9 +696,8 @@ public static class CrashCorrelationService
         var results = new List<WhatChangedEntry>();
         try
         {
-            long maxAgeMs = (long)Math.Max(1, (DateTime.Now - start).TotalMilliseconds);
             var query = new EventLogQuery("Application", PathType.LogName,
-                $"*[System[Provider[@Name='MsiInstaller'] and (EventID=11707 or EventID=1033) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+                $"*[System[Provider[@Name='MsiInstaller'] and (EventID=11707 or EventID=1033) and {TimeWindowXPath(start, end)}]]")
             {
                 ReverseDirection = true,
             };

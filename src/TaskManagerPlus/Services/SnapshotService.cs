@@ -27,8 +27,13 @@ public static class SnapshotService
     /// seconds), which is why this is CaptureAsync rather than the plain synchronous method it used
     /// to be; SummaryViewModel's SaveSnapshotCommand/CompareSnapshotCommand are AsyncRelayCommand
     /// for exactly this reason. Still a single explicit user action (Save/Compare snapshot), so
-    /// this is squarely within CLAUDE.md's on-demand-action convention rather than a timer.</summary>
-    public static async Task<SystemSnapshot> CaptureAsync(double? idleCpuTempC = null)
+    /// this is squarely within CLAUDE.md's on-demand-action convention rather than a timer.
+    /// The whole body runs under Task.Run: the registry/ServiceController/WMI reads below are
+    /// synchronous and would otherwise run on a UI-thread caller's dispatcher after the awaits.</summary>
+    public static Task<SystemSnapshot> CaptureAsync(double? idleCpuTempC = null)
+        => Task.Run(() => CaptureCoreAsync(idleCpuTempC));
+
+    private static async Task<SystemSnapshot> CaptureCoreAsync(double? idleCpuTempC)
     {
         var driverInventory = await DriverInventoryService.ListAsync();
         var driverStore = await DriverStoreService.ListAsync();

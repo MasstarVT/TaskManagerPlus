@@ -168,7 +168,8 @@ public sealed class EvidenceBundleViewModel : ObservableObject
         {
             _manifest = await EvidenceBundleService.CollectAsync(selected, _stagingDir, _ctx, progress, CancellationToken.None);
             _findingsSnapshot = BuildFindingsSnapshot();
-            _timelineSnapshot = BuildTimelineSnapshotCheap();
+            // WMI (Win32_ReliabilityRecords) plus several event-log reads - off the dispatcher.
+            _timelineSnapshot = await Task.Run(BuildTimelineSnapshotCheap);
 
             if (ScrubPersonalInfo)
             {
@@ -373,7 +374,14 @@ public sealed class EvidenceBundleViewModel : ObservableObject
         try
         {
             ForumPostStatusText = "Building forum post...";
-            string markdown = await Task.Run(BuildForumPostMarkdown);
+            // The live, UI-owned state (the metric bag, the polled Services/Processes collections)
+            // is snapshotted here on the dispatcher - enumerating those collections from Task.Run
+            // races every poll tick ("Collection was modified"). Only rule evaluation, the WMI
+            // crash read and the formatting run off-thread.
+            var bag = RulesEngineService.BuildMetricBag(_ctx.Performance, _ctx.EnergyThermals, _ctx.SystemSpecs, _ctx.Services, _ctx.Processes, out var unavailable);
+            var services = _ctx.Services.Services.ToList();
+            var processes = _ctx.Processes.Processes.ToList();
+            string markdown = await Task.Run(() => BuildForumPostMarkdown(bag, unavailable, services, processes));
 
             string? ssid = await ScrubRulesService.TryGetCurrentSsidAsync();
             var scrubber = PiiScrubber.Build(_scrubRuleSet, ssid);
@@ -391,9 +399,9 @@ public sealed class EvidenceBundleViewModel : ObservableObject
         }
     }
 
-    private string BuildForumPostMarkdown()
+    private string BuildForumPostMarkdown(Dictionary<string, object> bag, HashSet<string> unavailable,
+        List<ServiceRow> services, List<ProcessRow> processes)
     {
-        var bag = RulesEngineService.BuildMetricBag(_ctx.Performance, _ctx.EnergyThermals, _ctx.SystemSpecs, _ctx.Services, _ctx.Processes, out var unavailable);
         var result = _ctx.RulesEngine.Evaluate(bag, unavailable);
         var top = SummaryViewModel.SortIssues(new List<HealthIssue>(result.Findings), HealthFindingSortMode.Impact).Take(5).ToList();
         var crashes = TimelineService.GetReliabilityCrashEvents().OrderByDescending(e => e.Timestamp).Take(5).ToList();
@@ -437,7 +445,7 @@ public sealed class EvidenceBundleViewModel : ObservableObject
         sb.AppendLine();
         sb.AppendLine("| Service | Status | Start type |");
         sb.AppendLine("|---|---|---|");
-        foreach (var s in _ctx.Services.Services.OrderBy(s => s.DisplayName, StringComparer.OrdinalIgnoreCase))
+        foreach (var s in services.OrderBy(s => s.DisplayName, StringComparer.OrdinalIgnoreCase))
             sb.AppendLine($"| {s.DisplayName} | {s.Status} | {s.StartType} |");
         sb.AppendLine();
         sb.AppendLine("</details>");
@@ -447,7 +455,7 @@ public sealed class EvidenceBundleViewModel : ObservableObject
         sb.AppendLine();
         sb.AppendLine("| Process | PID | Memory | CPU % |");
         sb.AppendLine("|---|---|---|---|");
-        foreach (var p in _ctx.Processes.Processes.OrderByDescending(p => p.MemoryBytes).Take(20))
+        foreach (var p in processes.OrderByDescending(p => p.MemoryBytes).Take(20))
             sb.AppendLine($"| {p.Name} | {p.Pid} | {Formatting.FormatBytes(p.MemoryBytes)} | {p.CpuPercent:0.0} |");
         sb.AppendLine();
         sb.AppendLine("</details>");

@@ -32,7 +32,17 @@ public static class BundleReviewService
     {
         string extractDir = Path.Combine(Path.GetTempPath(), "TaskManagerPlus-BundleReview-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(extractDir);
-        ZipFile.ExtractToDirectory(zipPath, extractDir, overwriteFiles: true);
+        try
+        {
+            ZipFile.ExtractToDirectory(zipPath, extractDir, overwriteFiles: true);
+        }
+        catch
+        {
+            // Not a zip / truncated / disk full: the caller never learns this folder's path, so a
+            // half-extracted copy (possibly GBs of minidumps) would otherwise stay in %TEMP%.
+            Cleanup(extractDir);
+            throw;
+        }
 
         var manifest = ReadJson<EvidenceBundleManifest>(Path.Combine(extractDir, "manifest.json")) ?? new EvidenceBundleManifest();
         var findings = ReadJson<List<HealthIssue>>(Path.Combine(extractDir, "AppData", "findings.json")) ?? new List<HealthIssue>();

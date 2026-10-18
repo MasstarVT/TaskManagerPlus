@@ -236,7 +236,7 @@ public static class EvidenceBundleService
 
         try
         {
-            Task<List<EvidenceBundleManifestEntry>> task = item.Kind switch
+            Task<List<EvidenceBundleManifestEntry>> Start() => item.Kind switch
             {
                 EvidenceBundleCollectorKind.MsInfo32 => CollectMsInfo32Async(stagingDir),
                 EvidenceBundleCollectorKind.DxDiag => CollectDxDiagAsync(stagingDir),
@@ -262,6 +262,12 @@ public static class EvidenceBundleService
                 EvidenceBundleCollectorKind.AppBaselines => CollectAppBaselinesAsync(stagingDir),
                 _ => Task.FromResult(new List<EvidenceBundleManifestEntry> { FailureEntry(item.Kind.ToString(), item.Title, "-", "Unknown collector.") }),
             };
+
+            // The collectors do blocking work (WMI/event-log reads, file copies, the SHA-256 of
+            // every output) before and between their awaits, which would otherwise run on the
+            // calling dispatcher - and WaitAsync can't time out a collector that never yields.
+            // AppFindings alone reads the live, UI-owned ViewModels, so it stays on the caller.
+            var task = item.Kind == EvidenceBundleCollectorKind.AppFindings ? Start() : Task.Run(Start);
 
             return await task.WaitAsync(overallTimeout);
         }

@@ -744,10 +744,16 @@ public static class ScheduledTaskService
     {
         if (string.IsNullOrWhiteSpace(taskToRun)) return (false, string.Empty);
 
-        string path = StartupManagerService.ExtractPath(taskToRun);
+        string path = ExtractTaskTarget(taskToRun);
         if (path.Length == 0) return (false, string.Empty);
 
         string expanded = Environment.ExpandEnvironmentVariables(path);
+
+        // schtasks prints a placeholder rather than a command line for COM-handler and multi-action
+        // tasks ("COM handler", "Multiple actions" - over half of a stock box's tasks, and localized
+        // on other UI languages). A bare, extension-less word can't be confirmed missing either way
+        // (it isn't a path, and a real bare command would resolve via PATHEXT), so never flag it.
+        if (Path.GetFileName(expanded) == expanded && !Path.HasExtension(expanded)) return (false, string.Empty);
 
         // A bare executable name with no directory component (e.g. "cmd.exe") is meant to resolve
         // via the OS's own PATH search at launch time, not relative to this app's own working
@@ -766,6 +772,40 @@ public static class ScheduledTaskService
             ? $"Points at a network path that couldn't be found: {expanded}"
             : $"Points at a file that no longer exists: {expanded}";
         return (true, reason);
+    }
+
+    private static readonly Regex ExecutableBoundaryRegex = new(@"^.*?\.(?:exe|com|bat|cmd)(?=\s|""|$)", RegexOptions.IgnoreCase);
+
+    /// <summary>StartupManagerService.ExtractPath cuts an unquoted command line at its first space,
+    /// which turns the common unquoted "C:\Program Files\Vendor\app.exe --arg" into "C:\Program".
+    /// For that shape, take the first executable-extension boundary (what CreateProcess ends up
+    /// launching), else grow the prefix one space-separated token at a time until it names an
+    /// existing local file. Quoted and space-free command lines are unchanged.</summary>
+    private static string ExtractTaskTarget(string taskToRun)
+    {
+        string trimmed = taskToRun.Trim();
+        if (trimmed.Length == 0 || trimmed[0] == '"' || !trimmed.Contains(' '))
+            return StartupManagerService.ExtractPath(trimmed);
+
+        var boundary = ExecutableBoundaryRegex.Match(trimmed);
+        if (boundary.Success) return boundary.Value;
+
+        // Local paths only - a File.Exists per token against a dead UNC share would block per call.
+        if (!trimmed.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            try
+            {
+                for (int space = trimmed.IndexOf(' '); space > 0; space = trimmed.IndexOf(' ', space + 1))
+                {
+                    string prefix = trimmed[..space];
+                    if (File.Exists(Environment.ExpandEnvironmentVariables(prefix))) return prefix;
+                }
+                if (File.Exists(Environment.ExpandEnvironmentVariables(trimmed))) return trimmed;
+            }
+            catch { /* malformed path - fall back below */ }
+        }
+
+        return StartupManagerService.ExtractPath(trimmed);
     }
 
     /// <summary>Resolves a bare executable name (no directory component) against System32,

@@ -530,7 +530,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         foreach (var row in Services)
         {
             string baseText;
-            if (byName.TryGetValue(row.ServiceName, out var d))
+            if (TryGetByEventName(byName, row, out var d))
             {
                 baseText = $"~{d.LastStartDurationMs / 1000.0:0.0}s (avg {d.AvgStartDurationMs / 1000.0:0.0}s, {d.SampleCount} samples)";
                 matched++;
@@ -542,7 +542,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
 
             // #193: append the start-timeout failure case, which 7036 (a stopped/running state
             // transition) never logs at all for a service that timed out instead.
-            if (timeouts.TryGetValue(row.ServiceName, out var timeoutHit))
+            if (TryGetByEventName(timeouts, row, out var timeoutHit))
             {
                 string timeoutNote = $"{timeoutHit.TimeoutCount} start-timeout(s) (SCM 7009) in last 30 days";
                 baseText = baseText == "No recent data" ? timeoutNote : $"{baseText} — {timeoutNote}";
@@ -554,6 +554,13 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
 
         StartDurationStatus = $"Found start-duration/timeout history for {matched} of {Services.Count} services (last {30} days, approximate - see tooltip).";
     }
+
+    /// <summary>SCM 7000/7009/7031/7034/7036 name the service by its DISPLAY name (the key name is
+    /// only in the event's binary data), so event-derived lookups try the row's display name first
+    /// and fall back to its key name.</summary>
+    private static bool TryGetByEventName<T>(Dictionary<string, T> byEventName, ServiceRow row,
+        [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out T value)
+        => byEventName.TryGetValue(row.DisplayName, out value) || byEventName.TryGetValue(row.ServiceName, out value);
 
     /// <summary>#192: correlates SCM 7000/7009/7024/7031/7034 per service, badges every service the
     /// scan flags as crash-looping (ServiceCrashLoopInfo.IsCrashLooping), and builds CrashLoopSummary
@@ -568,7 +575,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
 
         foreach (var row in Services)
         {
-            if (byName.TryGetValue(row.ServiceName, out var info) && info.IsCrashLooping)
+            if (TryGetByEventName(byName, row, out var info) && info.IsCrashLooping)
             {
                 row.IsCrashLoopingFlagged = true;
                 row.CrashLoopSummaryText = $"{info.TerminatedCount} unexpected termination(s), {info.TimeoutCount} start-timeout(s), {info.FailedToStartCount} failed start(s) in the last 30 days.";
@@ -580,9 +587,19 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
             }
         }
 
+        // sc qfailure needs the key name; the scan's names are display names (see TryGetByEventName).
+        // Display names go in first so a key name can't shadow another service's display name.
+        var keyNameByEventName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in Services) keyNameByEventName.TryAdd(row.DisplayName, row.ServiceName);
+        foreach (var row in Services) keyNameByEventName.TryAdd(row.ServiceName, row.ServiceName);
+
         var flagged = loops.Where(l => l.IsCrashLooping).OrderByDescending(l => l.TotalCount).ToList();
         foreach (var info in flagged)
-            info.RecoveryActionsText = await ServiceControlService.ReadFailureActionsTextAsync(info.ServiceName);
+        {
+            info.RecoveryActionsText = keyNameByEventName.TryGetValue(info.ServiceName, out var keyName)
+                ? await ServiceControlService.ReadFailureActionsTextAsync(keyName)
+                : "(no installed service matches this name - recovery settings not read)";
+        }
 
         CrashLoopSummary.Clear();
         foreach (var info in flagged) CrashLoopSummary.Add(info);
