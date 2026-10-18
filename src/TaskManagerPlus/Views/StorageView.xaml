@@ -1826,10 +1826,34 @@
 
                             <!-- #358: hibernation -->
                             <TextBlock Text="Hibernation" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,16,0,4" />
-                            <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap">
+                            <!-- Facts only when powercfg was actually read; otherwise the reason, never a default "Enabled: False". -->
+                            <TextBlock Margin="0,0,0,4" TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HibernationInfo.Available}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
                                 <Run Text="Enabled: " /><Run Text="{Binding HibernationInfo.Enabled, Mode=OneWay}" />
                                 <Run Text=" · hiberfil.sys: " /><Run Text="{Binding HibernationInfo.HiberFileSizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown, Mode=OneWay}" />
                                 <Run Text=" · Size policy: " /><Run Text="{Binding HibernationInfo.HiberFileSizePercent, TargetNullValue='Windows default (not customized)', StringFormat={}{0}% of RAM, Mode=OneWay}" />
+                            </TextBlock>
+                            <TextBlock Margin="0,0,0,4" TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HibernationInfo.Available}" Value="False">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                                <Run Text="Hibernation status unknown: " /><Run Text="{Binding HibernationInfo.UnavailableReason, Mode=OneWay}" />
                             </TextBlock>
                             <TextBlock Text="Disabling hibernation also disables Fast Startup, since Fast Startup depends on it - stated here before you click Disable."
                                        Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap" />
