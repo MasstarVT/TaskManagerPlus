@@ -57,7 +57,17 @@ public static class PnpUtilService
     /// timeout, since exporting a large driver store to a slow (network/USB) destination can
     /// genuinely take a while.</summary>
     public static Task<(bool Success, string Message)> ExportDriversAsync(string destinationFolder) =>
-        RunArgsAsync($"/export-driver * \"{destinationFolder}\"", timeoutMs: 300000);
+        RunArgsAsync($"/export-driver * \"{EscapeTrailingBackslashes(destinationFolder)}\"", timeoutMs: 300000);
+
+    /// <summary>A drive root from the folder picker ("E:\") would otherwise end in `\"`, which the
+    /// command-line parser reads as an escaped quote (`E:"` plus whatever follows). Doubling the
+    /// trailing backslashes keeps the closing quote; trimming them instead would turn "E:\" into
+    /// the drive-relative "E:".</summary>
+    private static string EscapeTrailingBackslashes(string path)
+    {
+        int trailing = path.Length - path.TrimEnd('\\').Length;
+        return trailing == 0 ? path : path + new string('\\', trailing);
+    }
 
     /// <summary>#485: installs every .inf found under sourceFolder (recursively, via /subdirs).
     /// Same long-timeout rationale as ExportDriversAsync above.</summary>

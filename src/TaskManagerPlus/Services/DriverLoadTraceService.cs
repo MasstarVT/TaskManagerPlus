@@ -54,6 +54,15 @@ public static class DriverLoadTraceService
             : (false, string.IsNullOrWhiteSpace(error) ? "logman couldn't stop the trace session." : error);
     }
 
+    /// <summary>Synchronous best-effort stop for app shutdown (DevicesDriversViewModel.Dispose on the
+    /// UI thread) - the async path would deadlock there, since RunLogmanAsync resumes on the
+    /// captured context. Bounded so a wedged logman can't hold up exit.</summary>
+    public static void StopOnExit()
+    {
+        try { ToolRunner.RunCaptured("logman.exe", $"stop {SessionName} -ets", TimeSpan.FromSeconds(5)); }
+        catch { /* best-effort - nothing more to do at exit */ }
+    }
+
     private static async Task<(bool Success, string Output, string Error)> RunLogmanAsync(string arguments)
     {
         try

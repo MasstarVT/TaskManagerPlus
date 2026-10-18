@@ -205,18 +205,36 @@ public static class ReclaimableSpaceService
         if (!completed)
             return new HibernationInfo { Available = false, UnavailableReason = "powercfg.exe did not respond." };
 
-        int splitIndex = output.IndexOf("following sleep states are not available", StringComparison.OrdinalIgnoreCase);
-        string availableSection = splitIndex >= 0 ? output[..splitIndex] : output;
-        bool enabled = Regex.IsMatch(availableSection, @"^\s*Hibernate\s*$", RegexOptions.IgnoreCase | RegexOptions.Multiline);
-
         long? hiberSize = null;
+        bool? hiberFileExists = null;
         try
         {
             string systemDrive = Environment.GetEnvironmentVariable("SystemDrive") ?? "C:";
             string hiberPath = Path.Combine(systemDrive + "\\", "hiberfil.sys");
-            if (File.Exists(hiberPath)) hiberSize = new FileInfo(hiberPath).Length;
+            hiberFileExists = File.Exists(hiberPath);
+            if (hiberFileExists == true) hiberSize = new FileInfo(hiberPath).Length;
         }
         catch { /* hidden system file may not be enumerable even to this elevated process - leave null */ }
+
+        bool enabled;
+        if (output.Contains("sleep states are", StringComparison.OrdinalIgnoreCase))
+        {
+            int splitIndex = output.IndexOf("following sleep states are not available", StringComparison.OrdinalIgnoreCase);
+            string availableSection = splitIndex >= 0 ? output[..splitIndex] : output;
+            enabled = Regex.IsMatch(availableSection, @"^\s*Hibernate\s*$", RegexOptions.IgnoreCase | RegexOptions.Multiline);
+        }
+        else if (hiberFileExists is { } exists)
+        {
+            // powercfg's text is localized and the English markers above are missing. The
+            // HibernateEnabled registry value isn't a usable substitute (it can be absent while
+            // hibernation is on), but hiberfil.sys is present while hibernation (or Fast Startup's
+            // reduced hiberfile) is on and removed by `powercfg /hibernate off`.
+            enabled = exists;
+        }
+        else
+        {
+            return new HibernationInfo { Available = false, UnavailableReason = "Couldn't interpret powercfg /a output on this Windows language, or check for hiberfil.sys.", RawText = output.Trim() };
+        }
 
         int? sizePercent = null;
         try

@@ -447,64 +447,67 @@ public sealed class WindowsHealthViewModel : ObservableObject
     public WindowsHealthViewModel()
     {
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
-        ResumeUpdatesCommand = new AsyncRelayCommand(ResumeUpdatesAsync, () => UpdatePolicy.IsPausedNow);
+        // Every command below that changes something on this PC also checks the app-wide read-only
+        // switch; scans, queries, exports and Cancel buttons deliberately don't.
+        ResumeUpdatesCommand = new AsyncRelayCommand(ResumeUpdatesAsync, () => UpdatePolicy.IsPausedNow && !ReadOnlyModeService.IsReadOnly);
         LoadServicingPackagesCommand = new AsyncRelayCommand(LoadServicingPackagesAsync);
         CheckFeatureUpdateFailureCommand = new AsyncRelayCommand(CheckFeatureUpdateFailureAsync);
         RunSetupDiagCommand = new AsyncRelayCommand(RunSetupDiagAsync, () => FeatureUpdateFailure?.SetupDiagAvailable ?? false);
         CheckWuServerReachabilityCommand = new AsyncRelayCommand(CheckWuServerReachabilityAsync, () => !string.IsNullOrEmpty(UpdatePolicy.WuServer));
         LoadUpdateServiceStackHealthCommand = new AsyncRelayCommand(LoadUpdateServiceStackHealthAsync);
-        RestoreUpdateServiceStackDefaultsCommand = new AsyncRelayCommand(RestoreUpdateServiceStackDefaultsAsync, () => HasFlaggedUpdateServices);
-        ResetWindowsUpdateComponentsCommand = new AsyncRelayCommand(ResetWindowsUpdateComponentsAsync);
+        RestoreUpdateServiceStackDefaultsCommand = new AsyncRelayCommand(RestoreUpdateServiceStackDefaultsAsync, () => HasFlaggedUpdateServices && !ReadOnlyModeService.IsReadOnly);
+        ResetWindowsUpdateComponentsCommand = new AsyncRelayCommand(ResetWindowsUpdateComponentsAsync, () => !ReadOnlyModeService.IsReadOnly);
         CheckUpdateCacheSizeCommand = new AsyncRelayCommand(CheckUpdateCacheSizeAsync);
-        ClearUpdateCacheCommand = new AsyncRelayCommand(ClearUpdateCacheAsync, () => UpdateCacheInfo is { } c && (c.DownloadCacheSizeBytes > 0 || c.DeliveryOptimizationCacheSizeBytes > 0));
+        ClearUpdateCacheCommand = new AsyncRelayCommand(ClearUpdateCacheAsync, () => UpdateCacheInfo is { } c && (c.DownloadCacheSizeBytes > 0 || c.DeliveryOptimizationCacheSizeBytes > 0) && !ReadOnlyModeService.IsReadOnly);
         LoadRemovableUpdatesCommand = new AsyncRelayCommand(LoadRemovableUpdatesAsync);
-        UninstallUpdateCommand = new AsyncRelayCommand(UninstallUpdateAsync);
+        UninstallUpdateCommand = new AsyncRelayCommand(UninstallUpdateAsync, _ => !ReadOnlyModeService.IsReadOnly);
 
         AnalyzeComponentStoreCommand = new AsyncRelayCommand(AnalyzeComponentStoreAsync, () => !IsAnalyzingComponentStore);
         ToggleComponentStoreRawOutputCommand = new RelayCommand(() => ShowComponentStoreRawOutput = !ShowComponentStoreRawOutput);
 
-        RunComponentCleanupCommand = new AsyncRelayCommand(() => RunComponentCleanupAsync(resetBase: false), () => !IsCleaningComponentStore && !IsResetBaseRunning);
-        RunComponentCleanupResetBaseCommand = new AsyncRelayCommand(() => RunComponentCleanupAsync(resetBase: true), () => !IsCleaningComponentStore && !IsResetBaseRunning);
+        RunComponentCleanupCommand = new AsyncRelayCommand(() => RunComponentCleanupAsync(resetBase: false), () => !IsCleaningComponentStore && !IsResetBaseRunning && !ReadOnlyModeService.IsReadOnly);
+        RunComponentCleanupResetBaseCommand = new AsyncRelayCommand(() => RunComponentCleanupAsync(resetBase: true), () => !IsCleaningComponentStore && !IsResetBaseRunning && !ReadOnlyModeService.IsReadOnly);
         CancelComponentCleanupCommand = new RelayCommand(() => _cleanupCts?.Cancel(), () => IsCleaningComponentStore || IsResetBaseRunning);
 
         RunCheckHealthCommand = new AsyncRelayCommand(RunCheckHealthAsync, () => !IsCheckingHealth);
         RunScanHealthCommand = new AsyncRelayCommand(RunScanHealthAsync, () => !IsScanningHealth);
         CancelScanHealthCommand = new RelayCommand(() => _scanHealthCts?.Cancel(), () => IsScanningHealth);
-        RunRestoreHealthCommand = new AsyncRelayCommand(() => RunRestoreHealthAsync(null), () => !IsRestoringHealth);
+        RunRestoreHealthCommand = new AsyncRelayCommand(() => RunRestoreHealthAsync(null), () => !IsRestoringHealth && !ReadOnlyModeService.IsReadOnly);
         CancelRestoreHealthCommand = new RelayCommand(() => _restoreHealthCts?.Cancel(), () => IsRestoringHealth);
 
         BrowseRepairSourceCommand = new AsyncRelayCommand(BrowseRepairSourceAsync, () => !IsLoadingRepairSourceImages);
-        RetryRestoreHealthWithSourceCommand = new AsyncRelayCommand(RetryRestoreHealthWithSourceAsync, () => SelectedRepairSourceImage is not null && !IsRestoringHealth);
+        RetryRestoreHealthWithSourceCommand = new AsyncRelayCommand(RetryRestoreHealthWithSourceAsync, () => SelectedRepairSourceImage is not null && !IsRestoringHealth && !ReadOnlyModeService.IsReadOnly);
 
-        RunSfcScanCommand = new AsyncRelayCommand(RunSfcScanAsync, () => !IsRunningSfcScan);
+        RunSfcScanCommand = new AsyncRelayCommand(RunSfcScanAsync, () => !IsRunningSfcScan && !ReadOnlyModeService.IsReadOnly);
         CancelSfcScanCommand = new RelayCommand(() => _sfcCts?.Cancel(), () => IsRunningSfcScan);
 
         LoadSystemRestoreCommand = new AsyncRelayCommand(LoadSystemRestoreAsync);
-        CreateRestorePointCommand = new AsyncRelayCommand(CreateRestorePointAsync, () => !IsCreatingRestorePoint);
-        LaunchRstruiCommand = new RelayCommand(SystemRestoreService.LaunchRstrui);
+        CreateRestorePointCommand = new AsyncRelayCommand(CreateRestorePointAsync, () => !IsCreatingRestorePoint && !ReadOnlyModeService.IsReadOnly);
+        // rstrui's only outcome is rolling the system back, so it's gated like the actions above.
+        LaunchRstruiCommand = new RelayCommand(SystemRestoreService.LaunchRstrui, () => !ReadOnlyModeService.IsReadOnly);
 
         VerifyWmiRepositoryCommand = new AsyncRelayCommand(VerifyWmiRepositoryAsync, () => !IsCheckingWmiRepository);
-        SalvageWmiRepositoryCommand = new AsyncRelayCommand(SalvageWmiRepositoryAsync, () => !IsSalvagingWmiRepository);
-        ResetWmiRepositoryCommand = new AsyncRelayCommand(ResetWmiRepositoryAsync, () => !IsResettingWmiRepository);
+        SalvageWmiRepositoryCommand = new AsyncRelayCommand(SalvageWmiRepositoryAsync, () => !IsSalvagingWmiRepository && !ReadOnlyModeService.IsReadOnly);
+        ResetWmiRepositoryCommand = new AsyncRelayCommand(ResetWmiRepositoryAsync, () => !IsResettingWmiRepository && !ReadOnlyModeService.IsReadOnly);
 
         LoadWmiDiagnosticsCommand = new AsyncRelayCommand(LoadWmiDiagnosticsAsync, () => !IsLoadingWmiDiagnostics);
 
         LoadRegistryHealthCommand = new AsyncRelayCommand(LoadRegistryHealthAsync, () => !IsLoadingRegistryHealth);
-        EnablePeriodicBackupCommand = new AsyncRelayCommand(EnablePeriodicBackupAsync, () => RegistryBackupStatus?.PeriodicBackupEnabled != true);
+        EnablePeriodicBackupCommand = new AsyncRelayCommand(EnablePeriodicBackupAsync, () => RegistryBackupStatus?.PeriodicBackupEnabled != true && !ReadOnlyModeService.IsReadOnly);
 
-        UndoRegistryChangeCommand = new RelayCommand(param => _ = UndoRegistryChangeAsync(param as RegistryChangeEntry), param => param is RegistryChangeEntry { Undone: false });
+        UndoRegistryChangeCommand = new RelayCommand(param => _ = UndoRegistryChangeAsync(param as RegistryChangeEntry), param => param is RegistryChangeEntry { Undone: false } && !ReadOnlyModeService.IsReadOnly);
         ExportRegistryChangeCommand = new RelayCommand(param => ExportRegistryChange(param as RegistryChangeEntry), param => param is RegistryChangeEntry);
 
         RunPathDoctorCommand = new AsyncRelayCommand(RunPathDoctorAsync, () => !IsRunningPathDoctor);
 
         LoadEnvironmentVariablesCommand = new AsyncRelayCommand(LoadEnvironmentVariablesAsync, () => !IsLoadingEnvironmentVariables);
-        SetEnvironmentVariableCommand = new AsyncRelayCommand(SetEnvironmentVariableAsync, () => !string.IsNullOrWhiteSpace(NewEnvVarName));
-        DeleteEnvironmentVariableCommand = new AsyncRelayCommand(param => DeleteEnvironmentVariableAsync(param as EnvironmentVariableEntry));
+        SetEnvironmentVariableCommand = new AsyncRelayCommand(SetEnvironmentVariableAsync, () => !string.IsNullOrWhiteSpace(NewEnvVarName) && !ReadOnlyModeService.IsReadOnly);
+        DeleteEnvironmentVariableCommand = new AsyncRelayCommand(param => DeleteEnvironmentVariableAsync(param as EnvironmentVariableEntry), _ => !ReadOnlyModeService.IsReadOnly);
 
         ScanProcessEnvironmentDriftCommand = new AsyncRelayCommand(ScanProcessEnvironmentDriftAsync, () => !IsScanningProcessEnvironmentDrift);
 
         LoadUpgradeReadinessCommand = new AsyncRelayCommand(LoadUpgradeReadinessAsync, () => !IsLoadingUpgradeReadiness);
-        MeasureEspForReadinessCommand = new AsyncRelayCommand(MeasureEspForReadinessAsync, () => !IsLoadingUpgradeReadiness && UpgradeReadiness is { EspFound: true });
+        MeasureEspForReadinessCommand = new AsyncRelayCommand(MeasureEspForReadinessAsync, () => !IsLoadingUpgradeReadiness && UpgradeReadiness is { EspFound: true } && !ReadOnlyModeService.IsReadOnly);
 
         // #796: the registry-change journal is a small local file (same cost tier as #787's
         // integrity-history.json below) - loaded up front so "Changes made by this app" already
@@ -1009,7 +1012,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
     }
 
     /// <summary>#784/#785: RestoreHealth - attempts an actual repair, optionally against the
-    /// #785-picked WIM source (sourceArg is the pre-built `/Source:WIM:"&lt;path&gt;":&lt;index&gt;
+    /// #785-picked WIM/ESD source (sourceArg is the pre-built `/Source:WIM|ESD:"&lt;path&gt;":&lt;index&gt;
     /// /LimitAccess` argument, or null for the plain Windows-Update-backed attempt). On success or
     /// failure alike, re-evaluates #788's repair-install guidance (a fresh failure is the more urgent
     /// trigger for that card). Progress into RestoreHealthProgressPercent; cancellable via
@@ -1075,11 +1078,14 @@ public sealed class WindowsHealthViewModel : ObservableObject
         }
     }
 
-    /// <summary>#785: retries RestoreHealth against the picked WIM path + image index.</summary>
+    /// <summary>#785: retries RestoreHealth against the picked WIM/ESD path + image index. DISM
+    /// needs the `ESD:` source prefix for an install.esd - `WIM:` against one fails to find the
+    /// source files.</summary>
     private async Task RetryRestoreHealthWithSourceAsync()
     {
         if (SelectedRepairSourceImage is not { } image || RepairSourceWimPath is not { } path) return;
-        string sourceArg = $"/Source:WIM:\"{path}\":{image.Index} /LimitAccess";
+        string prefix = System.IO.Path.GetExtension(path).Equals(".esd", StringComparison.OrdinalIgnoreCase) ? "ESD" : "WIM";
+        string sourceArg = $"/Source:{prefix}:\"{path}\":{image.Index} /LimitAccess";
         await RunRestoreHealthAsync(sourceArg);
     }
 

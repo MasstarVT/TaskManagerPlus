@@ -141,12 +141,21 @@ public static class EnvironmentHealthService
             using var key = hive.CreateSubKey(subKeyPath, writable: true);
             if (key is null) return (false, "Couldn't open the environment registry key (needs Administrator for Machine scope).");
 
-            var (oldRaw, _, existedBefore) = ReadRawValue(hive, subKeyPath, name);
+            var (oldRaw, oldIsExpand, existedBefore) = ReadRawValue(hive, subKeyPath, name);
             var kind = value.Contains('%') ? RegistryValueKind.ExpandString : RegistryValueKind.String;
             key.SetValue(name, value, kind);
 
+            // The journal entry carries one value kind and Undo writes OldValueText back with it, so
+            // the OLD value's kind wins wherever it matters - otherwise undoing an edit of a
+            // REG_EXPAND_SZ value (PATH, TEMP, ...) to a %-free value would restore its %VAR% text
+            // as REG_SZ, which never expands. A %-free REG_SZ old value reads the same either way,
+            // so it keeps the new kind (which the entry's .reg export also uses).
+            var journalKind = !existedBefore ? kind
+                : oldIsExpand ? RegistryValueKind.ExpandString
+                : oldRaw.Contains('%') ? RegistryValueKind.String
+                : kind;
             RegistryChangeJournalService.Record("Environment", $"Set {scope} variable \"{name}\"",
-                hiveName, subKeyPath, name, kind, existedBefore ? oldRaw : null, value);
+                hiveName, subKeyPath, name, journalKind, existedBefore ? oldRaw : null, value);
 
             BroadcastEnvironmentChange();
             return (true, null);

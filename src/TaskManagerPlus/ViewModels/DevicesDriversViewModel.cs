@@ -25,7 +25,7 @@ namespace TaskManagerPlus.ViewModels;
 /// each concern (inventory grid, per-device file detail, signature verification, security posture)
 /// is a self-contained group of properties/commands rather than intertwined state.
 /// </summary>
-public sealed class DevicesDriversViewModel : ObservableObject
+public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
 {
     // --- #453: primary inventory grid ---
     public ObservableCollection<DriverInventoryRow> Drivers { get; } = new();
@@ -96,14 +96,16 @@ public sealed class DevicesDriversViewModel : ObservableObject
     public string VerifyAllProgressText { get => _verifyAllProgressText; private set => SetProperty(ref _verifyAllProgressText, value); }
 
     // --- #456: security posture (code-integrity bypass detection) ---
-    private bool _testSigningEnabled;
-    public bool TestSigningEnabled { get => _testSigningEnabled; private set => SetProperty(ref _testSigningEnabled, value); }
+    // Null = Unknown (bcdedit failed, or printed a value this app can't read, e.g. a localized
+    // "Ja") - shown as Unknown, never as a clean Off/No.
+    private bool? _testSigningEnabled;
+    public bool? TestSigningEnabled { get => _testSigningEnabled; private set => SetProperty(ref _testSigningEnabled, value); }
 
-    private bool _noIntegrityChecksEnabled;
-    public bool NoIntegrityChecksEnabled { get => _noIntegrityChecksEnabled; private set => SetProperty(ref _noIntegrityChecksEnabled, value); }
+    private bool? _noIntegrityChecksEnabled;
+    public bool? NoIntegrityChecksEnabled { get => _noIntegrityChecksEnabled; private set => SetProperty(ref _noIntegrityChecksEnabled, value); }
 
-    private bool _driverSignatureEnforcementDisabled;
-    public bool DriverSignatureEnforcementDisabled { get => _driverSignatureEnforcementDisabled; private set => SetProperty(ref _driverSignatureEnforcementDisabled, value); }
+    private bool? _driverSignatureEnforcementDisabled;
+    public bool? DriverSignatureEnforcementDisabled { get => _driverSignatureEnforcementDisabled; private set => SetProperty(ref _driverSignatureEnforcementDisabled, value); }
 
     private int _codeIntegrityBlockedEventCount;
     public int CodeIntegrityBlockedEventCount { get => _codeIntegrityBlockedEventCount; private set => SetProperty(ref _codeIntegrityBlockedEventCount, value); }
@@ -118,7 +120,7 @@ public sealed class DevicesDriversViewModel : ObservableObject
     /// nointegritychecks are sometimes turned on deliberately by a developer, and a handful of old
     /// blocked-image events from months ago don't necessarily mean anything is wrong today.</summary>
     public bool IsSecurityPostureConcerning =>
-        TestSigningEnabled || NoIntegrityChecksEnabled || DriverSignatureEnforcementDisabled || CodeIntegrityBlockedEventCount > 0;
+        TestSigningEnabled == true || NoIntegrityChecksEnabled == true || DriverSignatureEnforcementDisabled == true || CodeIntegrityBlockedEventCount > 0;
 
     // --- sub-tab strip: this tab's second top-level view (#468's device tree) is distinct from
     // the driver-inventory grid above - toggled by two buttons rather than a WPF TabControl, kept
@@ -575,11 +577,14 @@ public sealed class DevicesDriversViewModel : ObservableObject
             _ = EnsureFilterDriversViewLoadedAsync();
         });
 
+        // Every command below that changes something on this PC (Driver Verifier, BCD safeboot,
+        // device enable/disable/restart/remove, driver-store delete/install, the rollback launcher)
+        // also checks the app-wide read-only switch.
         LoadVerifierStatusCommand = new AsyncRelayCommand(LoadVerifierStatusAsync);
-        OpenVerifierSetupWizardCommand = new RelayCommand(_ => OpenVerifierSetupWizard());
-        ResetVerifierCommand = new AsyncRelayCommand(ResetVerifierAsync);
-        EnableSafeBootCommand = new AsyncRelayCommand(() => ToggleSafeBootAsync(true));
-        DisableSafeBootCommand = new AsyncRelayCommand(() => ToggleSafeBootAsync(false));
+        OpenVerifierSetupWizardCommand = new RelayCommand(_ => OpenVerifierSetupWizard(), _ => !ReadOnlyModeService.IsReadOnly);
+        ResetVerifierCommand = new AsyncRelayCommand(ResetVerifierAsync, () => !ReadOnlyModeService.IsReadOnly);
+        EnableSafeBootCommand = new AsyncRelayCommand(() => ToggleSafeBootAsync(true), () => !ReadOnlyModeService.IsReadOnly);
+        DisableSafeBootCommand = new AsyncRelayCommand(() => ToggleSafeBootAsync(false), () => !ReadOnlyModeService.IsReadOnly);
         ScanKnownProblemDriversCommand = new AsyncRelayCommand(ScanKnownProblemDriversAsync);
         OpenEvidenceLinkCommand = new RelayCommand(param =>
         {
@@ -598,20 +603,20 @@ public sealed class DevicesDriversViewModel : ObservableObject
         LoadClassFiltersCommand = new AsyncRelayCommand(LoadClassFiltersAsync);
         LoadDeviceTreeCommand = new AsyncRelayCommand(LoadDeviceTreeAsync);
 
-        EnableDeviceCommand = new AsyncRelayCommand(() => SetSelectedDeviceEnabledAsync(true));
-        DisableDeviceCommand = new AsyncRelayCommand(() => SetSelectedDeviceEnabledAsync(false));
-        RestartDeviceCommand = new AsyncRelayCommand(RestartSelectedDeviceAsync);
-        RemoveDeviceCommand = new AsyncRelayCommand(RemoveSelectedDeviceAsync);
-        RemoveCheckedDevicesCommand = new AsyncRelayCommand(RemoveCheckedDevicesAsync);
+        EnableDeviceCommand = new AsyncRelayCommand(() => SetSelectedDeviceEnabledAsync(true), () => !ReadOnlyModeService.IsReadOnly);
+        DisableDeviceCommand = new AsyncRelayCommand(() => SetSelectedDeviceEnabledAsync(false), () => !ReadOnlyModeService.IsReadOnly);
+        RestartDeviceCommand = new AsyncRelayCommand(RestartSelectedDeviceAsync, () => !ReadOnlyModeService.IsReadOnly);
+        RemoveDeviceCommand = new AsyncRelayCommand(RemoveSelectedDeviceAsync, () => !ReadOnlyModeService.IsReadOnly);
+        RemoveCheckedDevicesCommand = new AsyncRelayCommand(RemoveCheckedDevicesAsync, () => !ReadOnlyModeService.IsReadOnly);
 
         LoadResourcesCommand = new AsyncRelayCommand(LoadResourcesAsync);
         LoadWakePowerCommand = new AsyncRelayCommand(LoadWakePowerAsync);
 
         LoadDriverStoreCommand = new AsyncRelayCommand(LoadDriverStoreAsync);
-        DeleteCheckedDriverPackagesCommand = new AsyncRelayCommand(DeleteCheckedDriverPackagesAsync);
+        DeleteCheckedDriverPackagesCommand = new AsyncRelayCommand(DeleteCheckedDriverPackagesAsync, () => !ReadOnlyModeService.IsReadOnly);
         ExportDriversCommand = new AsyncRelayCommand(ExportDriversAsync);
-        InstallDriverPackageCommand = new AsyncRelayCommand(InstallDriverPackageAsync);
-        RollbackDriverCommand = new RelayCommand(_ => RollbackSelectedDevice());
+        InstallDriverPackageCommand = new AsyncRelayCommand(InstallDriverPackageAsync, () => !ReadOnlyModeService.IsReadOnly);
+        RollbackDriverCommand = new RelayCommand(_ => RollbackSelectedDevice(), _ => !ReadOnlyModeService.IsReadOnly);
         OpenSnapshotUiCommand = new RelayCommand(_ => OpenSnapshotUiRequested?.Invoke(this, EventArgs.Empty));
 
         _ = RefreshAsync();
@@ -847,6 +852,13 @@ public sealed class DevicesDriversViewModel : ObservableObject
             DriverLoadTraceFilePath = null;
         }
         DriverLoadTraceStatusText = result.Message;
+    }
+
+    /// <summary>A `logman ... -ets` session isn't tied to this process - left running at exit it
+    /// keeps recording and the .etl keeps growing until reboot - so app exit stops it.</summary>
+    public void Dispose()
+    {
+        if (IsDriverLoadTraceRunning) DriverLoadTraceService.StopOnExit();
     }
 
     private async Task StopDriverLoadTraceAsync()

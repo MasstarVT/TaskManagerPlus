@@ -137,6 +137,10 @@
                                                 <Setter Property="Text" Value="On" />
                                                 <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                             </DataTrigger>
+                                            <DataTrigger Binding="{Binding TestSigningEnabled}" Value="{x:Null}">
+                                                <Setter Property="Text" Value="Unknown" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -154,6 +158,10 @@
                                                 <Setter Property="Text" Value="Yes" />
                                                 <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                             </DataTrigger>
+                                            <DataTrigger Binding="{Binding NoIntegrityChecksEnabled}" Value="{x:Null}">
+                                                <Setter Property="Text" Value="Unknown" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -170,6 +178,10 @@
                                             <DataTrigger Binding="{Binding DriverSignatureEnforcementDisabled}" Value="True">
                                                 <Setter Property="Text" Value="Yes" />
                                                 <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding DriverSignatureEnforcementDisabled}" Value="{x:Null}">
+                                                <Setter Property="Text" Value="Unknown" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>

@@ -144,17 +144,21 @@ public static class SfcIntegrityService
         // CancellationToken wired to a Cancel button.
         using var timeoutCts = new CancellationTokenSource(60 * 60 * 1000);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        // Wait on the exit alone: readTask only completes at stdout EOF, i.e. when sfc exits, so
+        // awaiting both together would never let the cancel/timeout reach the Kill below.
         try
         {
-            await Task.WhenAll(readTask, proc.WaitForExitAsync(linkedCts.Token)).ConfigureAwait(false);
+            await proc.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            string partial = fullOutput.ToString();
+            await Task.WhenAny(readTask, Task.Delay(5000)).ConfigureAwait(false);
+            string partial = readTask.IsCompleted ? fullOutput.ToString() : string.Empty;
             return (partial.Length > 0 ? partial : "(sfc timed out or was cancelled)", -1);
         }
 
+        await readTask.ConfigureAwait(false);
         string errText = await errorTask.ConfigureAwait(false);
         return (fullOutput.ToString() + errText, proc.ExitCode);
     }

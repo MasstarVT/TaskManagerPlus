@@ -311,14 +311,15 @@ public sealed class SystemSpecsViewModel : ObservableObject
 
         // #448: launches mdsched.exe, which shows its own "restart now / on next restart" dialog -
         // this app never waits on it, so a plain synchronous RelayCommand is enough (no async work
-        // of this app's own to await).
+        // of this app's own to await). Gated on read-only mode: mdsched's only outcomes are a
+        // restart or a next-boot test.
         RunMemoryDiagnosticCommand = new RelayCommand(_ =>
         {
             var (success, error) = MemoryDiagnosticLauncherService.Launch();
             MemoryDiagnosticLaunchStatusText = success
                 ? "Windows Memory Diagnostic launched - choose \"Restart now\" or \"Check for problems the next time I start my computer\" in its window. The test itself takes 10-40 minutes and runs entirely offline (before Windows loads)."
                 : $"Couldn't launch Windows Memory Diagnostic: {error}";
-        });
+        }, _ => !ReadOnlyModeService.IsReadOnly);
 
         _ = RefreshAsync();
     }

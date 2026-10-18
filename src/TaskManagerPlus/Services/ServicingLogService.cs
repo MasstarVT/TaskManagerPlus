@@ -483,11 +483,23 @@ public static class ServicingLogService
         {
             try { Directory.CreateDirectory(AppPaths.SettingsDirectory); } catch { /* Get-WindowsUpdateLog itself will surface any real problem */ }
 
+            // A WindowsUpdate.log left by an earlier run must not pass for this run's output - remove
+            // it first, and if that fails only accept a file written after this run started.
+            DateTime startedUtc = DateTime.UtcNow;
+            try { if (File.Exists(outPath)) File.Delete(outPath); } catch { /* falls back to the timestamp check below */ }
+
             string escapedPath = outPath.Replace("'", "''");
             string psCommand = $"Get-WindowsUpdateLog -LogPath '{escapedPath}'";
-            var (output, _) = await RunCapturedAsync("powershell.exe", $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{psCommand}\"", 180_000, ct);
+            var (output, exitCode) = await RunCapturedAsync("powershell.exe", $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{psCommand}\"", 180_000, ct);
 
-            if (!File.Exists(outPath))
+            if (exitCode is null)
+            {
+                result.Success = false;
+                result.ErrorMessage = "Get-WindowsUpdateLog timed out before it finished decoding the logs.";
+                return result;
+            }
+
+            if (!File.Exists(outPath) || File.GetLastWriteTimeUtc(outPath) < startedUtc)
             {
                 result.Success = false;
                 result.ErrorMessage = string.IsNullOrWhiteSpace(output)

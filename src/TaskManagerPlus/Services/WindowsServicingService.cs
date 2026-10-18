@@ -32,9 +32,11 @@ public static class WindowsServicingService
                 if (line.StartsWith("---", StringComparison.Ordinal)) continue;
                 if (line.StartsWith("Package Identity", StringComparison.OrdinalIgnoreCase)) continue; // header row
 
-                int sep = line.LastIndexOf('|');
-                string identity = line[..sep].Trim();
-                string state = line[(sep + 1)..].Trim();
+                // Columns are Package Identity | State | Release Type | Install Time - take the
+                // first two by position (also correct for a two-column table).
+                var cols = line.Split('|');
+                string identity = cols[0].Trim();
+                string state = cols[1].Trim();
                 if (identity.Length == 0 || state.Length == 0) continue;
 
                 result.Add(new ServicingPackageInfo { PackageIdentity = identity, State = state });

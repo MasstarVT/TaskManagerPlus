@@ -15,16 +15,19 @@ namespace TaskManagerPlus.Services;
 ///   2. Microsoft-Windows-CodeIntegrity/Operational, events 3004 (an image failed a signing
 ///      requirement) and 3033 (Code Integrity found a hash mismatch / policy violation) over the
 ///      same 30-day lookback window EventLogService's own queries use.
-/// Both degrade to "nothing found" on any failure (locked-down policy, log not present on this
-/// Windows edition/SKU, ...) rather than throw - same convention as every other event-log/shell-out
-/// read in this app.
+/// Neither throws: a bcdedit failure reports its flags as Unknown (null), and an event-log failure
+/// (locked-down policy, log not present on this Windows edition/SKU, ...) reports "nothing found" -
+/// same convention as every other event-log/shell-out read in this app.
 /// </summary>
 public static class CodeIntegrityPostureService
 {
+    /// <summary>The three bcdedit flags are null (Unknown) when bcdedit failed or timed out, or
+    /// printed a value other than Yes/No/On/Off (its values are localized - "Ja"/"Nein" on a German
+    /// install) - never reported as a clean "off".</summary>
     public sealed record CodeIntegrityPosture(
-        bool TestSigningEnabled,
-        bool NoIntegrityChecksEnabled,
-        bool DriverSignatureEnforcementDisabled,
+        bool? TestSigningEnabled,
+        bool? NoIntegrityChecksEnabled,
+        bool? DriverSignatureEnforcementDisabled,
         int BlockedImageEventCount,
         DateTime? LastBlockedImageEventTime,
         IReadOnlyList<string> RecentBlockedImageMessages);
@@ -39,37 +42,45 @@ public static class CodeIntegrityPostureService
     public static async Task<CodeIntegrityPosture> ReadAsync()
     {
         var (testSigning, noIntegrityChecks, dseDisabled) = await ReadBcdOptionsAsync();
-        var (count, last, messages) = ReadBlockedImageEvents();
+        // Up to 200 records plus FormatDescription - kept off the caller's (UI) thread.
+        var (count, last, messages) = await Task.Run(ReadBlockedImageEvents);
         return new CodeIntegrityPosture(testSigning, noIntegrityChecks, dseDisabled, count, last, messages);
     }
 
-    private static async Task<(bool TestSigning, bool NoIntegrityChecks, bool DseDisabled)> ReadBcdOptionsAsync()
+    private static async Task<(bool? TestSigning, bool? NoIntegrityChecks, bool? DseDisabled)> ReadBcdOptionsAsync()
     {
         try
         {
-            string output = await RunCapturedAsync("bcdedit.exe", "/enum {current}");
+            var (output, exitCode) = await RunCapturedAsync("bcdedit.exe", "/enum {current}");
             var fields = ParseFields(output);
+            // Timed out, failed (e.g. not elevated) or printed nothing parseable - Unknown.
+            if (exitCode != 0 || fields.Count == 0) return (null, null, null);
 
-            bool testSigning = fields.TryGetValue("testsigning", out var ts) && IsAffirmative(ts);
-            bool noIntegrityChecks = fields.TryGetValue("nointegritychecks", out var nic) && IsAffirmative(nic);
+            // bcdedit omits an element that isn't set, so an absent field is a real "off".
+            bool? testSigning = ReadFlag(fields, "testsigning");
+            bool? noIntegrityChecks = ReadFlag(fields, "nointegritychecks");
             // The loadoptions flag has appeared with both one and two leading D's in different
             // Windows releases' own documentation - match the substring loosely rather than an
             // exact token.
             bool loadOptionsDisable = fields.TryGetValue("loadoptions", out var lo) &&
                 lo.Contains("DISABLE_INTEGRITY_CHECKS", StringComparison.OrdinalIgnoreCase);
 
-            return (testSigning, noIntegrityChecks, noIntegrityChecks || loadOptionsDisable);
+            bool? dseDisabled = (loadOptionsDisable || noIntegrityChecks == true) ? true : noIntegrityChecks;
+            return (testSigning, noIntegrityChecks, dseDisabled);
         }
         catch
         {
-            return (false, false, false);
+            return (null, null, null);
         }
     }
 
-    private static bool IsAffirmative(string value)
+    private static bool? ReadFlag(Dictionary<string, string> fields, string name)
     {
+        if (!fields.TryGetValue(name, out var value)) return false;
         string v = value.Trim();
-        return v.Equals("Yes", StringComparison.OrdinalIgnoreCase) || v.Equals("On", StringComparison.OrdinalIgnoreCase);
+        if (v.Equals("Yes", StringComparison.OrdinalIgnoreCase) || v.Equals("On", StringComparison.OrdinalIgnoreCase)) return true;
+        if (v.Equals("No", StringComparison.OrdinalIgnoreCase) || v.Equals("Off", StringComparison.OrdinalIgnoreCase)) return false;
+        return null;
     }
 
     /// <summary>bcdedit's `/enum` output is column-aligned plain text, one "name  value" pair per
@@ -132,8 +143,8 @@ public static class CodeIntegrityPostureService
     }
 
     /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout
-    /// mechanism; this wrapper keeps the service's historical output-only shape (empty string
-    /// for a timed-out run).</summary>
-    private static async Task<string> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
-        => (await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: string.Empty)).Output;
+    /// mechanism; this wrapper keeps the service's default timeout (empty output and a null exit
+    /// code for a timed-out run).</summary>
+    private static Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 10000)
+        => ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: string.Empty);
 }
