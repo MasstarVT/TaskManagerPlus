@@ -275,15 +275,20 @@ public static class DismService
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
         try
         {
-            await Task.WhenAll(readTask, proc.WaitForExitAsync(linkedCts.Token)).ConfigureAwait(false);
+            // Wait on the process alone: readTask only completes when dism closes stdout, so
+            // awaiting it alongside (Task.WhenAll) kept a stalled dism - or a Cancel click - from
+            // ever reaching the Kill below.
+            await proc.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+            try { await readTask.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); } catch { /* best-effort drain */ }
             string partial = fullOutput.ToString();
             return (partial.Length > 0 ? partial : "(dism timed out or was cancelled)", -1);
         }
 
+        await readTask.ConfigureAwait(false);
         string errText = await errorTask.ConfigureAwait(false);
         return (fullOutput.ToString() + errText, proc.ExitCode);
     }

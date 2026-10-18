@@ -423,7 +423,11 @@ public static class DefenderService
             blockLines.Add(line);
             if (line.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
             {
-                currentFile = line[5..].Trim();
+                // MpCmdRun prints "file:C:\path\x.exe quarantined at 4/26/2023 6:56:40 PM (UTC)" -
+                // keep only the path, or Purge's File.Exists check never matches the restored file.
+                string rest = line[5..].Trim();
+                int suffix = rest.IndexOf(" quarantined at ", StringComparison.OrdinalIgnoreCase);
+                currentFile = suffix > 0 ? rest[..suffix].Trim() : rest;
             }
             else
             {
@@ -439,20 +443,34 @@ public static class DefenderService
     /// <summary>#863: restore syntax per the item's own text - MpCmdRun has no cleanly-documented
     /// per-item permanent-purge switch, so PurgeQuarantineItem below implements "purge" as restore-
     /// then-delete, the reasonable interpretation the item explicitly allows.</summary>
-    public static (bool Success, string Output) RestoreQuarantineItem(string threatName)
+    /// <remarks>Restores by original path (<c>-FilePath</c>) when the listing gave one: <c>-Name</c>
+    /// restores the most recently quarantined item with that threat name, which - with two items
+    /// sharing a name - may not be the item the user picked.</remarks>
+    public static (bool Success, string Output) RestoreQuarantineItem(string threatName, string? filePath = null)
     {
-        var (exitCode, output) = RunCapturedWithExitCode(ResolveMpCmdRunPath(), $"-Restore -Name \"{threatName}\"", TimeSpan.FromSeconds(30));
+        string args = HasUsableQuarantinePath(filePath)
+            ? $"-Restore -FilePath \"{filePath}\""
+            : $"-Restore -Name \"{threatName}\"";
+        var (exitCode, output) = RunCapturedWithExitCode(ResolveMpCmdRunPath(), args, TimeSpan.FromSeconds(30));
         return (exitCode == 0, string.IsNullOrWhiteSpace(output) ? $"(exit code {exitCode}, no output)" : output.Trim());
     }
 
+    private static bool HasUsableQuarantinePath(string? filePath) =>
+        !string.IsNullOrWhiteSpace(filePath) && Path.IsPathFullyQualified(filePath) && filePath.IndexOf('"') < 0;
+
     public static (bool Success, string Output) PurgeQuarantineItem(string threatName, string filePath)
     {
-        var (restored, restoreOutput) = RestoreQuarantineItem(threatName);
+        // Purge is restore-then-delete, so it has to know exactly which file the restore puts back
+        // before restoring anything - otherwise it would leave the threat live on disk.
+        if (!HasUsableQuarantinePath(filePath))
+            return (false, "Couldn't read this item's original path from MpCmdRun's listing, so nothing was restored or deleted.");
+
+        var (restored, restoreOutput) = RestoreQuarantineItem(threatName, filePath);
         if (!restored) return (false, $"Restore step failed, so nothing was deleted: {restoreOutput}");
 
         try
         {
-            if (!string.IsNullOrWhiteSpace(filePath) && filePath != "(path not found in output - see raw text)" && File.Exists(filePath))
+            if (File.Exists(filePath))
             {
                 File.Delete(filePath);
                 return (true, $"Restored, then deleted \"{filePath}\".");
