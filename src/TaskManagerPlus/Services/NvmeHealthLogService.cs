@@ -296,10 +296,12 @@ public static class NvmeHealthLogService
             byte testCode = (byte)((statusByte >> 4) & 0x0F);
             if (resultCode == 0x0F) continue; // unused entry
 
+            // Self-test Result layout: POH bytes 4-11, NSID 12-15, Failing LBA 16-23. POH is always
+            // valid; only NSID/LBA (and SCT/SC) are gated by the Valid Diagnostic Information byte.
             byte validBits = data[off + 2];
             ulong powerOnHours = BitConverter.ToUInt64(data, off + 4);
-            uint nsid = BitConverter.ToUInt32(data, off + 16);
-            ulong lba = BitConverter.ToUInt64(data, off + 20);
+            uint nsid = BitConverter.ToUInt32(data, off + 12);
+            ulong lba = BitConverter.ToUInt64(data, off + 16);
 
             list.Add(new NvmeSelfTestResult
             {
@@ -325,7 +327,7 @@ public static class NvmeHealthLogService
                     _ => $"Unknown result (0x{resultCode:X})",
                 },
                 SegmentNumber = data[off + 1],
-                PowerOnHours = (validBits != 0) ? powerOnHours : null,
+                PowerOnHours = powerOnHours,
                 NamespaceId = (validBits & 0x01) != 0 ? nsid : null,
                 FailingLba = (validBits & 0x02) != 0 ? lba : null,
             });

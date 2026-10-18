@@ -86,7 +86,10 @@ public static class ClusterMappingService
         return null;
     }
 
-    private static readonly Regex ClusterFileRegex = new(@"File Name\s*:\s*(.+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // fsutil prints "Cluster 0x... used by ----D \path\file::$DATA" (attribute flags, then the
+    // stream path) per owning stream, and nothing at all for a free cluster. "File Name :" is kept
+    // as a fallback label in case some build formats it that way.
+    private static readonly Regex ClusterFileRegex = new(@"(?:used by\s+\S+\s+|File Name\s*:\s*)(.+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>Resolves one disk-relative LBA to an owning file name (or a metadata-stream name
     /// like $Mft/$LogFile), or a short "why not" string - never throws, degrades to "Not resolved"
@@ -119,10 +122,17 @@ public static class ClusterMappingService
                 return "Timed out";
             }
 
-            string output = (await outputTask) + (await errorTask);
-            var match = ClusterFileRegex.Match(output);
-            if (match.Success) return match.Groups[1].Value.Trim();
-            if (output.Contains("Free", StringComparison.OrdinalIgnoreCase)) return "Free (unallocated) cluster";
+            string stdout = await outputTask;
+            string stderr = await errorTask;
+            var match = ClusterFileRegex.Match(stdout);
+            if (match.Success)
+            {
+                string owner = match.Groups[1].Value.Trim();
+                // The unnamed data stream adds nothing for display; named streams stay visible.
+                return owner.EndsWith("::$DATA", StringComparison.OrdinalIgnoreCase) ? owner[..^"::$DATA".Length] : owner;
+            }
+            if (proc.ExitCode == 0 && string.IsNullOrWhiteSpace(stdout) && string.IsNullOrWhiteSpace(stderr))
+                return "No owning file reported (cluster likely free)";
             return "Not resolved";
         }
         catch

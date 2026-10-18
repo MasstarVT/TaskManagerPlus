@@ -603,8 +603,10 @@ public static class VssService
                     var buffer = new StringBuilder(64);
                     if (GetVolumeNameForVolumeMountPointW(drive.Name, buffer, (uint)buffer.Capacity))
                     {
+                        // Entries carry a drive suffix after the GUID path ("\\?\Volume{guid}\:(C%3A)"),
+                        // so match on the prefix rather than the whole string.
                         string guidPath = buffer.ToString();
-                        viaRegistry = protectedVolumeGuidPaths.Any(p => p.Equals(guidPath, StringComparison.OrdinalIgnoreCase));
+                        viaRegistry = protectedVolumeGuidPaths.Any(p => p.Trim().StartsWith(guidPath, StringComparison.OrdinalIgnoreCase));
                     }
                 }
                 catch { /* leave null - falls back to the proxy below for this drive */ }

@@ -34,6 +34,15 @@ public static class SurfaceScanService
     private static extern bool ReadFile(SafeFileHandle handle, IntPtr buffer, uint bytesToRead, out uint bytesRead, IntPtr overlapped);
 
     [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetFilePointerEx(SafeFileHandle handle, long distanceToMove, out long newFilePointer, uint moveMethod);
+
+    private const uint FileBegin = 0;
+
+    // With no known drive size there is no natural end if reads keep failing rather than
+    // returning EOF, so the scan gives up after this many failed chunks in a row.
+    private const int MaxConsecutiveErrorsWithoutSize = 64;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool DeviceIoControl(
         SafeFileHandle device, uint ioControlCode, IntPtr inBuffer, uint inBufferSize,
         IntPtr outBuffer, uint outBufferSize, out uint bytesReturned, IntPtr overlapped);
@@ -115,6 +124,8 @@ public static class SurfaceScanService
 
             long lba = 0;
             int problems = 0;
+            int consecutiveErrors = 0;
+            string? stopReason = null;
             var sw = Stopwatch.StartNew();
             long lastProgressReportLba = 0;
 
@@ -122,8 +133,12 @@ public static class SurfaceScanService
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                // Never read past the reported end - a chunk straddling it fails with a spurious
+                // error instead of a short read.
+                int sectorsThisRead = totalLba > 0 ? (int)Math.Min(ChunkSectors, totalLba - lba) : ChunkSectors;
+
                 sw.Restart();
-                bool ok = ReadFile(handle, aligned, (uint)chunkBytes, out uint bytesRead, IntPtr.Zero);
+                bool ok = ReadFile(handle, aligned, (uint)(sectorsThisRead * SectorBytes), out uint bytesRead, IntPtr.Zero);
                 sw.Stop();
                 double elapsedMs = sw.Elapsed.TotalMilliseconds;
 
@@ -133,20 +148,33 @@ public static class SurfaceScanService
                     if (err == 38) break; // ERROR_HANDLE_EOF - the expected end of a drive whose geometry couldn't be read up front
 
                     problems++;
+                    consecutiveErrors++;
                     onProblem(new SurfaceScanResult
                     {
                         StartLba = lba,
-                        EndLba = lba + ChunkSectors - 1,
+                        EndLba = lba + sectorsThisRead - 1,
                         IsHardError = true,
                         ElapsedMs = elapsedMs,
                         Note = $"Read error (Win32 error {err})",
                     });
-                    // Can't safely tell how far the drive actually advanced past a hard error -
-                    // skip this whole chunk and keep going rather than looping on it forever.
-                    lba += ChunkSectors;
+                    // A failed read doesn't reliably advance the file position, so skip the whole
+                    // chunk explicitly - otherwise the same bad chunk is re-read forever under
+                    // ever-increasing (fake) LBAs.
+                    lba += sectorsThisRead;
+                    if (!SetFilePointerEx(handle, lba * SectorBytes, out _, FileBegin))
+                    {
+                        stopReason = $"couldn't seek past the failed chunk (Win32 error {Marshal.GetLastWin32Error()})";
+                        break;
+                    }
+                    if (totalLba == 0 && consecutiveErrors >= MaxConsecutiveErrorsWithoutSize)
+                    {
+                        stopReason = $"{consecutiveErrors} consecutive read errors with no known drive size";
+                        break;
+                    }
                     continue;
                 }
 
+                consecutiveErrors = 0;
                 if (bytesRead == 0) break; // genuine end of device on a drive whose geometry read failed
 
                 if (elapsedMs >= stallThresholdMs)
@@ -155,7 +183,7 @@ public static class SurfaceScanService
                     onProblem(new SurfaceScanResult
                     {
                         StartLba = lba,
-                        EndLba = lba + ChunkSectors - 1,
+                        EndLba = lba + sectorsThisRead - 1,
                         IsHardError = false,
                         ElapsedMs = elapsedMs,
                         Note = $"Slow read ({elapsedMs:0} ms, threshold {stallThresholdMs:0} ms)",
@@ -172,6 +200,8 @@ public static class SurfaceScanService
             }
 
             onProgress(new ScanProgress(lba, totalLba, problems));
+            if (stopReason is not null)
+                return (false, $"Scan stopped at sector {lba:N0}: {stopReason}. {problems} problem range(s) recorded before that.", lba);
             return (true, problems == 0
                 ? $"Scan complete - no errors or stalls across {lba:N0} sectors."
                 : $"Scan complete - {problems} problem range(s) found across {lba:N0} sectors.", lba);

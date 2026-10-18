@@ -17,8 +17,10 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class DiskFragmentationService
 {
+    // Windows 7 onward prints "Total fragmented space = 7%"; the older "Total fragmentation : 7%"
+    // phrasing is still accepted in case some build emits it.
     private static readonly Regex FragmentationPercentRegex = new(
-        @"(?:total|file)\s+fragmentation\s*:\s*(\d+)\s*%", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        @"(?:total\s+fragmented\s+space|(?:total|file)\s+fragmentation)\s*[:=]\s*(\d+)\s*%", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // #353/#354: best-effort patterns for the MFT-fragmentation and free-space-fragmentation
     // sections of the same /A /V report - field wording has drifted across Windows versions (the
@@ -160,8 +162,9 @@ public static class DiskFragmentationService
             }
             else if (output.Contains("do not need to defragment", StringComparison.OrdinalIgnoreCase))
             {
-                percent = 0;
-                message = "No significant fragmentation";
+                // defrag's own verdict, but no figure to show - leave the percent unreported
+                // rather than presenting 0% as measured.
+                message = "No significant fragmentation (defrag reported no figure)";
             }
             else
             {

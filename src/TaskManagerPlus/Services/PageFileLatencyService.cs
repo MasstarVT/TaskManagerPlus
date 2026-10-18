@@ -43,25 +43,65 @@ public static class PageFileLatencyService
         if (entries.Count == 0) return rows;
 
         var usageByInstance = ReadUsageCounters();
+        var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var (path, minMb, maxMb) in entries)
+        foreach (var (configuredPath, minMb, maxMb) in entries)
         {
-            string volumeLetter = path.Length >= 2 && path[1] == ':' ? path[..1].ToUpperInvariant() : string.Empty;
-            string mediaType = volumeLetter.Length > 0 ? DiskFragmentationService.GetMediaType(volumeLetter) : "Unknown";
-            var (pctUsage, pctPeak) = MatchUsage(usageByInstance, path);
+            // "?:\pagefile.sys" is the system-managed default ("whichever volume Windows picks"),
+            // not a drive letter - resolve it to the page file(s) actually in use.
+            var paths = configuredPath.StartsWith("?:", StringComparison.Ordinal) ? ResolveActivePageFiles() : new List<string>();
+            if (paths.Count == 0) paths.Add(configuredPath);
 
-            rows.Add(new PageFileVolumeRow
+            foreach (var path in paths)
             {
-                ConfiguredPath = path,
-                VolumeLetter = volumeLetter,
-                MinSizeMb = minMb,
-                MaxSizeMb = maxMb,
-                MediaType = mediaType,
-                PercentUsage = pctUsage,
-                PercentUsagePeak = pctPeak,
-            });
+                if (!emitted.Add(path)) continue;
+                string volumeLetter = path.Length >= 2 && path[1] == ':' && char.IsAsciiLetter(path[0]) ? path[..1].ToUpperInvariant() : string.Empty;
+                string mediaType = volumeLetter.Length > 0 ? DiskFragmentationService.GetMediaType(volumeLetter) : "Unknown";
+                var (pctUsage, pctPeak) = MatchUsage(usageByInstance, path);
+
+                rows.Add(new PageFileVolumeRow
+                {
+                    ConfiguredPath = path,
+                    VolumeLetter = volumeLetter,
+                    MinSizeMb = minMb,
+                    MaxSizeMb = maxMb,
+                    MediaType = mediaType,
+                    PercentUsage = pctUsage,
+                    PercentUsagePeak = pctPeak,
+                });
+            }
         }
         return rows;
+    }
+
+    /// <summary>Page files currently in use (Win32_PageFileUsage.Name, e.g. "C:\pagefile.sys"),
+    /// falling back to the ExistingPageFiles registry value ("\??\C:\pagefile.sys"). Empty when
+    /// neither answers.</summary>
+    private static List<string> ResolveActivePageFiles()
+    {
+        var result = new List<string>();
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher("SELECT Name FROM Win32_PageFileUsage");
+            foreach (System.Management.ManagementObject mo in searcher.Get())
+                if (mo["Name"] is string name && name.Trim().Length > 0) result.Add(name.Trim());
+        }
+        catch { /* fall back to the registry below */ }
+
+        if (result.Count > 0) return result;
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(RegistryPath);
+            if (key?.GetValue("ExistingPageFiles") is string[] existing)
+                foreach (var line in existing)
+                {
+                    string p = line.Trim();
+                    if (p.StartsWith(@"\??\", StringComparison.Ordinal)) p = p[4..];
+                    if (p.Length > 0) result.Add(p);
+                }
+        }
+        catch { /* leave empty - caller keeps the unresolved "?:" row */ }
+        return result;
     }
 
     private static List<(string Path, long MinMb, long MaxMb)> ReadPagingFilesRegistry()

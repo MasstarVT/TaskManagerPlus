@@ -115,7 +115,10 @@ public sealed class FreeSpaceVolumeRow : ObservableObject
         double bytesPerDay = (first.FreeBytes - last.FreeBytes) / days; // positive = shrinking
         if (bytesPerDay <= 0) return string.Empty;
 
+        // A near-flat trend projects centuries out, which is meaningless and past DateTime's
+        // range (AddDays throws) - hide it beyond 100 years.
         double daysRemaining = last.FreeBytes / bytesPerDay;
+        if (double.IsNaN(daysRemaining) || daysRemaining > 36_500) return string.Empty;
         var projected = DateTime.Today.AddDays(daysRemaining);
         return $"At the recent rate of {Formatting.FormatBytes(bytesPerDay)}/day, this volume is projected to run out of free space around {projected:d} (in ~{daysRemaining:0} days) - extrapolation from recent history, not a guarantee.";
     }
@@ -1450,7 +1453,7 @@ public sealed class StorageViewModel : ObservableObject
         RunNvmeExtendedSelfTestCommand = new RelayCommand(() => RunNvmeSelfTest(extended: true), () => ShowNvmeHealth && SelectedSmartDisk is not null);
 
         // #323: pure WMI, any disk - independent of the NVMe gating above.
-        ResetReliabilityCountersCommand = new AsyncRelayCommand(ResetReliabilityCountersAsync, () => SelectedSmartDisk is not null);
+        ResetReliabilityCountersCommand = new AsyncRelayCommand(ResetReliabilityCountersAsync, () => SelectedSmartDisk is not null && !ReadOnlyModeService.IsReadOnly);
 
         // #329
         CheckDiskDiagnosisCommand = new AsyncRelayCommand(CheckDiskDiagnosisAsync, () => !IsCheckingDiskDiagnosis);
@@ -1476,16 +1479,16 @@ public sealed class StorageViewModel : ObservableObject
 
         // Round 15, #337/#338/#339/#343/#345
         RefreshVolumeFilesystemFactsCommand = new AsyncRelayCommand(LoadVolumeFilesystemFactsAsync, () => !IsLoadingVolumeFilesystemFacts);
-        ToggleSelfHealingCommand = new AsyncRelayCommand(param => ToggleSelfHealingAsync(param as VolumeFilesystemRow));
-        ScheduleBootCheckCommand = new AsyncRelayCommand(param => ScheduleBootCheckForRowAsync(param as VolumeFilesystemRow));
-        CancelBootCheckCommand = new AsyncRelayCommand(param => CancelBootCheckForRowAsync(param as VolumeFilesystemRow));
+        ToggleSelfHealingCommand = new AsyncRelayCommand(param => ToggleSelfHealingAsync(param as VolumeFilesystemRow), _ => !ReadOnlyModeService.IsReadOnly);
+        ScheduleBootCheckCommand = new AsyncRelayCommand(param => ScheduleBootCheckForRowAsync(param as VolumeFilesystemRow), _ => !ReadOnlyModeService.IsReadOnly);
+        CancelBootCheckCommand = new AsyncRelayCommand(param => CancelBootCheckForRowAsync(param as VolumeFilesystemRow), _ => !ReadOnlyModeService.IsReadOnly);
 
         // #340/#341
         RunChkdskScanCommand = new AsyncRelayCommand(RunChkdskScanAsync, () => !IsChkdskScanning && SelectedChkdskVolume is not null);
         CancelChkdskScanCommand = new RelayCommand(() => _chkdskScanCts?.Cancel(), () => IsChkdskScanning);
         RunVolumeScanCommand = new AsyncRelayCommand(() => RunVolumeRepairAsync(VolumeRepairMode.Scan), () => !IsRunningVolumeRepair && SelectedChkdskVolume is not null);
-        RunVolumeSpotFixCommand = new AsyncRelayCommand(() => RunVolumeRepairAsync(VolumeRepairMode.SpotFix), () => !IsRunningVolumeRepair && SelectedChkdskVolume is not null);
-        RunVolumeOfflineFixCommand = new AsyncRelayCommand(() => RunVolumeRepairAsync(VolumeRepairMode.OfflineScanAndFix), () => !IsRunningVolumeRepair && SelectedChkdskVolume is not null);
+        RunVolumeSpotFixCommand = new AsyncRelayCommand(() => RunVolumeRepairAsync(VolumeRepairMode.SpotFix), () => !IsRunningVolumeRepair && SelectedChkdskVolume is not null && !ReadOnlyModeService.IsReadOnly);
+        RunVolumeOfflineFixCommand = new AsyncRelayCommand(() => RunVolumeRepairAsync(VolumeRepairMode.OfflineScanAndFix), () => !IsRunningVolumeRepair && SelectedChkdskVolume is not null && !ReadOnlyModeService.IsReadOnly);
 
         // #342
         RefreshChkdskHistoryCommand = new AsyncRelayCommand(RefreshChkdskHistoryAsync, () => !IsLoadingChkdskHistory);
@@ -1494,25 +1497,25 @@ public sealed class StorageViewModel : ObservableObject
         CheckNtfsCorruptionEventsCommand = new AsyncRelayCommand(CheckNtfsCorruptionEventsAsync, () => !IsCheckingNtfsCorruptionEvents);
 
         // Round 16, #346/#348/#350: per-row USN journal + geometry actions.
-        CreateOrResizeUsnJournalCommand = new AsyncRelayCommand(param => CreateOrResizeUsnJournalAsync(param as VolumeFilesystemRow));
-        DeleteUsnJournalCommand = new AsyncRelayCommand(param => DeleteUsnJournalAsync(param as VolumeFilesystemRow));
+        CreateOrResizeUsnJournalCommand = new AsyncRelayCommand(param => CreateOrResizeUsnJournalAsync(param as VolumeFilesystemRow), _ => !ReadOnlyModeService.IsReadOnly);
+        DeleteUsnJournalCommand = new AsyncRelayCommand(param => DeleteUsnJournalAsync(param as VolumeFilesystemRow), _ => !ReadOnlyModeService.IsReadOnly);
 
         // #347
         FindUsnHotSpotsCommand = new AsyncRelayCommand(FindUsnHotSpotsAsync, () => !IsFindingUsnHotSpots && SelectedUsnHotSpotDrive is not null);
 
         // #351
         RefreshNtfsBehaviorSettingsCommand = new AsyncRelayCommand(RefreshNtfsBehaviorSettingsAsync, () => !IsLoadingNtfsBehaviorSettings);
-        EnableNtfsBehaviorSettingCommand = new AsyncRelayCommand(param => SetNtfsBehaviorSettingAsync(param as NtfsBehaviorSettingRow, 0));
-        DisableNtfsBehaviorSettingCommand = new AsyncRelayCommand(param => SetNtfsBehaviorSettingAsync(param as NtfsBehaviorSettingRow, 1));
+        EnableNtfsBehaviorSettingCommand = new AsyncRelayCommand(param => SetNtfsBehaviorSettingAsync(param as NtfsBehaviorSettingRow, 0), _ => !ReadOnlyModeService.IsReadOnly);
+        DisableNtfsBehaviorSettingCommand = new AsyncRelayCommand(param => SetNtfsBehaviorSettingAsync(param as NtfsBehaviorSettingRow, 1), _ => !ReadOnlyModeService.IsReadOnly);
 
         // Round 17, #356
         AnalyzeComponentStoreCommand = new AsyncRelayCommand(AnalyzeComponentStoreAsync, () => !IsAnalyzingComponentStore);
-        StartComponentCleanupCommand = new AsyncRelayCommand(StartComponentCleanupAsync, () => !IsCleaningComponentStore && ComponentStoreAnalysis is { Available: true });
+        StartComponentCleanupCommand = new AsyncRelayCommand(StartComponentCleanupAsync, () => !IsCleaningComponentStore && ComponentStoreAnalysis is { Available: true } && !ReadOnlyModeService.IsReadOnly);
 
         // #358
-        DisableHibernationCommand = new AsyncRelayCommand(DisableHibernationAsync, () => !IsHibernationActionRunning);
-        EnableHibernationCommand = new AsyncRelayCommand(EnableHibernationAsync, () => !IsHibernationActionRunning);
-        SetHibernateSizeCommand = new AsyncRelayCommand(SetHibernateSizeAsync, () => !IsHibernationActionRunning);
+        DisableHibernationCommand = new AsyncRelayCommand(DisableHibernationAsync, () => !IsHibernationActionRunning && !ReadOnlyModeService.IsReadOnly);
+        EnableHibernationCommand = new AsyncRelayCommand(EnableHibernationAsync, () => !IsHibernationActionRunning && !ReadOnlyModeService.IsReadOnly);
+        SetHibernateSizeCommand = new AsyncRelayCommand(SetHibernateSizeAsync, () => !IsHibernationActionRunning && !ReadOnlyModeService.IsReadOnly);
 
         // #356/#357/#358/#360: one shared refresh for the whole "reclaimable space" card.
         RefreshReclaimableSpaceCommand = new AsyncRelayCommand(RefreshReclaimableSpaceAsync);
@@ -1568,15 +1571,15 @@ public sealed class StorageViewModel : ObservableObject
         RefreshControllerFactsCommand = new AsyncRelayCommand(LoadStorageControllerFactsAsync);
 
         // Round 20, #387
-        RepairVirtualDiskCommand = new AsyncRelayCommand(param => RepairVirtualDiskAsync(param as StorageSpaceInfo));
+        RepairVirtualDiskCommand = new AsyncRelayCommand(param => RepairVirtualDiskAsync(param as StorageSpaceInfo), _ => !ReadOnlyModeService.IsReadOnly);
 
         // Round 20, #392
         CheckBitLockerRecoveryPromptsCommand = new AsyncRelayCommand(CheckBitLockerRecoveryPromptsAsync, () => !IsCheckingBitLockerRecoveryPrompts);
 
         // Round 21 (final chunk), #394-#400: "Volume Shadow Copy" card.
         RefreshVssCommand = new AsyncRelayCommand(LoadVssAsync);
-        ResizeShadowStorageCommand = new AsyncRelayCommand(param => ResizeShadowStorageAsync(param as VssShadowStorageInfo));
-        CreateRestorePointCommand = new AsyncRelayCommand(CreateRestorePointAsync, () => !IsCreatingRestorePoint);
+        ResizeShadowStorageCommand = new AsyncRelayCommand(param => ResizeShadowStorageAsync(param as VssShadowStorageInfo), _ => !ReadOnlyModeService.IsReadOnly);
+        CreateRestorePointCommand = new AsyncRelayCommand(CreateRestorePointAsync, () => !IsCreatingRestorePoint && !ReadOnlyModeService.IsReadOnly);
 
         // #324: subscribe to the shared sampler's tick rather than owning a new heavy timer -
         // see PerformanceViewModel.Sampled's remarks.
@@ -1611,16 +1614,19 @@ public sealed class StorageViewModel : ObservableObject
             var failureFlags = SystemSpecsService.ReadDiskFailureFlags().ToDictionary(f => f.Index);
             var poolsForVerdict = pools;
 
+            // The media-type lookup is a four-level WMI associator walk per drive - done here on
+            // the worker thread, not inside the dispatcher callback below.
+            var hddByLetter = fixedDriveLetters.ToDictionary(
+                letter => letter,
+                letter => DiskFragmentationService.GetMediaType(letter.TrimEnd(':')) == "HDD");
+
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
                 foreach (var p in pools) StoragePools.Add(p);
                 // #86, widened by #353/#354: a row per fixed volume, not just HDDs - see
                 // FragmentationRow's remarks.
                 foreach (var letter in fixedDriveLetters)
-                {
-                    bool isHdd = DiskFragmentationService.GetMediaType(letter.TrimEnd(':')) == "HDD";
-                    FragmentationRows.Add(new FragmentationRow { DriveLetter = letter, IsHdd = isHdd });
-                }
+                    FragmentationRows.Add(new FragmentationRow { DriveLetter = letter, IsHdd = hddByLetter[letter] });
                 foreach (var (index, model) in disks) SmartDiskOptions.Add(new SmartDiskOption { Index = index, Model = model });
                 foreach (var d in fixedDrives) ThroughputDriveOptions.Add(d.Name.TrimEnd('\\'));
                 SelectedThroughputDrive = ThroughputDriveOptions.FirstOrDefault();
@@ -4278,19 +4284,35 @@ public sealed class StorageViewModel : ObservableObject
         PageFileStatusText = "Loading...";
         try
         {
-            var details = await Task.Run(() => SystemSpecsService.ReadPageFileDetails());
-
-            // Cross-reference #1: an SSD exists elsewhere on this system while this page file
-            // sits on an HDD.
-            bool fasterSsdExists = false;
-            try
+            // Both cross-references below need WMI associator walks (media type per drive, disk
+            // index per page file), so they run on the worker thread alongside the details read;
+            // only the DriveHealthVerdicts lookup stays on the UI thread.
+            var (details, fasterSsdExists, diskIndexByLetter) = await Task.Run(() =>
             {
-                fasterSsdExists = DriveInfo.GetDrives()
-                    .Where(d => d.DriveType == DriveType.Fixed && d.IsReady)
-                    .Select(d => d.Name.TrimEnd('\\', ':'))
-                    .Any(letter => DiskFragmentationService.GetMediaType(letter) == "SSD");
-            }
-            catch { /* leave false - flag just won't fire */ }
+                var read = SystemSpecsService.ReadPageFileDetails();
+
+                // Cross-reference #1: an SSD exists elsewhere on this system while this page file
+                // sits on an HDD.
+                bool ssdExists = false;
+                try
+                {
+                    ssdExists = DriveInfo.GetDrives()
+                        .Where(d => d.DriveType == DriveType.Fixed && d.IsReady)
+                        .Select(d => d.Name.TrimEnd('\\', ':'))
+                        .Any(letter => DiskFragmentationService.GetMediaType(letter) == "SSD");
+                }
+                catch { /* leave false - flag just won't fire */ }
+
+                var indexes = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
+                foreach (var detail in read)
+                {
+                    string key = detail.DriveLetter ?? string.Empty;
+                    if (indexes.ContainsKey(key)) continue;
+                    try { indexes[key] = ClusterMappingService.ResolveDiskIndexForVolume(key); }
+                    catch { indexes[key] = null; }
+                }
+                return (read, ssdExists, indexes);
+            });
 
             foreach (var detail in details)
             {
@@ -4298,14 +4320,9 @@ public sealed class StorageViewModel : ObservableObject
 
                 // Cross-reference #2: this page file's physical disk also hosts a drive this app's
                 // own #328 verdict flagged Replace. Best-effort - if the disk-index resolution
-                // fails, the flag just stays false rather than guessed.
-                try
-                {
-                    int? diskIndex = ClusterMappingService.ResolveDiskIndexForVolume(detail.DriveLetter);
-                    if (diskIndex is { } idx)
-                        detail.SameDiskAsFailingDriveFlag = DriveHealthVerdicts.Any(v => v.Index == idx && v.Level == DriveHealthLevel.Replace);
-                }
-                catch { /* leave false */ }
+                // failed, the flag just stays false rather than guessed.
+                if (diskIndexByLetter.TryGetValue(detail.DriveLetter ?? string.Empty, out int? diskIndex) && diskIndex is { } idx)
+                    detail.SameDiskAsFailingDriveFlag = DriveHealthVerdicts.Any(v => v.Index == idx && v.Level == DriveHealthLevel.Replace);
             }
 
             PageFiles.Clear();

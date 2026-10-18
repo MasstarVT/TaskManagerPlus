@@ -306,24 +306,53 @@ public static class NtfsFilesystemService
     /// get autochk to run WITH /r (a full bad-sector scan) at next boot; the dirty bit alone
     /// (#337's `fsutil dirty set`) only gets a plain /f-equivalent pass.
     ///
-    /// This only works cleanly when chkdsk can't lock the volume (the boot volume, or any volume
-    /// with open handles) - it prompts, we answer, it exits in well under a second. If chkdsk CAN
-    /// lock the volume (an unused data drive), it instead starts a real, possibly hours-long /r
-    /// pass immediately instead of prompting at all. The short timeout+Kill() below exists
-    /// specifically to catch that second case and stop it rather than block this app for hours -
-    /// at the cost of possibly interrupting a real run that happened to start on its own.</summary>
+    /// This only works cleanly when chkdsk can't lock the volume - it prompts, we answer, it exits
+    /// in well under a second. If chkdsk CAN lock the volume (an unused data drive), it starts a
+    /// real, possibly hours-long /r pass immediately instead of prompting at all, so for any
+    /// volume other than the system volume a directory handle is held open on its root for the
+    /// duration of the call to keep it "in use". A non-system volume in use is first asked
+    /// "Would you like to force a dismount on this volume?" - that is answered N (Y would
+    /// invalidate every open handle on the volume and start the repair right away), which leads
+    /// to the schedule prompt, answered Y. The system volume goes straight to the schedule prompt.
+    /// The short timeout+Kill() below remains as a backstop only.</summary>
     public static async Task<(bool Success, string Message)> ScheduleBootCheckAsync(string driveLetter)
     {
-        var (exitCode, output) = await RunToolAsync("chkdsk.exe", $"{driveLetter}: /f /r", 10_000, stdin: "Y\r\n");
-        string text = output.Trim();
+        string letter = driveLetter.TrimEnd(':', '\\');
+        string systemDrive = (Environment.GetEnvironmentVariable("SystemDrive") ?? "C:").TrimEnd('\\');
+        bool isSystemVolume = string.Equals($"{letter}:", systemDrive, StringComparison.OrdinalIgnoreCase);
 
-        if (exitCode == -1 && text == "Timed out.")
-            return (false, "chkdsk didn't prompt to schedule within 10 seconds - it most likely locked the volume and started a real check immediately instead (the volume wasn't in use), so it was stopped to avoid blocking the app for hours. This action is meant for a volume Windows can't lock right now (typically the boot volume); use the online scan or WMI repair actions above to check an unused data volume directly.");
+        System.IO.FileSystemWatcher? inUseHolder = null;
+        if (!isSystemVolume)
+        {
+            try
+            {
+                inUseHolder = new System.IO.FileSystemWatcher($@"{letter}:\") { EnableRaisingEvents = true };
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Couldn't hold {letter}: open to stop chkdsk from starting a check immediately ({ex.Message}) - nothing was scheduled.");
+            }
+        }
 
-        bool scheduled = text.Contains("scheduled", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("next time", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("next restart", StringComparison.OrdinalIgnoreCase);
-        return (scheduled, text.Length > 0 ? text : (scheduled ? "Scheduled." : "chkdsk exited without a recognizable confirmation - see the raw output above."));
+        try
+        {
+            string answers = isSystemVolume ? "Y\r\n" : "N\r\nY\r\n";
+            var (exitCode, output) = await RunToolAsync("chkdsk.exe", $"{letter}: /f /r", 10_000, stdin: answers);
+            string text = output.Trim();
+
+            if (exitCode == -1 && text == "Timed out.")
+                return (false, "chkdsk didn't finish answering its prompts within 10 seconds and was stopped. Nothing is known to have been scheduled - check the boot-check status above.");
+
+            // Both prompts and the failure line ("Chkdsk could not schedule this volume to be
+            // checked the next time ...") also contain "next time", so only the confirmation
+            // line itself counts as success.
+            bool scheduled = text.Contains("will be checked the next time", StringComparison.OrdinalIgnoreCase);
+            return (scheduled, text.Length > 0 ? text : "chkdsk exited without a recognizable confirmation.");
+        }
+        finally
+        {
+            inUseHolder?.Dispose();
+        }
     }
 
     /// <summary>`chkntfs /x &lt;vol&gt;` - excludes the volume from the default boot-time check

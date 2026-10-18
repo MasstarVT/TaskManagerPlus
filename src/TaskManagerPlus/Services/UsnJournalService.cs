@@ -153,7 +153,10 @@ public static class UsnJournalService
         if (!status.Available || status.NextUsn is not { } nextUsn)
             return new UsnHotSpotResult { StatusText = $"USN journal unavailable on {driveLetter}: - {status.UnavailableReason}" };
 
-        ulong lowest = status.LowestValidUsn ?? status.FirstUsn ?? 0;
+        // FirstUsn is the oldest record still in the journal; LowestValidUsn is usually 0 and far
+        // below it. Starting under FirstUsn fails the read (ERROR_JOURNAL_ENTRY_DELETED), so floor
+        // at whichever of the two is higher.
+        ulong lowest = Math.Max(status.FirstUsn ?? 0, status.LowestValidUsn ?? 0);
         ulong startUsn = nextUsn > lowest + HotSpotLookbackBytes ? nextUsn - HotSpotLookbackBytes : lowest;
 
         var cutoff = DateTime.Now.AddMinutes(-Math.Max(1, minutes));
@@ -178,12 +181,15 @@ public static class UsnJournalService
         {
             if (e.Data is null) return;
             totalRecords++;
-            if (totalRecords > HotSpotMaxRecordsScanned) { capped = true; return; }
+            if (capped) return;
 
             var rec = ParseCsvLine(e.Data);
             if (rec is null) return; // header row, or a line this parse couldn't make sense of
 
+            // The journal reads oldest-first, so the in-window records are the last ones out;
+            // only those count against the cap, or a long pre-window run would use it all up.
             if (rec.Value.Timestamp is { } ts && ts < cutoff) return; // outside the requested window
+            if (inWindow >= HotSpotMaxRecordsScanned) { capped = true; return; }
             inWindow++;
 
             if (!byFile.TryGetValue(rec.Value.FileName, out var acc))
@@ -255,7 +261,7 @@ public static class UsnJournalService
         string note = timedOut
             ? $" (stopped after {HotSpotReadTimeoutMs / 1000}s to bound the read - this reflects a partial scan, not the full window)"
             : capped
-                ? $" (stopped after {HotSpotMaxRecordsScanned:N0} records to bound memory use - this reflects a partial scan, not the full window)"
+                ? $" (stopped tallying after the window's first {HotSpotMaxRecordsScanned:N0} records to bound memory use - this reflects a partial scan, not the full window)"
                 : string.Empty;
 
         return new UsnHotSpotResult

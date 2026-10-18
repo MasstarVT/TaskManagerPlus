@@ -19,11 +19,9 @@ namespace TaskManagerPlus.Services;
 /// #381 (NVMe): PCIe link speed/width live on the NVMe controller's own PCI function devnode, not
 /// the disk's SCSI-enumerated devnode Win32_DiskDrive reports - this walks up the device tree via
 /// CM_Get_Parent looking for a "PCI\" instance ID, then reads DEVPKEY_PciDevice_Current/MaxLinkSpeed/
-/// Width via CM_Get_DevNode_Property. Flagged lower-confidence than #379 in this app's own remarks:
-/// the exact DEVPKEY GUID/PID values below are used from best-available documentation recollection
-/// without a way to verify them against the Windows SDK headers in this environment - if they're
-/// wrong, CM_Get_DevNode_Property simply fails and this degrades to "Unknown", never a fabricated
-/// number.
+/// Width via CM_Get_DevNode_Property (keys checked against Get-PnpDeviceProperty's own key list).
+/// A driver that doesn't publish them makes CM_Get_DevNode_Property fail and this degrades to
+/// "Unknown", never a fabricated number.
 /// </summary>
 public static class StorageLinkService
 {
@@ -211,15 +209,15 @@ public static class StorageLinkService
     private const uint CrSuccess = 0;
     private const uint CmLocateDevNodeNormal = 0;
 
-    // DEVPKEY_PciDevice_Current/MaxLinkSpeed/Width - fmtid shared across the DEVPKEY_PciDevice_*
-    // family. See this file's remarks: used from best-available recollection, not verified against
-    // the Windows SDK in this environment - a wrong pid simply makes CM_Get_DevNode_Property fail,
+    // DEVPKEY_PciDevice_CurrentLinkSpeed/CurrentLinkWidth/MaxLinkSpeed/MaxLinkWidth (pciprop.h) -
+    // fmtid shared across the DEVPKEY_PciDevice_* family, pids 9-12, as Get-PnpDeviceProperty
+    // reports them on an NVMe controller. A missing property makes CM_Get_DevNode_Property fail,
     // which this treats as "Unknown", never a fabricated number.
-    private static readonly Guid PciDevicePropertyFmtid = new("48F5FB93-14BC-4706-9AB8-1A0D18E7B32F");
-    private static DevPropKey CurrentLinkSpeedKey => new() { Fmtid = PciDevicePropertyFmtid, Pid = 26 };
-    private static DevPropKey CurrentLinkWidthKey => new() { Fmtid = PciDevicePropertyFmtid, Pid = 27 };
-    private static DevPropKey MaxLinkSpeedKey => new() { Fmtid = PciDevicePropertyFmtid, Pid = 28 };
-    private static DevPropKey MaxLinkWidthKey => new() { Fmtid = PciDevicePropertyFmtid, Pid = 29 };
+    private static readonly Guid PciDevicePropertyFmtid = new("3AB22E31-8264-4B4E-9AF5-A8D2D8E33E62");
+    private static DevPropKey CurrentLinkSpeedKey => new() { Fmtid = PciDevicePropertyFmtid, Pid = 9 };
+    private static DevPropKey CurrentLinkWidthKey => new() { Fmtid = PciDevicePropertyFmtid, Pid = 10 };
+    private static DevPropKey MaxLinkSpeedKey => new() { Fmtid = PciDevicePropertyFmtid, Pid = 11 };
+    private static DevPropKey MaxLinkWidthKey => new() { Fmtid = PciDevicePropertyFmtid, Pid = 12 };
 
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
     private static extern uint CM_Locate_DevNodeW(out uint pdnDevInst, string pDeviceId, uint ulFlags);

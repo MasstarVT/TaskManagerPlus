@@ -350,35 +350,32 @@ public static class StorageControllerService
         bool cacheProtectedKnown = cacheProtected is not null;
         bool cacheProtectedValue = cacheProtected is > 0;
         bool userSettingKnown = userSetting is not null;
-        int userSettingRaw = userSetting ?? 0;
+        int userSettingRaw = userSetting ?? -1;
 
-        // Best-effort decode only - the exact enum this DWORD uses isn't published by Microsoft, so
-        // this is presented as a labeled raw value rather than an assertion, per this app's
-        // "degrade rather than fabricate" convention. 1 is treated (with reduced confidence) as
-        // "write-cache buffer flushing disabled", matching the one publicly-observed convention for
-        // this key - the risk flag below only fires on this specific, most-defensible reading.
-        string settingText = userSettingKnown
-            ? userSettingRaw switch
-            {
-                0 => "Not explicitly configured by the user (Windows/driver default applies).",
-                1 => "Registry value 1 - on most drivers this means \"turn off Windows write-cache buffer flushing\" is enabled (flushing disabled).",
-                2 => "Registry value 2 - on most drivers this means write caching is explicitly enabled with flushing left on.",
-                _ => $"Registry value {userSettingRaw} (exact meaning is driver/Windows-version specific - not decoded here).",
-            }
-            : "Not explicitly configured by the user (Windows/driver default applies).";
+        // disk.sys semantics (DISK_USER_WRITE_CACHE_SETTING): UserWriteCacheSetting 0 = write
+        // caching disabled, 1 = enabled, -1/absent = driver default - Device Manager's "Enable write
+        // caching on the device" box. CacheIsPowerProtected = 1 is the "Turn off Windows write-cache
+        // buffer flushing on the device" box: the user asserting the cache survives power loss, so
+        // Windows stops flushing it. It is the user's claim, not something the drive reports.
+        string settingText = userSetting switch
+        {
+            null or -1 => "Not explicitly configured by the user (Windows/driver default applies).",
+            0 => "Write caching explicitly disabled (Device Manager > Policies).",
+            1 => "Write caching explicitly enabled (Device Manager > Policies).",
+            _ => $"Registry value {userSettingRaw} (not a documented setting - not decoded here).",
+        };
 
-        bool riskFlag = cacheProtectedKnown && !cacheProtectedValue && userSettingKnown && userSettingRaw == 1;
+        bool flushingDisabled = cacheProtectedValue;
+        bool riskFlag = flushingDisabled && userSetting != 0;
 
-        string summary = cacheProtectedKnown
-            ? (cacheProtectedValue
-                ? "This drive's cache reports power-loss protection - a sudden power loss shouldn't lose data still sitting in the write cache."
-                : "This drive's cache does NOT report power-loss protection.")
-            : "This drive doesn't report whether its cache is power-loss protected (Unknown).";
+        string summary = flushingDisabled
+            ? "\"Turn off Windows write-cache buffer flushing\" is ON for this disk - Windows treats its cache as power-loss protected and stops flushing it."
+            : "Windows write-cache buffer flushing is on for this disk (the safe default).";
 
         if (riskFlag)
-            summary += " Combined with write-cache buffer flushing disabled (registry value 1 above), an unexpected power loss can lose recently-written data that was never physically committed to the media - this is a real data-loss risk, not just a quick flag.";
-        else if (cacheProtectedKnown && !cacheProtectedValue)
-            summary += " This alone is normal for most consumer drives; it only becomes a real risk if write-cache buffer flushing is also disabled (Device Manager > this disk > Properties > Policies).";
+            summary += " Unless this drive genuinely has power-loss protection (most consumer drives don't), an unexpected power loss can lose recently-written data that was never committed to the media - worth a manual check (Device Manager > this disk > Properties > Policies).";
+        else if (flushingDisabled)
+            summary += " Write caching itself is disabled, so nothing is held in the cache to lose.";
 
         return new DiskWriteCacheInfo
         {
