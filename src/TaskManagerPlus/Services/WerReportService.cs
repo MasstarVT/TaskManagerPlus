@@ -338,6 +338,8 @@ public sealed class WerReportService
             {
                 if (key.GetValue("Disabled") is { } d) disabled = Convert.ToInt32(d) != 0;
                 if (key.GetValue("DontSendAdditionalData") is { } dsd) dontSend = Convert.ToInt32(dsd) != 0;
+                // DontShowUI is documented as a WER root value, not a Consent one.
+                if (key.GetValue("DontShowUI") is { } dsu) dontShowUi = Convert.ToInt32(dsu) != 0;
             }
         }
         catch { /* key/values not present, or access denied - "not set" */ }
@@ -348,7 +350,8 @@ public sealed class WerReportService
             if (key is not null)
             {
                 if (key.GetValue("DefaultConsent") is { } dc) defaultConsent = Convert.ToInt32(dc);
-                if (key.GetValue("DontShowUI") is { } dsu) dontShowUi = Convert.ToInt32(dsu) != 0;
+                // Fallback only, in case a value was written here instead of the root.
+                if (dontShowUi is null && key.GetValue("DontShowUI") is { } dsu) dontShowUi = Convert.ToInt32(dsu) != 0;
             }
         }
         catch { /* key/values not present, or access denied - "not set" */ }
@@ -394,12 +397,13 @@ public sealed class WerReportService
         };
     }
 
-    /// <summary>Item 41's re-enable action - clears the two flags that stop WER from ever writing
-    /// a report at all. Deliberately does not touch the Consent subkey's DefaultConsent/
-    /// DontShowUI (item 44) - those control the crash dialog/telemetry-sending behavior, not
-    /// whether a report is captured locally in the first place, and changing them isn't implied
-    /// by "re-enable crash collection". Needs the elevated process this app already always runs
-    /// as (CLAUDE.md's Elevation note), same as every other registry write in this app.</summary>
+    /// <summary>Item 41's re-enable action - clears the Disabled flag that stops WER from ever
+    /// writing a report at all. Deliberately does not touch DontSendAdditionalData or the Consent
+    /// subkey's DefaultConsent/DontShowUI (item 44) - those control what is sent and whether a
+    /// dialog appears, not whether a report is captured locally, and reversing someone's privacy
+    /// opt-out isn't implied by "re-enable crash collection". Nor does it touch WerSvc's start
+    /// type - a Disabled service stays Disabled (the caller reports that). Needs the elevated
+    /// process this app already always runs as (CLAUDE.md's Elevation note).</summary>
     public static bool EnableWer()
     {
         try
@@ -407,7 +411,6 @@ public sealed class WerReportService
             using var key = Registry.LocalMachine.CreateSubKey(WerRootKeyPath, writable: true);
             if (key is null) return false;
             key.SetValue("Disabled", 0, RegistryValueKind.DWord);
-            key.SetValue("DontSendAdditionalData", 0, RegistryValueKind.DWord);
             return true;
         }
         catch
@@ -991,17 +994,26 @@ public sealed class WerReportService
         }
     }
 
-    /// <summary>Restores whatever LocalDumps looked like before #165's toggle wrote to it - deletes
-    /// the whole subkey if it didn't exist before, otherwise writes back exactly the prior
-    /// DumpFolder/DumpCount/DumpType (including removing a value that didn't exist before, rather
-    /// than leaving it set).</summary>
+    /// <summary>Restores whatever LocalDumps looked like before #165's toggle wrote to it - writes
+    /// back exactly the prior DumpFolder/DumpCount/DumpType (including removing a value that didn't
+    /// exist before, rather than leaving it set). When the key didn't exist before, only the three
+    /// values #165 wrote are removed, and the key itself only if nothing else is left in it - per-app
+    /// LocalDumps\&lt;exe&gt; subkeys that installers (GPU/OEM tools) add later must survive a revert.</summary>
     public (bool Success, string? Error) RestoreLocalDumpsSettings(LocalDumpsSettings previous)
     {
         try
         {
             if (!previous.KeyExists)
             {
-                Registry.LocalMachine.DeleteSubKeyTree(LocalDumpsPath, throwOnMissingSubKey: false);
+                bool removeKey;
+                using (var existing = Registry.LocalMachine.OpenSubKey(LocalDumpsPath, writable: true))
+                {
+                    if (existing is null) return (true, null);
+                    foreach (var name in new[] { "DumpFolder", "DumpCount", "DumpType" })
+                        existing.DeleteValue(name, throwOnMissingValue: false);
+                    removeKey = existing.ValueCount == 0 && existing.SubKeyCount == 0;
+                }
+                if (removeKey) Registry.LocalMachine.DeleteSubKey(LocalDumpsPath, throwOnMissingSubKey: false);
                 return (true, null);
             }
 
@@ -1128,9 +1140,9 @@ public sealed class WerReportService
     private static string DescribeConsent(int value) => value switch
     {
         1 => "Ask me every time (1)",
-        2 => "Never send data (2)",
-        3 => "Send parameters automatically (3)",
-        4 => "Send parameters and safe additional data automatically (4)",
+        2 => "Send parameters automatically (2)",
+        3 => "Send parameters and safe additional data automatically (3)",
+        4 => "Send all data automatically (4)",
         _ => $"Unrecognized consent level ({value})",
     };
 

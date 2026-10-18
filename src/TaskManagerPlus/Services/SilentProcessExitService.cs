@@ -64,13 +64,16 @@ public static class SilentProcessExitService
                 key.SetValue("MonitorProcess", monitorProcess, RegistryValueKind.ExpandString);
             else
                 key.DeleteValue("MonitorProcess", throwOnMissingValue: false);
-
-            return true;
         }
         catch
         {
             return false;
         }
+
+        // Windows ignores the SilentProcessExit key unless the image's IFEO GlobalFlag also
+        // carries FLG_MONITOR_SILENT_PROCESS_EXIT - what gflags' "Enable silent process exit
+        // monitoring" checkbox sets.
+        return UpdateIfeoMonitorFlag(exeName, set: true);
     }
 
     public static bool ClearConfig(string exeName)
@@ -79,11 +82,60 @@ public static class SilentProcessExitService
         try
         {
             Registry.LocalMachine.DeleteSubKeyTree(KeyPathFor(exeName), throwOnMissingSubKey: false);
+        }
+        catch
+        {
+            return false;
+        }
+        return UpdateIfeoMonitorFlag(exeName, set: false);
+    }
+
+    private const string IfeoKeyPath = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
+    private const int FlgMonitorSilentProcessExit = 0x200;
+
+    /// <summary>Sets or clears only the 0x200 bit of IFEO\&lt;exe&gt;\GlobalFlag, leaving every
+    /// other gflags bit as it was. GlobalFlag is normally a DWORD, but gflags-era tools also wrote
+    /// it as a "0x..." string - the existing kind is kept. Clearing never creates the IFEO key, and
+    /// removes the value only when this bit was the last one set.</summary>
+    private static bool UpdateIfeoMonitorFlag(string exeName, bool set)
+    {
+        string path = $@"{IfeoKeyPath}\{exeName.Trim()}";
+        try
+        {
+            using var key = set
+                ? Registry.LocalMachine.CreateSubKey(path, writable: true)
+                : Registry.LocalMachine.OpenSubKey(path, writable: true);
+            if (key is null) return !set;
+
+            object? raw = key.GetValue("GlobalFlag");
+            int current;
+            if (raw is null) current = 0;
+            else if (raw is int i) current = i;
+            else if (raw is string s && TryParseFlag(s, out var parsed)) current = parsed;
+            else return false; // unexpected type/text - don't overwrite other gflags bits with a guess
+
+            int updated = set ? current | FlgMonitorSilentProcessExit : current & ~FlgMonitorSilentProcessExit;
+            if (raw is not null && updated == current) return true;
+
+            if (updated == 0)
+                key.DeleteValue("GlobalFlag", throwOnMissingValue: false);
+            else if (raw is string)
+                key.SetValue("GlobalFlag", $"0x{updated:X8}", RegistryValueKind.String);
+            else
+                key.SetValue("GlobalFlag", updated, RegistryValueKind.DWord);
             return true;
         }
         catch
         {
             return false;
         }
+    }
+
+    private static bool TryParseFlag(string text, out int value)
+    {
+        string t = text.Trim();
+        if (t.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            return int.TryParse(t[2..], System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out value);
+        return int.TryParse(t, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out value);
     }
 }

@@ -8,7 +8,7 @@ using TaskManagerPlus.Models;
 namespace TaskManagerPlus.Services;
 
 /// <summary>
-/// #724-731: parses `bcdedit /enum all /v` and `bcdedit /enum firmware` into a structured
+/// #724-731: parses `bcdedit /enum all` and `bcdedit /enum firmware` into a structured
 /// <see cref="BcdStore"/>, shared by every Boot configuration feature on the Startup tab so
 /// bcdedit is shelled out to exactly twice per refresh (once for the BCD store, once for
 /// firmware), not once per feature. bcdedit's text output is the documented, stable contract for
@@ -47,7 +47,9 @@ public static class BcdInspectorService
     /// degrade to "unavailable" together rather than each re-deriving its own failure text.</summary>
     public static async Task<BcdStore> ReadAsync()
     {
-        var (allOutput, allExit) = await RunCapturedAsync("bcdedit.exe", "/enum all /v");
+        // No /v: it prints every identifier as a raw GUID, so the {current}/{bootmgr} aliases that
+        // BcdStore.CurrentEntry/WindowsBootManager look up would never appear.
+        var (allOutput, allExit) = await RunCapturedAsync("bcdedit.exe", "/enum all");
 
         List<BcdEntry> entries;
         bool available;

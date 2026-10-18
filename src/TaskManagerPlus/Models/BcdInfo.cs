@@ -1,7 +1,7 @@
 namespace TaskManagerPlus.Models;
 
 /// <summary>
-/// One parsed block from `bcdedit /enum all /v` or `bcdedit /enum firmware` output (#724) -
+/// One parsed block from `bcdedit /enum all` or `bcdedit /enum firmware` output (#724) -
 /// bcdedit's text output is the documented, stable contract for BCD data (see CLAUDE.md's
 /// "prefer a known Windows tool/API over raw interop" convention - the BCD registry hive's binary
 /// layout is not one this app touches directly), so this reads it adaptively as a generic
@@ -34,7 +34,7 @@ public sealed class BcdEntry
 }
 
 /// <summary>
-/// Everything read from one `bcdedit /enum all /v` + `bcdedit /enum firmware` pass (#724) -
+/// Everything read from one `bcdedit /enum all` + `bcdedit /enum firmware` pass (#724) -
 /// shared by every #724-731 feature so bcdedit is shelled out to exactly once per Startup tab
 /// refresh, not once per feature (see BcdInspectorService's remarks). Available is false when
 /// bcdedit itself couldn't be run/parsed at all - every dependent feature degrades to
@@ -49,9 +49,9 @@ public sealed class BcdStore
 
     public BcdEntry? WindowsBootManager => Entries.FirstOrDefault(e => e.Identifier.Equals("{bootmgr}", StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>The loader entry Windows actually booted this session - bcdedit's own /v output
-    /// shows this literally as the alias "{current}" (bcdedit resolves it, not this app guessing
-    /// which GUID is "current").</summary>
+    /// <summary>The loader entry Windows actually booted this session - bcdedit's default (non-/v)
+    /// output shows this literally as the alias "{current}" (bcdedit resolves it, not this app
+    /// guessing which GUID is "current"; /v would print the raw GUID instead).</summary>
     public BcdEntry? CurrentEntry => Entries.FirstOrDefault(e => e.Identifier.Equals("{current}", StringComparison.OrdinalIgnoreCase));
 
     public BcdEntry? FirmwareBootManager => FirmwareEntries.FirstOrDefault(e => e.Identifier.Equals("{fwbootmgr}", StringComparison.OrdinalIgnoreCase));

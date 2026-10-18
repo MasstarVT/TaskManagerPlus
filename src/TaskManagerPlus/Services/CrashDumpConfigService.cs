@@ -60,8 +60,9 @@ public static class CrashDumpConfigService
         int? minidumpsCount = ReadDwordAsInt(CrashControlKeyPath, "MinidumpsCount");
         bool? hiberboot = ReadDwordAsBool(PowerKeyPath, "HiberbootEnabled");
 
-        var (pageFiles, ramBytes) = ReadPageFileInfo();
-        bool pageFileDisabled = pageFiles.Count == 0;
+        var (pageFiles, ramBytes, autoManaged) = ReadPageFileInfo();
+        // System-managed with no active file yet (e.g. pending reboot) still gets one from Windows.
+        bool pageFileDisabled = pageFiles.Count == 0 && autoManaged != true;
 
         // Item 72: rough required sizes - Microsoft doesn't publish an exact formula, so these are
         // documented approximations ("worth a manual check," not a guarantee - CLAUDE.md's "quick
@@ -165,59 +166,33 @@ public static class CrashDumpConfigService
         _ => $"Unrecognized value ({raw})",
     };
 
-    /// <summary>Items 72/73: Win32_PageFileSetting (configured page files) joined to
-    /// Win32_PageFileUsage (their allocated size) by path - the same
-    /// ManagementObjectSearcher-per-class-then-merge shape SystemSpecsService.ReadPageFileLocation
-    /// already uses for a single page file; this reads every configured one, since a system can
-    /// have more than one. Returns an empty list (not a guess) when the query itself fails, and
-    /// separately when Windows genuinely has no page file configured at all (item 73) - both look
-    /// the same to a caller that only wants "how much page file is there", which is exactly what
-    /// item 73 needs to flag.</summary>
-    private static (List<PageFileConfigEntry> PageFiles, long RamBytes) ReadPageFileInfo()
+    /// <summary>Items 72/73: the active page files (Win32_PageFileUsage) joined to their configured
+    /// sizes (Win32_PageFileSetting), via PageFileConfigurationService's existing join. Usage is the
+    /// driving list because Win32_PageFileSetting has no instances at all while
+    /// AutomaticManagedPagefile is on (the Windows default) - reading settings alone made every
+    /// default machine look like it had no page file. Returns an empty list (not a guess) when the
+    /// query fails or Windows genuinely has no page file (item 73); AutoManaged is null when it
+    /// couldn't be read.</summary>
+    private static (List<PageFileConfigEntry> PageFiles, long RamBytes, bool? AutoManaged) ReadPageFileInfo()
     {
         var entries = new List<PageFileConfigEntry>();
         string systemDrive = (Environment.GetEnvironmentVariable("SystemDrive") ?? "C:").TrimEnd('\\');
 
-        try
+        var snapshot = PageFileConfigurationService.Query();
+        foreach (var file in snapshot.Files)
         {
-            var usageByPath = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-            using (var usageSearcher = new ManagementObjectSearcher("SELECT Name, AllocatedBaseSize FROM Win32_PageFileUsage"))
+            if (file.FilePath.Length < 2) continue;
+            string volume = file.FilePath.Substring(0, 2);
+            entries.Add(new PageFileConfigEntry
             {
-                foreach (ManagementObject mo in usageSearcher.Get())
-                {
-                    string name = (mo["Name"] as string ?? string.Empty).Trim();
-                    if (name.Length == 0) continue;
-                    usageByPath[name] = Convert.ToInt64(mo["AllocatedBaseSize"] ?? 0L);
-                }
-            }
-
-            using (var settingSearcher = new ManagementObjectSearcher("SELECT Name, InitialSize, MaximumSize FROM Win32_PageFileSetting"))
-            {
-                foreach (ManagementObject mo in settingSearcher.Get())
-                {
-                    string name = (mo["Name"] as string ?? string.Empty).Trim();
-                    if (name.Length < 2) continue;
-                    long initial = Convert.ToInt64(mo["InitialSize"] ?? 0L);
-                    long max = Convert.ToInt64(mo["MaximumSize"] ?? 0L);
-                    string volume = name.Substring(0, 2);
-
-                    entries.Add(new PageFileConfigEntry
-                    {
-                        Path = name,
-                        Volume = volume,
-                        IsSystemVolume = volume.Equals(systemDrive, StringComparison.OrdinalIgnoreCase),
-                        IsSystemManaged = initial == 0 && max == 0,
-                        InitialSizeMb = initial,
-                        MaximumSizeMb = max,
-                        AllocatedSizeMb = usageByPath.TryGetValue(name, out var alloc) ? alloc : null,
-                    });
-                }
-            }
-        }
-        catch
-        {
-            // WMI namespace/class unavailable - degrade to "no page file info", same as
-            // SystemSpecsService.ReadPageFileLocation's own failure mode.
+                Path = file.FilePath,
+                Volume = volume,
+                IsSystemVolume = volume.Equals(systemDrive, StringComparison.OrdinalIgnoreCase),
+                IsSystemManaged = snapshot.IsAutomaticallyManaged == true || file.IsSystemManaged,
+                InitialSizeMb = (long)file.InitialSizeMb,
+                MaximumSizeMb = (long)file.MaximumSizeMb,
+                AllocatedSizeMb = (long)file.CurrentSizeMb,
+            });
         }
 
         long ramBytes = 0;
@@ -232,7 +207,7 @@ public static class CrashDumpConfigService
         }
         catch { /* leave 0 - required-size fields degrade to 0 (unknown) above */ }
 
-        return (entries, ramBytes);
+        return (entries, ramBytes, snapshot.IsAutomaticallyManaged);
     }
 
     /// <summary>Item 75: red/amber/green free-space read on whichever volume DumpTargetPath is
@@ -501,19 +476,26 @@ public static class CrashDumpConfigService
 
         try
         {
-            using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_ComputerSystem");
+            // Changing the page file needs SeCreatePagefilePrivilege enabled on the WMI connection
+            // (PowerShell's -EnableAllPrivileges) - holding it in the elevated token isn't enough.
+            var scope = new ManagementScope(@"\\.\root\cimv2", new ConnectionOptions { EnablePrivileges = true });
+            using var searcher = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT * FROM Win32_ComputerSystem"));
             bool wrote = false;
             foreach (ManagementObject mo in searcher.Get())
             {
+                if (mo["AutomaticManagedPagefile"] is true)
+                {
+                    notes.Add("Page file is already system-managed - left unchanged.");
+                    wrote = true;
+                    break;
+                }
                 mo["AutomaticManagedPagefile"] = true;
                 mo.Put();
                 wrote = true;
+                notes.Add("Page file switched to system-managed - Windows will resize it (on the system volume) after a restart.");
                 break;
             }
-            if (wrote)
-                notes.Add("Page file switched to system-managed - Windows will resize it (on the system volume) after a restart.");
-            else
-                ok = false;
+            if (!wrote) ok = false;
         }
         catch
         {

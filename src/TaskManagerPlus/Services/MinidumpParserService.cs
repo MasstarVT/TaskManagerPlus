@@ -146,11 +146,11 @@ public static class MinidumpParserService
     /// Item 14: DumpType is read from offset 0xF98 - DUMP_HEADER64's own offset for the field
     /// (the 32-bit DUMP_HEADER puts it at 0xF88, which in the 64-bit header lands inside the
     /// embedded EXCEPTION_RECORD64 instead) - the same field WinDbg's own `!dumpheader`
-    /// extension prints as "DumpType" (0x1 = Complete Memory Dump, 0x2 = Kernel Memory Dump).
-    /// Only those two well-known values are mapped to a friendly name; anything else shows the
-    /// raw header value rather than guessing at a newer Automatic/Active dump variant - those
-    /// are actually configured (and distinguishable) via the CrashDumpEnabled registry value
-    /// instead of this file-header field - see MinidumpHousekeepingService.
+    /// extension prints as "DumpType" (0x1 = Complete Memory Dump, 0x2 = Kernel Memory Dump,
+    /// 0x4 = triage/small dump, 0x5/0x6 = bitmap complete/kernel). Anything else shows the raw
+    /// header value rather than guessing at a newer Automatic/Active dump variant - those are
+    /// actually configured (and distinguishable) via the CrashDumpEnabled registry value instead
+    /// of this file-header field - see MinidumpHousekeepingService.
     ///
     /// Item 15: a file shorter than the header's own padded 8KB size, or a ValidDump mismatch,
     /// is flagged IsIncomplete - "incomplete, not analysable" rather than presented as if the
@@ -193,6 +193,9 @@ public static class MinidumpParserService
             parameters.Add($"0x{BitConverter.ToUInt64(header, 0x58):X16}");
         }
 
+        // DUMP_TYPE values: 1 full, 2 kernel (summary), 4 triage - what every modern
+        // %SystemRoot%\Minidump file is - and 5/6 the bitmap full/kernel variants a Windows 8+
+        // MEMORY.DMP usually carries.
         KernelDumpType dumpType = KernelDumpType.Unknown;
         string dumpTypeText = "Unknown (header too short to contain a DumpType field)";
         if (read >= 0xF9C)
@@ -202,7 +205,10 @@ public static class MinidumpParserService
             {
                 1 => (KernelDumpType.Complete, "Complete memory dump"),
                 2 => (KernelDumpType.Kernel, "Kernel memory dump"),
-                _ => (KernelDumpType.Unknown, $"Kernel/complete dump (unrecognized header value 0x{rawType:X})"),
+                4 => (KernelDumpType.Mini, "Small memory dump (kernel triage dump) - its module list isn't read by this app"),
+                5 => (KernelDumpType.Complete, "Complete memory dump (bitmap)"),
+                6 => (KernelDumpType.Kernel, "Kernel memory dump (bitmap)"),
+                _ => (KernelDumpType.Unknown, $"Kernel-mode dump (unrecognized header value 0x{rawType:X})"),
             };
         }
 
@@ -211,7 +217,7 @@ public static class MinidumpParserService
             FilePath = path,
             FileName = fileInfo.Name,
             SizeBytes = fileInfo.Length,
-            Format = "PAGEDU64 (kernel/complete dump)",
+            Format = dumpType == KernelDumpType.Mini ? "PAGEDU64 (kernel triage dump)" : "PAGEDU64 (kernel-mode dump header)",
             DumpType = dumpType,
             DumpTypeText = dumpTypeText,
             IsIncomplete = incomplete,

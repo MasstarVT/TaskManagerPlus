@@ -1850,16 +1850,17 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Reporting mode" VerticalAlignment="Center" Style="{StaticResource SubStat}" Margin="0,0,6,0" />
                                 <ComboBox Grid.Column="1" Width="260" SelectedValuePath="Tag" SelectedValue="{Binding SilentExitReportingMode}">
-                                    <ComboBoxItem Content="1 — capture a dump" Tag="1" />
-                                    <ComboBoxItem Content="2 — launch a monitor process" Tag="2" />
+                                    <ComboBoxItem Content="2 — capture a dump" Tag="2" />
+                                    <ComboBoxItem Content="1 — launch a monitor process" Tag="1" />
+                                    <ComboBoxItem Content="3 — dump + monitor process" Tag="3" />
                                 </ComboBox>
                             </Grid>
 
-                            <TextBlock Text="Local dump folder (used with mode 1)" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                            <TextBlock Text="Local dump folder (used with modes 2 and 3)" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
                             <TextBox Width="340" HorizontalAlignment="Left" Margin="0,0,0,8"
                                      Text="{Binding SilentExitLocalDumpFolder, UpdateSourceTrigger=PropertyChanged}" />
 
-                            <TextBlock Text="Monitor process (used with mode 2, optional)" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
+                            <TextBlock Text="Monitor process (used with modes 1 and 3, optional)" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,4" />
                             <TextBox Width="340" HorizontalAlignment="Left" Margin="0,0,0,8"
                                      Text="{Binding SilentExitMonitorProcess, UpdateSourceTrigger=PropertyChanged}" />
 

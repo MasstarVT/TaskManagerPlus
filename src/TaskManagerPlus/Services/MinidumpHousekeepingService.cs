@@ -85,9 +85,11 @@ public static class MinidumpHousekeepingService
 
     /// <summary>Deletes every *.dmp under the Minidump folder whose LastWriteTime is older than
     /// olderThanDays - returns the count actually deleted (best-effort per-file; one locked/
-    /// denied file doesn't stop the rest).</summary>
+    /// denied file doesn't stop the rest). olderThanDays below 1 deletes nothing - 0 would
+    /// otherwise put the cutoff at "now" and remove every dump in the folder.</summary>
     public static int DeleteOlderThan(int olderThanDays)
     {
+        if (olderThanDays < 1) return 0;
         int deleted = 0;
         try
         {

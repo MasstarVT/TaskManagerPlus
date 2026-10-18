@@ -124,7 +124,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     public string MemoryDumpStatusText { get => _memoryDumpStatusText; private set => SetProperty(ref _memoryDumpStatusText, value); }
 
     public RelayCommand OpenMemoryDumpFolderCommand { get; }
-    public RelayCommand CopyMemoryDumpCommand { get; }
+    public AsyncRelayCommand CopyMemoryDumpCommand { get; }
     public RelayCommand DeleteMemoryDumpCommand { get; }
 
     // Round 14, item 23: cdb.exe/windbg.exe availability, shared by every DumpRowViewModel.
@@ -387,7 +387,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     // Item 61: SilentProcessExit "Capture settings" fields - lives in the same card as LocalDumps
     // above (both are per-executable crash-capture registry config), sharing that card's own
     // LocalDumpsTargetExe textbox as the target rather than a second one.
-    private string _silentExitReportingMode = "1";
+    // ReportingMode is a bitmask - 2 (LOCAL_DUMP) is "capture a dump", 1 launches MonitorProcess.
+    private string _silentExitReportingMode = "2";
     public string SilentExitReportingMode { get => _silentExitReportingMode; set => SetProperty(ref _silentExitReportingMode, value); }
 
     private string _silentExitLocalDumpFolder = @"%LOCALAPPDATA%\CrashDumps";
@@ -1089,19 +1090,19 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         RevealWerArchiveCommand = new RelayCommand(() => EtwTraceService.RevealInExplorer(WerFootprint.ArchivePath), () => WerFootprint.ArchiveExists);
 
         // #165: both gated behind their own explicit MessageBox confirmation - see EnableLocalDumps/RevertLocalDumps.
-        EnableLocalDumpsCommand = new RelayCommand(EnableLocalDumps);
-        RevertLocalDumpsCommand = new RelayCommand(RevertLocalDumps, () => CanRevertLocalDumps);
+        EnableLocalDumpsCommand = new RelayCommand(EnableLocalDumps, () => !ReadOnlyModeService.IsReadOnly);
+        RevertLocalDumpsCommand = new RelayCommand(RevertLocalDumps, () => CanRevertLocalDumps && !ReadOnlyModeService.IsReadOnly);
         CanRevertLocalDumps = WerReportService.BackupExists();
 
         // #195: gated behind its own explicit MessageBox confirmation - see RunLodctrRebuild.
-        RunLodctrRebuildCommand = new RelayCommand(RunLodctrRebuild);
+        RunLodctrRebuildCommand = new RelayCommand(RunLodctrRebuild, () => !ReadOnlyModeService.IsReadOnly);
 
         // #171: its own action (runs the RAC task, then re-queries) - not folded into RefreshCommand.
         RefreshReliabilityCommand = new AsyncRelayCommand(RunReliabilityRefreshAsync);
 
         // #172: gated behind their own explicit MessageBox confirmation, same shape as #165 above.
-        EnableReliabilityAnalysisCommand = new RelayCommand(EnableReliabilityAnalysis);
-        RevertReliabilityAnalysisCommand = new RelayCommand(RevertReliabilityAnalysis, () => CanRevertReliabilityAnalysis);
+        EnableReliabilityAnalysisCommand = new RelayCommand(EnableReliabilityAnalysis, () => !ReadOnlyModeService.IsReadOnly);
+        RevertReliabilityAnalysisCommand = new RelayCommand(RevertReliabilityAnalysis, () => CanRevertReliabilityAnalysis && !ReadOnlyModeService.IsReadOnly);
         CanRevertReliabilityAnalysis = ReliabilityMonitorService.BackupExists();
 
         // #137: one chip per source actually wired into BuildTimeline - see TimelineSource's remarks.
@@ -1122,7 +1123,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             catch (Exception ex) { MemoryDumpStatusText = $"Couldn't open folder: {ex.Message}"; }
         }, () => MemoryDump?.Exists == true);
 
-        CopyMemoryDumpCommand = new RelayCommand(() =>
+        // A MEMORY.DMP is routinely several GB - the copy runs off the UI thread.
+        CopyMemoryDumpCommand = new AsyncRelayCommand(async () =>
         {
             try
             {
@@ -1133,8 +1135,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 };
                 if (dlg.ShowDialog() == true && MemoryDump is not null)
                 {
-                    System.IO.File.Copy(MemoryDump.FilePath, dlg.FileName, overwrite: true);
-                    MemoryDumpStatusText = $"Copied to {dlg.FileName}.";
+                    string source = MemoryDump.FilePath;
+                    string destination = dlg.FileName;
+                    MemoryDumpStatusText = $"Copying to {destination}...";
+                    await Task.Run(() => System.IO.File.Copy(source, destination, overwrite: true));
+                    MemoryDumpStatusText = $"Copied to {destination}.";
                 }
             }
             catch (Exception ex) { MemoryDumpStatusText = $"Couldn't copy: {ex.Message}"; }
@@ -1142,6 +1147,13 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         DeleteMemoryDumpCommand = new RelayCommand(() =>
         {
+            var confirm = System.Windows.MessageBox.Show(
+                "Permanently delete MEMORY.DMP?\nThis is the only full record of the last crash and cannot be undone.",
+                "Delete MEMORY.DMP",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
             try
             {
                 if (MemoryDump is not null) System.IO.File.Delete(MemoryDump.FilePath);
@@ -1149,15 +1161,28 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 _ = RefreshAsync();
             }
             catch (Exception ex) { MemoryDumpStatusText = $"Couldn't delete: {ex.Message}"; }
-        }, () => MemoryDump?.Exists == true);
+        }, () => MemoryDump?.Exists == true && !ReadOnlyModeService.IsReadOnly);
 
         // Round 14, item 26: Minidump folder housekeeping.
         DeleteOldDumpsCommand = new RelayCommand(() =>
         {
-            int deleted = MinidumpHousekeepingService.DeleteOlderThan(DeleteOlderThanDays);
-            HousekeepingStatusText = $"Deleted {deleted} dump file(s) older than {DeleteOlderThanDays} day(s).";
+            int days = DeleteOlderThanDays;
+            if (days < 1)
+            {
+                HousekeepingStatusText = "Enter at least 1 day - 0 would delete every dump in the folder.";
+                return;
+            }
+            var confirm = System.Windows.MessageBox.Show(
+                $"Permanently delete every minidump older than {days} day(s)? This cannot be undone.",
+                "Delete old minidumps",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+            int deleted = MinidumpHousekeepingService.DeleteOlderThan(days);
+            HousekeepingStatusText = $"Deleted {deleted} dump file(s) older than {days} day(s).";
             _ = RefreshAsync();
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         SaveMinidumpsCountCommand = new RelayCommand(() =>
         {
@@ -1165,7 +1190,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             HousekeepingStatusText = ok
                 ? $"MinidumpsCount set to {MinidumpsCountInput}."
                 : "Couldn't write the registry value.";
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         // Round 14, item 25: symbol path apply/test.
         ApplySymbolPathCommand = new RelayCommand(() =>
@@ -1173,7 +1198,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             bool ok = SymbolServerService.ApplySymbolPath(SymbolCacheFolder);
             SymbolServerStatusText = ok ? "Symbol path applied for this user." : "Couldn't set the environment variable.";
             OnPropertyChanged(nameof(CurrentSymbolPathText));
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         TestSymbolServerCommand = new AsyncRelayCommand(async () =>
         {
@@ -1199,12 +1224,26 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         // touch).
         EnableWerCommand = new RelayCommand(() =>
         {
+            var confirm = System.Windows.MessageBox.Show(
+                "Sets HKLM\\...\\Windows Error Reporting\\Disabled to 0 so Windows captures crash reports again.\n\n" +
+                "Consent/sending settings (DontSendAdditionalData, DefaultConsent) and the WerSvc start type are left as they are. Continue?",
+                "Re-enable Windows Error Reporting",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
             bool ok = WerReportService.EnableWer();
-            WerStatusActionText = ok
-                ? "Windows Error Reporting re-enabled. Refresh to see updated status."
-                : "Couldn't write the registry value.";
-            if (ok) _ = RefreshAsync();
-        });
+            if (!ok)
+            {
+                WerStatusActionText = "Couldn't write the registry value.";
+                return;
+            }
+            // Only the registry flag is cleared - a Disabled WerSvc still blocks collection.
+            WerStatusActionText = WerReportService.ReadCollectionStatus().ServiceLooksBlocked
+                ? "Disabled flag cleared, but the WerSvc service's start type is still Disabled - collection stays blocked until that is changed (Services tab)."
+                : "Windows Error Reporting re-enabled. Refresh to see updated status.";
+            _ = RefreshAsync();
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         // Round 16, item 43: explicit, warned purge - MessageBox confirmation, the same pattern
         // ProcessesViewModel.EndSelected already uses for a destructive action.
@@ -1220,7 +1259,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             int deleted = WerReportService.PurgeAll();
             WerPurgeStatusText = $"Deleted {deleted} report folder(s).";
             _ = RefreshAsync();
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         // Round 16, item 42: LocalDumps capture-settings load/save/clear.
         LoadLocalDumpsConfigCommand = new RelayCommand(() =>
@@ -1245,13 +1284,13 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             LocalDumpsStatusText = ok
                 ? $"Saved. Windows will now write a dump to {LocalDumpsFolder} the next time {(NormalizedLocalDumpsTarget() ?? "any app")} crashes."
                 : "Couldn't write the registry value.";
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         ClearLocalDumpsConfigCommand = new RelayCommand(() =>
         {
             bool ok = WerReportService.ClearLocalDumpsConfig(NormalizedLocalDumpsTarget());
             LocalDumpsStatusText = ok ? "Override removed." : "Couldn't remove the registry value(s).";
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         // Round 17, item 61: SilentProcessExit load/save/clear - shares LocalDumpsTargetExe
         // above as the target executable field (see this section's own remarks).
@@ -1260,7 +1299,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             var cfg = SilentProcessExitService.ReadConfig(LocalDumpsTargetExe);
             if (cfg.Exists)
             {
-                SilentExitReportingMode = (cfg.ReportingMode ?? 1).ToString();
+                SilentExitReportingMode = (cfg.ReportingMode ?? 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
                 SilentExitLocalDumpFolder = cfg.LocalDumpFolder ?? SilentExitLocalDumpFolder;
                 SilentExitMonitorProcess = cfg.MonitorProcess ?? string.Empty;
                 SilentExitStatusText = $"Loaded existing configuration: {cfg.ReportingModeText}.";
@@ -1280,18 +1319,18 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 SilentExitStatusText = "SilentProcessExit needs a target executable (it has no global default) - fill in \"Target executable\" above first.";
                 return;
             }
-            int mode = int.TryParse(SilentExitReportingMode, out var m) ? m : 1;
+            int mode = int.TryParse(SilentExitReportingMode, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var m) ? m : 2;
             bool ok = SilentProcessExitService.WriteConfig(LocalDumpsTargetExe.Trim(), mode, SilentExitLocalDumpFolder, SilentExitMonitorProcess);
             SilentExitStatusText = ok
-                ? $"Saved. Windows will now report a silent exit of {LocalDumpsTargetExe.Trim()} the way ReportingMode {mode} configures."
-                : "Couldn't write the registry value.";
-        });
+                ? $"Saved (including the image's GlobalFlag monitoring bit). Windows will now report a silent exit of {LocalDumpsTargetExe.Trim()} the way ReportingMode {mode} configures."
+                : "Couldn't write the registry value(s).";
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         ClearSilentExitConfigCommand = new RelayCommand(() =>
         {
             bool ok = SilentProcessExitService.ClearConfig(LocalDumpsTargetExe);
             SilentExitStatusText = ok ? "SilentProcessExit configuration removed." : "Couldn't remove the registry value(s).";
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         // Item 70: forced-crash toggles - each Enable is gated behind an explicit warning
         // confirmation (the same MessageBox-confirm pattern PurgeWerReportsCommand above already
@@ -1314,14 +1353,14 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 ? "Enabled. Reboot for it to take effect - Ctrl+ScrollLock×2 will then bluescreen this machine on demand."
                 : "Couldn't write the registry value(s).";
             OnPropertyChanged(nameof(ForcedCrashConfigText));
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         DisableCrashOnCtrlScrollCommand = new RelayCommand(() =>
         {
             bool ok = ForcedCrashService.SetCrashOnCtrlScroll(false);
             ForcedCrashStatusText = ok ? "Disabled." : "Couldn't write the registry value(s).";
             OnPropertyChanged(nameof(ForcedCrashConfigText));
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         EnableNmiCrashDumpCommand = new RelayCommand(() =>
         {
@@ -1335,14 +1374,14 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             bool ok = ForcedCrashService.SetNmiCrashDump(true);
             ForcedCrashStatusText = ok ? "Enabled." : "Couldn't write the registry value.";
             OnPropertyChanged(nameof(ForcedCrashConfigText));
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         DisableNmiCrashDumpCommand = new RelayCommand(() =>
         {
             bool ok = ForcedCrashService.SetNmiCrashDump(false);
             ForcedCrashStatusText = ok ? "Disabled." : "Couldn't write the registry value.";
             OnPropertyChanged(nameof(ForcedCrashConfigText));
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         // Round 18, items 74/76/77/78: crash-dump-configuration write actions - each one is a
         // real, consequential registry/page-file change, so every Enable/Apply/Set below is
@@ -1367,21 +1406,21 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             bool ok = CrashDumpConfigService.WriteDedicatedDumpFile(DedicatedDumpFilePath.Trim(), DedicatedDumpFileSizeMb);
             CrashDumpConfigStatusText = ok ? "Saved. Takes effect on the next crash." : "Couldn't write the registry value(s).";
             if (ok) _ = RefreshAsync();
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         ClearDedicatedDumpFileCommand = new RelayCommand(() =>
         {
             bool ok = CrashDumpConfigService.ClearDedicatedDumpFile();
             CrashDumpConfigStatusText = ok ? "Dedicated dump file removed - dumps go back to the system page file's volume." : "Couldn't remove the registry value(s).";
             if (ok) _ = RefreshAsync();
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         EnableAutoRebootCommand = new RelayCommand(() =>
         {
             bool ok = CrashDumpConfigService.SetAutoReboot(true);
             CrashDumpConfigStatusText = ok ? "AutoReboot enabled." : "Couldn't write the registry value.";
             if (ok) _ = RefreshAsync();
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         DisableAutoRebootCommand = new RelayCommand(() =>
         {
@@ -1395,14 +1434,14 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             bool ok = CrashDumpConfigService.SetAutoReboot(false);
             CrashDumpConfigStatusText = ok ? "AutoReboot disabled." : "Couldn't write the registry value.";
             if (ok) _ = RefreshAsync();
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         EnableFastStartupCommand = new RelayCommand(() =>
         {
             bool ok = CrashDumpConfigService.SetHiberbootEnabled(true);
             CrashDumpConfigStatusText = ok ? "Fast Startup enabled." : "Couldn't write the registry value.";
             if (ok) _ = RefreshAsync();
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         DisableFastStartupCommand = new RelayCommand(() =>
         {
@@ -1416,7 +1455,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             bool ok = CrashDumpConfigService.SetHiberbootEnabled(false);
             CrashDumpConfigStatusText = ok ? "Fast Startup disabled." : "Couldn't write the registry value.";
             if (ok) _ = RefreshAsync();
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         ApplyRecommendedCrashDumpConfigCommand = new RelayCommand(() =>
         {
@@ -1431,7 +1470,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             var (ok, notes) = CrashDumpConfigService.ApplyRecommendedConfiguration();
             CrashDumpConfigStatusText = (ok ? "Applied. " : "Some settings couldn't be applied. ") + string.Join(" ", notes);
             _ = RefreshAsync();
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         // Round 17, item 59: jump from a restart-loop warning row to the matching Services-tab
         // entry - see JumpToServiceRequested's own remarks.
@@ -1467,7 +1506,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 : "Couldn't reset Driver Verifier - see the status above for what verifier.exe reported.";
             if (ok) VerifierEnableHistoryService.ClearEnabled();
             await RefreshVerifierStatusAsync();
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         // Round 19, items 83/84: guided wizard - restore point -> driver selection -> Safe Mode
         // guidance -> confirm/apply. Every step forward is a plain state change (no destructive
@@ -1498,7 +1537,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             RestorePointStatusText = "Creating restore point...";
             var (ok, message) = await Task.Run(() => RestorePointService.TryCreate("Task Manager Plus - before enabling Driver Verifier"));
             RestorePointStatusText = message;
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         GoToDriverStepCommand = new RelayCommand(() =>
         {
@@ -1564,7 +1603,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 WizardOpen = false;
                 await RefreshVerifierStatusAsync();
             }
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         // Round 19, item 87: on-demand pool-tag sampling - never a timer, per this chunk's own
         // instructions and CLAUDE.md's "on-demand vs. polled" convention.
@@ -1627,12 +1666,17 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
             var (driver, source) = PoolTagLookup.Resolve(tag);
             string scopeText = driver is not null
-                ? $"scoped to {driver} ({source})"
-                : "applied system-wide (no specific owning driver could be identified - the PoolTag registry list still limits the extra memory/performance cost to just this tag)";
+                ? $"via the PoolTag registry value, with Driver Verifier's Special Pool also scoped to {driver} ({source})"
+                : "via the PoolTag registry value only (no owning driver could be identified, so Driver Verifier settings are left unchanged)";
+            string? existingTag = DriverVerifierService.ReadCurrentPoolTag();
+            string replaceText = existingTag is not null
+                ? $"\n\nWindows honours one pool tag at a time - this replaces the currently configured tag '{existingTag}'."
+                : string.Empty;
 
             var confirm = System.Windows.MessageBox.Show(
                 $"Enable Special Pool for pool tag '{tag}', {scopeText}?\n\n" +
-                "This makes Windows catch the exact driver that overruns or underruns an allocation carrying this tag, at the cost of extra memory and speed for those allocations. Requires a reboot to take effect.",
+                "This makes Windows catch the exact driver that overruns or underruns an allocation carrying this tag, at the cost of extra memory and speed for those allocations. Requires a reboot to take effect." +
+                replaceText,
                 "Apply Special Pool",
                 System.Windows.MessageBoxButton.YesNo,
                 System.Windows.MessageBoxImage.Warning);
@@ -1640,10 +1684,10 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
             var (ok, output) = await DriverVerifierService.ApplySpecialPoolForTagAsync(tag, driver);
             SpecialPoolStatusText = ok
-                ? $"Special Pool enabled for '{tag}'. Reboot for it to take effect."
+                ? $"Special Pool enabled for '{tag}'. Reboot for it to take effect. {output.Trim()}"
                 : $"Couldn't apply Special Pool: {output}";
             if (ok) await RefreshVerifierStatusAsync();
-        });
+        }, _ => !ReadOnlyModeService.IsReadOnly);
 
         LoadWheaEventsCommand = new AsyncRelayCommand(_ => LoadWheaEventsAsync());
         LoadGpuResetHistoryCommand = new AsyncRelayCommand(_ => LoadGpuResetHistoryAsync());
@@ -1922,8 +1966,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         // Safe Mode is genuinely disruptive - it persists across every subsequent boot, not just
         // the next one, until reverted - so the confirmation names the revert action explicitly,
         // per this chunk's own instructions.
-        RebootToSafeModeMinimalCommand = new AsyncRelayCommand(() => RebootToSafeModeAsync(withNetworking: false));
-        RebootToSafeModeNetworkCommand = new AsyncRelayCommand(() => RebootToSafeModeAsync(withNetworking: true));
+        RebootToSafeModeMinimalCommand = new AsyncRelayCommand(() => RebootToSafeModeAsync(withNetworking: false), () => !ReadOnlyModeService.IsReadOnly);
+        RebootToSafeModeNetworkCommand = new AsyncRelayCommand(() => RebootToSafeModeAsync(withNetworking: true), () => !ReadOnlyModeService.IsReadOnly);
 
         RebootToRecoveryEnvironmentCommand = new AsyncRelayCommand(async () =>
         {
@@ -1936,14 +1980,14 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
             var (_, message) = await BootRecoveryService.RebootToRecoveryEnvironmentAsync();
             SafeModeStatusText = message;
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         RevertSafeModeBootCommand = new AsyncRelayCommand(async () =>
         {
             var (ok, message) = await BootRecoveryService.RevertSafeModeBootAsync();
             SafeModeStatusText = message;
             if (ok) await RefreshBootConfigAsync();
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         // ---- Item 98: System Restore points ----------------------------------------------------
         CreateRestorePointFromRecoveryCommand = new AsyncRelayCommand(async () =>
@@ -1952,7 +1996,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             var (ok, message) = await Task.Run(() => RestorePointService.TryCreate("Task Manager Plus - manual restore point"));
             RestorePointsStatusText = message;
             if (ok) await RefreshRestorePointsAsync();
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         LaunchRstruiCommand = new RelayCommand(() =>
         {
@@ -1985,7 +2029,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             {
                 IsSfcRunning = false;
             }
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         RunDismCommand = new AsyncRelayCommand(async () =>
         {
@@ -2011,7 +2055,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             {
                 IsDismRunning = false;
             }
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         ScheduleChkdskCommand = new AsyncRelayCommand(async () =>
         {
@@ -2024,7 +2068,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
             var (_, message) = await SystemRepairService.ScheduleChkdskOnSystemVolumeAsync();
             ChkdskResultText = message;
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         LaunchMemoryDiagnosticCommand = new RelayCommand(() =>
         {
@@ -2039,7 +2083,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             MemoryDiagnosticStatusText = ok
                 ? "Windows Memory Diagnostic launched - the machine will restart shortly."
                 : "Couldn't launch mdsched.exe.";
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         RefreshMemoryDiagnosticResultsCommand = new AsyncRelayCommand(async () =>
         {
@@ -2075,8 +2119,12 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 var selectedWer = _allWerReportRows.Where(r => r.IsSelected).Select(r => r.Report.ReportFolder).ToList();
                 var clusters = CrashClusters.Select(c => c.Cluster).ToList();
 
-                var (_, message, _) = await CrashSupportBundleService.BuildAsync(
-                    selectedDumps, selectedWer, CrashDumpConfig, clusters, dialog.FileName);
+                // Task.Run: BuildAsync copies dumps/WER folders synchronously before its first await,
+                // and its awaits would otherwise resume (and zip) on the UI thread.
+                var config = CrashDumpConfig;
+                string zipPath = dialog.FileName;
+                var (_, message, _) = await Task.Run(() => CrashSupportBundleService.BuildAsync(
+                    selectedDumps, selectedWer, config, clusters, zipPath));
                 SupportBundleStatusText = message;
             }
             catch (Exception ex)

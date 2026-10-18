@@ -14,21 +14,28 @@ public sealed class SilentProcessExitConfig
     public string? TargetExecutable { get; init; }
     public bool Exists { get; init; }
 
-    /// <summary>1 = report via LocalDumps-style dump capture (needs the LocalDumps values for the
-    /// same executable to also be configured, item 42); 2 = launch MonitorProcess instead. Null
-    /// means the ReportingMode value itself isn't set.</summary>
+    /// <summary>A bitmask: 0x1 LAUNCH_MONITORPROCESS (run MonitorProcess), 0x2 LOCAL_DUMP (write a
+    /// dump to LocalDumpFolder - SilentProcessExit's own value, independent of LocalDumps), 0x4
+    /// NOTIFICATION (show a pop-up). Null means the ReportingMode value itself isn't set.</summary>
     public int? ReportingMode { get; init; }
 
     public string? LocalDumpFolder { get; init; }
     public string? MonitorProcess { get; init; }
 
-    public string ReportingModeText => ReportingMode switch
+    public string ReportingModeText
     {
-        1 => "1 — capture a dump (uses this executable's LocalDumps settings)",
-        2 => "2 — launch a monitor process",
-        null => "Not set (silent-exit monitoring disabled)",
-        _ => $"{ReportingMode} (unrecognized value)",
-    };
+        get
+        {
+            if (ReportingMode is not { } mode) return "Not set (silent-exit monitoring disabled)";
+            var parts = new List<string>();
+            if ((mode & 0x2) != 0) parts.Add("capture a dump");
+            if ((mode & 0x1) != 0) parts.Add("launch a monitor process");
+            if ((mode & 0x4) != 0) parts.Add("show a notification");
+            int unknown = mode & ~0x7;
+            if (unknown != 0) parts.Add($"unrecognized bits 0x{unknown:X}");
+            return parts.Count == 0 ? $"{mode} (no reporting action set)" : $"{mode} — {string.Join(" + ", parts)}";
+        }
+    }
 }
 
 /// <summary>Round 17, item 62: one Image File Execution Options "Debugger" hijack - a

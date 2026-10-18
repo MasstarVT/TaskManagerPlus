@@ -220,50 +220,81 @@ public static class DriverVerifierService
         return (ok, sb.ToString());
     }
 
-    /// <summary>Item 88: writes the suspect tag into the REG_MULTI_SZ pool-tag restriction list
-    /// under Session Manager\Memory Management\PoolTag (preserving whatever tags were already
-    /// listed there, deduplicated) and enables Verifier's Special Pool flag - together, this makes
-    /// Windows put every allocation carrying that tag into a guard-paged "special pool" allocation
-    /// that immediately bugchecks (0xC1/0xC5-family) the instant a driver over/underruns it,
-    /// naming the exact offender. Special Pool is not a volatile-eligible flag, so this always
-    /// needs a reboot; when a specific driver name is known (e.g. from PoolTagLookup's own
-    /// best-effort resolution) verification is scoped to just that driver, otherwise it's applied
-    /// system-wide via /all - kept safe from ballooning memory use because the PoolTag registry
-    /// list still restricts special pool to only allocations carrying the listed tag(s).</summary>
+    /// <summary>Item 88: sets Session Manager\Memory Management\PoolTag - one REG_DWORD holding
+    /// the tag's four ASCII bytes little-endian (gflags' own layout: "Tag1" is 0x31676154) - which
+    /// makes the kernel put every allocation carrying that tag into a guard-paged "special pool"
+    /// allocation that bugchecks (0xC1/0xC5-family) the instant a driver over/underruns it, naming
+    /// the exact offender. Windows honours a single tag, so this replaces any previous one (the
+    /// caller shows it first; the result text names it). Always needs a reboot. When a specific
+    /// driver is known (PoolTagLookup's best-effort resolution) Verifier's Special Pool flag is
+    /// also scoped to just that driver; with no driver the registry value alone is used -
+    /// `verifier /flags 1 /all` would special-pool every allocation of every driver, and PoolTag
+    /// does not narrow that.</summary>
     public static async Task<(bool Ok, string Output)> ApplySpecialPoolForTagAsync(string tag, string? driverFileName)
     {
         if (string.IsNullOrWhiteSpace(tag)) return (false, "No pool tag was given.");
+        if (PackPoolTag(tag.Trim()) is not { } packed)
+            return (false, $"'{tag}' isn't a valid pool tag (up to 4 printable ASCII characters).");
 
-        bool registryOk = AddPoolTagToRegistryList(tag.Trim());
+        string? previous = ReadCurrentPoolTag();
+        bool registryOk = WritePoolTag(packed);
+        string registryText = registryOk
+            ? "PoolTag registry value set" + (previous is not null ? $" (replaced previous tag '{previous}'). " : ". ")
+            : "Couldn't write the PoolTag registry value. ";
 
-        string target = string.IsNullOrWhiteSpace(driverFileName)
-            ? "/all"
-            : $"/driver {driverFileName.Trim()}";
-        var (output, exitCode) = await RunCapturedAsync("verifier.exe", $"/flags {SpecialPoolFlag} {target}");
+        if (string.IsNullOrWhiteSpace(driverFileName))
+            return (registryOk, registryText + "No owning driver was identified, so Driver Verifier settings were left unchanged.");
+
+        var (output, exitCode) = await RunCapturedAsync("verifier.exe", $"/flags {SpecialPoolFlag} /driver {driverFileName.Trim()}");
         bool verifierOk = exitCode is 0 or 2;
-
-        string combined = (registryOk ? "PoolTag registry list updated. " : "Couldn't write the PoolTag registry value. ") + output;
-        return (registryOk && verifierOk, combined);
+        return (registryOk && verifierOk, registryText + output);
     }
 
-    /// <summary>Adds one tag (padded/truncated to the 4 characters verifier/the pool manager
-    /// expect) to the existing PoolTag REG_MULTI_SZ list, deduplicated case-insensitively -
-    /// preserves whatever tags a previous item-88 action (or a manual gflags/registry edit)
-    /// already listed there, rather than clobbering it.</summary>
-    private static bool AddPoolTagToRegistryList(string tag)
+    /// <summary>The tag PoolTag currently names, or null when unset/unreadable. Also accepts the
+    /// REG_MULTI_SZ list earlier builds of this app wrote (which Windows ignores) and a REG_SZ.</summary>
+    public static string? ReadCurrentPoolTag()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(PoolTagRegistryPath);
+            return key?.GetValue(PoolTagValueName) switch
+            {
+                int dword => UnpackPoolTag(dword),
+                string[] list => list.FirstOrDefault(t => !string.IsNullOrWhiteSpace(t)),
+                string s when !string.IsNullOrWhiteSpace(s) => s,
+                _ => null,
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Space-pads/truncates to the 4 characters a pool tag is, then packs it the way
+    /// gflags does. Null for anything outside printable ASCII.</summary>
+    private static int? PackPoolTag(string tag)
     {
         string normalized = tag.Length >= 4 ? tag[..4] : tag.PadRight(4);
+        if (normalized.Any(c => c < 0x20 || c > 0x7E)) return null;
+        return BitConverter.ToInt32(System.Text.Encoding.ASCII.GetBytes(normalized), 0);
+    }
+
+    private static string UnpackPoolTag(int value)
+    {
+        var bytes = BitConverter.GetBytes(value);
+        return bytes.All(b => b >= 0x20 && b <= 0x7E)
+            ? System.Text.Encoding.ASCII.GetString(bytes)
+            : $"0x{value:X8}";
+    }
+
+    private static bool WritePoolTag(int packed)
+    {
         try
         {
             using var key = Registry.LocalMachine.CreateSubKey(PoolTagRegistryPath, writable: true);
             if (key is null) return false;
-
-            var existing = key.GetValue(PoolTagValueName) as string[] ?? Array.Empty<string>();
-            if (existing.Any(t => string.Equals(t, normalized, StringComparison.OrdinalIgnoreCase)))
-                return true; // already listed - nothing to change
-
-            var updated = existing.Append(normalized).ToArray();
-            key.SetValue(PoolTagValueName, updated, RegistryValueKind.MultiString);
+            key.SetValue(PoolTagValueName, packed, RegistryValueKind.DWord);
             return true;
         }
         catch
