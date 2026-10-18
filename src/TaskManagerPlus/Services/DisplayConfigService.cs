@@ -137,11 +137,16 @@ public static class DisplayConfigService
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string viewGdiDeviceName;
     }
 
+    // wingdi.h: header (20 bytes) + the bitfield union + colorEncoding + bitsPerColorChannel = 32
+    // bytes. header.size is validated against that, so the old 24-byte declaration always failed
+    // with ERROR_INVALID_PARAMETER and HDR state read as Unknown.
     [StructLayout(LayoutKind.Sequential)]
     private struct DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
     {
         public DISPLAYCONFIG_DEVICE_INFO_HEADER header;
         public uint value;
+        public uint colorEncoding;
+        public uint bitsPerColorChannel;
     }
 
     [StructLayout(LayoutKind.Sequential)]

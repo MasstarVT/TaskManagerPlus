@@ -70,8 +70,14 @@ public static class PowerPlanService
         try
         {
             string output = (await RunCapturedAsync("powercfg.exe", "/a")).Output;
-            bool hasModernStandby = output.Contains("S0 Low Power Idle", StringComparison.OrdinalIgnoreCase);
-            bool hasS3 = Regex.IsMatch(output, @"Standby\s*\(S3\)", RegexOptions.IgnoreCase);
+            // The report lists unsupported states too ("Standby (S0 Low Power Idle)" appears under
+            // "...not available on this system:" on every S3 machine), so only the section before
+            // that heading counts - the same split HibernationService uses. No marker (another
+            // locale/build) falls back to the whole report.
+            int notAvailIdx = output.IndexOf("not available on this system", StringComparison.OrdinalIgnoreCase);
+            string available = notAvailIdx >= 0 ? output[..notAvailIdx] : output;
+            bool hasModernStandby = available.Contains("S0 Low Power Idle", StringComparison.OrdinalIgnoreCase);
+            bool hasS3 = Regex.IsMatch(available, @"Standby\s*\(S3\)", RegexOptions.IgnoreCase);
 
             if (hasModernStandby) return "Modern Standby (S0 Low Power Idle)";
             if (hasS3) return "Legacy S3 (Suspend to RAM)";

@@ -2103,7 +2103,10 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         double? cpuCeiling = FindByNameContains(cpuTempsForCeiling, "TjMax", "Tj Max", "Max Temperature", "Temperature Limit");
         if (cpuCeiling is null)
         {
-            var thermalEpisodes = _persistedEpisodes.Where(e => e.ReasonClass == ThrottleReasonClass.Thermal).ToList();
+            // PeakTempC is persisted as 0 for an episode that opened (and closed) with no CPU
+            // temperature reading at all - that is "unknown", not a 0°C throttle point; letting it
+            // in made this ceiling 0, and the stress-test abort (reference - 5) -5°C.
+            var thermalEpisodes = _persistedEpisodes.Where(e => e.ReasonClass == ThrottleReasonClass.Thermal && e.PeakTempC > 0).ToList();
             if (thermalEpisodes.Count > 0) cpuCeiling = thermalEpisodes.Min(e => e.PeakTempC);
         }
         CpuThermalHeadroomC = cpuCeiling.HasValue && CpuPackageTempC.HasValue ? cpuCeiling - CpuPackageTempC : null;

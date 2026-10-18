@@ -111,8 +111,11 @@ public static class MinifilterAuditService
         return result;
     }
 
-    /// <summary>Parses `fltmc instances`' 4-column table (Filter Name / Volume Name / Altitude /
-    /// Instance Name) - same tolerant column-split approach as ParseFilters above.</summary>
+    /// <summary>Parses `fltmc instances`' table - Filter / Volume Name / Altitude / Instance Name,
+    /// followed on current builds by Frame / SprtFtrs / VlStatus (older builds print fewer trailing
+    /// columns, and title the first one "Filter Name"). Only the first four are used, so any row
+    /// with at least four columns is accepted - same tolerant column-split approach as
+    /// ParseFilters above.</summary>
     private static List<MinifilterInstanceInfo> ParseInstances(string output)
     {
         var result = new List<MinifilterInstanceInfo>();
@@ -122,8 +125,9 @@ public static class MinifilterAuditService
             if (line.Length == 0 || IsSeparatorLine(line)) continue;
 
             var cols = ColumnSplit.Split(line);
-            if (cols.Length != 4) continue;
-            if (string.Equals(cols[0], "Filter Name", StringComparison.OrdinalIgnoreCase)) continue;
+            if (cols.Length < 4) continue;
+            if (string.Equals(cols[0], "Filter Name", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(cols[0], "Filter", StringComparison.OrdinalIgnoreCase)) continue;
 
             result.Add(new MinifilterInstanceInfo { FilterName = cols[0], VolumeName = cols[1], Altitude = cols[2], InstanceName = cols[3] });
         }

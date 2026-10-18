@@ -4,8 +4,9 @@ using TaskManagerPlus.Models;
 namespace TaskManagerPlus.Services;
 
 /// <summary>
-/// #204: reads the two registry values the DPC watchdog actually bugchecks on -
-/// HKLM\SYSTEM\CurrentControlSet\Control\DpcWatchdogProfileOffset and \DPCTimeout - so the
+/// #204: reads the registry values the DPC watchdog actually bugchecks on - DPCTimeout (and
+/// DpcWatchdogProfileOffset) under HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\kernel,
+/// where the kernel reads them (not the bare ...\Control key this once read) - so the
 /// Responsiveness tab can show "how close is this machine to a DPC_WATCHDOG_VIOLATION (0x133)"
 /// rather than just a raw latency number with no context for what actually crashes the system.
 /// DPCTimeout = 0 means the watchdog is disabled (Microsoft's own documented convention, most
@@ -23,8 +24,8 @@ public static class DpcWatchdogService
     {
         try
         {
-            using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control");
-            object? timeoutVal = key?.GetValue("DPCTimeout");
+            using var kernelKey = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Session Manager\kernel");
+            object? timeoutVal = kernelKey?.GetValue("DPCTimeout");
             int? timeout = timeoutVal is int t ? t : null;
             bool disabled = timeout == 0;
 

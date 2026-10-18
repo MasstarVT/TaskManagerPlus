@@ -48,9 +48,17 @@ public static class WprCaptureService
         if (IsCircularCaptureRunning)
             return (true, "Circular capture already running.");
 
+        // A WPR session outlives the process that started it (until reboot), so one this app armed
+        // and never tore down - a crash or kill - makes every later -start fail. The marker file
+        // says exactly that happened, so only then is it cancelled first; an unrelated WPR session
+        // (another tab's capture, the user's own) is left alone.
+        if (File.Exists(ArmedMarkerPath))
+            await RunAsync(WprPath, "-cancel", TimeSpan.FromSeconds(10), CancellationToken.None, ignoreExitCode: true);
+
         var (startOk, startMsg) = await RunAsync(WprPath, "-start GeneralProfile", TimeSpan.FromSeconds(30), ct);
         if (!startOk)
         {
+            ClearArmedMarker();
             string message = startMsg.Contains("already running", StringComparison.OrdinalIgnoreCase) || startMsg.Contains("already collecting", StringComparison.OrdinalIgnoreCase)
                 ? "A trace session was already running and couldn't be replaced."
                 : $"Couldn't start the ETW circular capture: {startMsg}";
@@ -58,7 +66,15 @@ public static class WprCaptureService
         }
 
         IsCircularCaptureRunning = true;
+        try { File.WriteAllText(ArmedMarkerPath, DateTime.UtcNow.ToString("o")); } catch { /* best-effort */ }
         return (true, "ETW circular capture running (in-memory buffer, nothing written to disk yet).");
+    }
+
+    private static string ArmedMarkerPath => AppPaths.GetPath("wpr-circular-armed.marker");
+
+    private static void ClearArmedMarker()
+    {
+        try { File.Delete(ArmedMarkerPath); } catch { /* best-effort */ }
     }
 
     /// <summary>#298: stops the circular session and saves whatever the in-memory buffer held
@@ -74,6 +90,7 @@ public static class WprCaptureService
 
         var (stopOk, stopMsg) = await RunAsync(WprPath, $"-stop \"{etlPath}\"", TimeSpan.FromSeconds(60), CancellationToken.None);
         IsCircularCaptureRunning = false;
+        ClearArmedMarker();
         return stopOk && File.Exists(etlPath)
             ? (true, "Circular capture saved.", etlPath)
             : (false, $"Couldn't stop/save the circular capture: {stopMsg}", null);
@@ -86,6 +103,20 @@ public static class WprCaptureService
         if (!IsCircularCaptureRunning) return;
         await RunAsync(WprPath, "-cancel", TimeSpan.FromSeconds(10), CancellationToken.None, ignoreExitCode: true);
         IsCircularCaptureRunning = false;
+        ClearArmedMarker();
+    }
+
+    /// <summary>Synchronous best-effort `wpr -cancel`, for app shutdown: a WPR session (circular or a
+    /// file-mode capture still in flight) keeps running in the kernel after this process exits,
+    /// and the async cancel paths are dispatcher continuations that never run once the dispatcher
+    /// has shut down.</summary>
+    public static void CancelBlocking()
+    {
+        if (!IsAvailable) return;
+        try { ToolRunner.RunCaptured(WprPath, "-cancel", TimeSpan.FromSeconds(5)); }
+        catch { /* best-effort */ }
+        IsCircularCaptureRunning = false;
+        ClearArmedMarker();
     }
 
     public static async Task<(bool Ok, string Message, string? EtlPath, string? ReportPath)> CaptureAsync(TimeSpan duration, CancellationToken ct)

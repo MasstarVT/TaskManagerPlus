@@ -76,9 +76,10 @@ public sealed class StutterTriggerRule
 
 /// <summary>#297: the trigger-rules settings file. #298's ETW circular-capture toggle is
 /// deliberately *not* persisted here (or anywhere) - it always starts back at off on a fresh
-/// launch, matching "off by default" literally every session, not just on first install (a wpr.exe
-/// circular session obviously can't survive an app restart anyway, so there'd be nothing real to
-/// resume even if the preference were remembered).</summary>
+/// launch, matching "off by default" literally every session, not just on first install. A wpr.exe
+/// session would in fact outlive the app (it runs in the kernel until cancelled or reboot), which
+/// is why ResponsivenessViewModel.Dispose cancels it on exit and WprCaptureService clears one a
+/// crashed run left armed - so there is never a live session to resume.</summary>
 public sealed class StutterTriggerRulesSettings
 {
     public List<StutterTriggerRule> Rules { get; set; } = DefaultRules();

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Management;
 
 namespace TaskManagerPlus.Services;
@@ -89,20 +88,11 @@ public static class WinSatService
     {
         try
         {
-            var psi = new ProcessStartInfo("winsat.exe", "formal")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return null;
-
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
-            var stderrTask = proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync(ct);
-            await Task.WhenAll(stdoutTask, stderrTask);
+            // Shared runner with no timeout of its own (ct is the caller's deadline): on
+            // cancellation it kills the whole winsat tree - the old hand-rolled wait rethrew and
+            // left the formal assessment loading CPU/memory/disk/GPU for another minute.
+            var (_, exitCode) = await ToolRunner.RunCapturedAsync("winsat.exe", "formal", Timeout.Infinite, ct);
+            if (exitCode is null) ct.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) { throw; }
         catch

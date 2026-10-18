@@ -84,6 +84,12 @@ public sealed class DpcLatencyService
 
     public double HighestDpcUs { get; private set; }
     public string HighestDpcDriver { get; private set; } = string.Empty;
+
+    /// <summary>Longest single DPC in the most recent sample only (HighestDpcUs above is the
+    /// session-wide max and never falls), plus a counter bumped once per parsed sample - the stutter
+    /// trigger reads these so one old spike can't keep re-firing it.</summary>
+    public double LastSampleMaxDpcUs { get; private set; }
+    public long SampleSequence { get; private set; }
     public int AudioGlitchCount { get; private set; }
     public double RollingAvgUs => _allDpcSamplesUs.Count == 0 ? 0 : _allDpcSamplesUs.Average();
     public double RollingP99Us => Percentile(_allDpcSamplesUs, 0.99);
@@ -102,6 +108,7 @@ public sealed class DpcLatencyService
         _sessionTotalDpcUs = 0;
         HighestDpcUs = 0;
         HighestDpcDriver = string.Empty;
+        LastSampleMaxDpcUs = 0;
         AudioGlitchCount = 0;
     }
 
@@ -218,6 +225,7 @@ public sealed class DpcLatencyService
                 return (false, $"tracerpt couldn't convert the trace: {convErr}", 0);
 
             int parsed = ParseAndIngest(xml);
+            SampleSequence++;
             string message = parsed == 0
                 ? "Trace captured, but no recognizable DPC/ISR events could be parsed from it on this Windows build."
                 : $"{parsed} DPC/ISR events parsed from the last {window.TotalSeconds:0}s sample.";
@@ -249,6 +257,7 @@ public sealed class DpcLatencyService
 
     private int ParseAndIngest(string xmlPath)
     {
+        LastSampleMaxDpcUs = 0;
         XDocument doc;
         try { doc = XDocument.Load(xmlPath); }
         catch { return 0; }
@@ -258,11 +267,9 @@ public sealed class DpcLatencyService
 
         foreach (var fields in ExtractEventFields(doc))
         {
-            string kindHint = fields.TryGetValue("__ElementName", out var en) ? en
-                : fields.TryGetValue("EventName", out var evn) ? evn
-                : fields.TryGetValue("Task", out var tk) ? tk
-                : fields.TryGetValue("Opcode", out var op) ? op
-                : string.Empty;
+            // __KindHint, not the element name alone: every record is an <Event> element, so the
+            // name never says "DPC"/"ISR" - the rendered opcode text does.
+            string kindHint = fields.TryGetValue("__KindHint", out var kh) ? kh : string.Empty;
 
             bool isDpc = kindHint.Contains("DPC", StringComparison.OrdinalIgnoreCase);
             bool isIsr = !isDpc && kindHint.Contains("ISR", StringComparison.OrdinalIgnoreCase);
@@ -314,6 +321,7 @@ public sealed class DpcLatencyService
         _sessionTotalDpcUs += durationUs;
         if (_allDpcSamplesUs.Count < 2000) _allDpcSamplesUs.Add(durationUs);
         if (durationUs > HighestDpcUs) { HighestDpcUs = durationUs; HighestDpcDriver = driverName; }
+        if (durationUs > LastSampleMaxDpcUs) LastSampleMaxDpcUs = durationUs;
         if (durationUs >= AudioGlitchThresholdUs) AudioGlitchCount++;
 
         // #209: only for genuinely notable spikes, not every DPC - keeps the list short and the
@@ -385,8 +393,37 @@ public sealed class DpcLatencyService
                 if (!string.IsNullOrEmpty(name)) fields.TryAdd(name, data.Value);
             }
             fields["__ElementName"] = ev.Name.LocalName;
+            fields["__KindHint"] = BuildKindHint(ev, fields);
             yield return fields;
         }
+    }
+
+    /// <summary>The event's element name plus the Task/Opcode/EventName text tracerpt renders as
+    /// child elements of System and RenderingInfo (element text, so never in the attribute/Data
+    /// map above) - the same sources PresentMonitorService.ExtractEvents reads by LocalName.</summary>
+    private static string BuildKindHint(XElement ev, Dictionary<string, string> fields)
+    {
+        var parts = new List<string> { ev.Name.LocalName };
+        foreach (var section in ev.Elements().Where(e => e.Name.LocalName is "System" or "RenderingInfo"))
+        {
+            foreach (var child in section.Elements().Where(c => c.Name.LocalName is "Task" or "Opcode" or "EventName"))
+            {
+                if (!string.IsNullOrWhiteSpace(child.Value)) parts.Add(child.Value.Trim());
+            }
+        }
+        if (fields.TryGetValue("EventName", out var evn)) parts.Add(evn);
+        return string.Join(" ", parts);
+    }
+
+    /// <summary>Synchronous best-effort stop of this service's kernel session, for app shutdown -
+    /// the async loop's own finally-block stop is a dispatcher continuation that never runs once
+    /// the dispatcher has shut down, which would leave "NT Kernel Logger" writing its .etl until
+    /// reboot. Only call while this app's measurement session is running: the logger name is a
+    /// system-wide singleton another tool may own.</summary>
+    public static void StopSessionBlocking()
+    {
+        try { ToolRunner.RunCaptured(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(5)); }
+        catch { /* best-effort */ }
     }
 
     /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> - notably, the local copy

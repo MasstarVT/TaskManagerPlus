@@ -123,6 +123,15 @@ public sealed class HardFaultEtwService
         }
     }
 
+    /// <summary>Synchronous best-effort stop of this service's session, for app shutdown - the async
+    /// loop's own finally-block stop is a dispatcher continuation that never runs once the
+    /// dispatcher has shut down.</summary>
+    public static void StopSessionBlocking()
+    {
+        try { ToolRunner.RunCaptured(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(5)); }
+        catch { /* best-effort */ }
+    }
+
     private static string DescribeLogmanError(string raw)
     {
         if (raw.Contains("Access is denied", StringComparison.OrdinalIgnoreCase))
@@ -141,12 +150,11 @@ public sealed class HardFaultEtwService
         int parsed = 0;
         foreach (var fields in ExtractEventFields(doc))
         {
-            string kindHint = fields.TryGetValue("__ElementName", out var en) ? en
-                : fields.TryGetValue("EventName", out var evn) ? evn
-                : fields.TryGetValue("Task", out var tk) ? tk
-                : fields.TryGetValue("Opcode", out var op) ? op
-                : string.Empty;
-            if (!kindHint.Contains("HardFault", StringComparison.OrdinalIgnoreCase)) continue;
+            // __KindHint, not the element name alone: every record is an <Event> element, so the
+            // name never says "HardFault" - the task/opcode text does.
+            string kindHint = fields.TryGetValue("__KindHint", out var kh) ? kh : string.Empty;
+            if (!kindHint.Contains("HardFault", StringComparison.OrdinalIgnoreCase) &&
+                !kindHint.Contains("Hard Fault", StringComparison.OrdinalIgnoreCase)) continue;
 
             int pid = 0;
             foreach (var key in new[] { "ProcessId", "PID", "ProcessID" })
@@ -205,8 +213,26 @@ public sealed class HardFaultEtwService
                 if (!string.IsNullOrEmpty(name)) fields.TryAdd(name, data.Value);
             }
             fields["__ElementName"] = ev.Name.LocalName;
+            fields["__KindHint"] = BuildKindHint(ev, fields);
             yield return fields;
         }
+    }
+
+    /// <summary>The event's element name plus the Task/Opcode/EventName text tracerpt renders as
+    /// child elements of System and RenderingInfo (element text, so never in the attribute/Data
+    /// map above) - the same sources PresentMonitorService.ExtractEvents reads by LocalName.</summary>
+    private static string BuildKindHint(XElement ev, Dictionary<string, string> fields)
+    {
+        var parts = new List<string> { ev.Name.LocalName };
+        foreach (var section in ev.Elements().Where(e => e.Name.LocalName is "System" or "RenderingInfo"))
+        {
+            foreach (var child in section.Elements().Where(c => c.Name.LocalName is "Task" or "Opcode" or "EventName"))
+            {
+                if (!string.IsNullOrWhiteSpace(child.Value)) parts.Add(child.Value.Trim());
+            }
+        }
+        if (fields.TryGetValue("EventName", out var evn)) parts.Add(evn);
+        return string.Join(" ", parts);
     }
 
     /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> - notably, the local copy

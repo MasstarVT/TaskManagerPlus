@@ -417,8 +417,10 @@ public sealed class ForegroundStallRow
 /// UserHandleCount, Round 7 #7) - no new per-process syscall needed. Desktop-heap exhaustion
 /// presents as "windows stop drawing / nothing opens" rather than high CPU, so this is a quick
 /// flag worth surfacing even though Windows exposes no direct "heap usage" counter to compare
-/// against - only the configured size and the session's own handle totals against the documented
-/// 10,000/65,536 USER/GDI session limits.</summary>
+/// against - only the configured size, the busiest process's USER handles against the default
+/// 10,000 per-process quota (USERProcessHandleQuota), and the GDI total against the documented
+/// 65,536-per-session limit. The 10,000 figure is a per-process quota: comparing the sum across
+/// every process against it flagged an ordinary desktop as "near limit".</summary>
 public sealed class DesktopHeapInfo
 {
     public int? InteractiveHeapKb { get; init; }
@@ -427,9 +429,11 @@ public sealed class DesktopHeapInfo
 
     public int TotalUserHandles { get; init; }
     public int TotalGdiHandles { get; init; }
-    public const int UserHandleSessionLimit = 10_000;
+    public int MaxProcessUserHandles { get; init; }
+    public string MaxProcessUserHandlesName { get; init; } = string.Empty;
+    public const int UserHandleProcessQuota = 10_000;
     public const int GdiHandleSessionLimit = 65_536;
-    public double UserHandlePercent => Math.Clamp(TotalUserHandles / (double)UserHandleSessionLimit * 100.0, 0, 100);
+    public double UserHandlePercent => Math.Clamp(MaxProcessUserHandles / (double)UserHandleProcessQuota * 100.0, 0, 100);
     public double GdiHandlePercent => Math.Clamp(TotalGdiHandles / (double)GdiHandleSessionLimit * 100.0, 0, 100);
     public bool IsNearLimit => UserHandlePercent > 75 || GdiHandlePercent > 75;
 }
@@ -467,7 +471,7 @@ public sealed class DwmCompositionInfo
     public ulong FramesDisplayed { get; init; }
     public ulong FramesDropped { get; init; }
     public ulong FramesMissed { get; init; }
-    public uint FramesLate { get; init; }
+    public ulong FramesLate { get; init; }
     public uint FramesOutstanding { get; init; }
 
     /// <summary>#248: dropped+missed frames per second since the previous sample - 0 on the first

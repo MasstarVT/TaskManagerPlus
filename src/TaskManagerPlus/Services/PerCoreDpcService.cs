@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using TaskManagerPlus.Models;
 
@@ -101,9 +102,13 @@ public sealed class PerCoreDpcService : IDisposable
             _processorInfo.Tick();
             _lastCategoryTickMs = Environment.TickCount64;
 
+            // Numeric (group, index) order, not ordinal - "0,10" sorts before "0,2" as a string, and
+            // SampleInterruptStorm uses list position as the core index.
             var instances = _processorInfo.InstanceNames("DPCs Queued/sec")
                 .Where(n => n.Contains(',') && !n.Contains("_Total", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(n => n, StringComparer.Ordinal)
+                .OrderBy(n => InstanceSortKey(n).Group)
+                .ThenBy(n => InstanceSortKey(n).Index)
+                .ThenBy(n => n, StringComparer.Ordinal)
                 .ToList();
 
             _hasInterruptCounter = _processorInfo.HasCounter("Interrupts/sec");
@@ -114,6 +119,15 @@ public sealed class PerCoreDpcService : IDisposable
         {
             _queueCountersReady = false;
         }
+    }
+
+    /// <summary>Parses a "group,index" instance name; an unparseable part sorts last.</summary>
+    private static (int Group, int Index) InstanceSortKey(string name)
+    {
+        var parts = name.Split(',');
+        int group = parts.Length > 0 && int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var g) ? g : int.MaxValue;
+        int index = parts.Length > 1 && int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) ? i : int.MaxValue;
+        return (group, index);
     }
 
     /// <summary>#1077: reads the whole "Processor Information" category at most once per

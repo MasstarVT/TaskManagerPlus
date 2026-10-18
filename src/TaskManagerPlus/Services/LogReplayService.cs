@@ -164,7 +164,14 @@ public static class LogReplayService
         }
     }
 
-    private static string ReadString(List<string> fields, int index) => index >= 0 && index < fields.Count ? fields[index] : string.Empty;
+    /// <summary>Text column read-back - undoes FlightRecorderService.Escape's formula-injection
+    /// guard (a leading apostrophe added only before = + @ or -).</summary>
+    private static string ReadString(List<string> fields, int index)
+    {
+        if (index < 0 || index >= fields.Count) return string.Empty;
+        string value = fields[index];
+        return value.Length > 1 && value[0] == '\'' && value[1] is '=' or '+' or '@' or '-' ? value[1..] : value;
+    }
 
     private static double? ReadNullableDouble(List<string> fields, int index)
         => index >= 0 && index < fields.Count && double.TryParse(fields[index], NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : null;

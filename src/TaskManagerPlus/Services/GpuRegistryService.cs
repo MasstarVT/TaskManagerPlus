@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
@@ -105,16 +104,10 @@ public static class GpuRegistryService
         var result = new List<(string Version, DateTime? PublishDate)>();
         try
         {
-            var psi = new ProcessStartInfo("pnputil.exe", "/enum-drivers /class Display")
-            {
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return result;
-            string output = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit(10_000);
+            // Shared runner: a synchronous ReadToEnd before the wait made the 10s timeout
+            // unreachable, so a wedged pnputil hung this scan forever and was never killed.
+            var (output, exitCode) = ToolRunner.RunCaptured("pnputil.exe", "/enum-drivers /class Display", TimeSpan.FromSeconds(10));
+            if (exitCode is null) return result; // timed out - killed, no partial listing
 
             string? currentProvider = null;
             foreach (var line in output.Split('\n'))

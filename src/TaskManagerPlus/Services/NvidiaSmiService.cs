@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
 using TaskManagerPlus.Models;
@@ -78,20 +77,11 @@ public static class NvidiaSmiService
         return names;
     }
 
+    /// <summary>Shared runner with a real 10s timeout: the old synchronous ReadToEnd ran before
+    /// the bounded wait, so an nvidia-smi wedged after a TDR hung the GPU tab's refresh (and its
+    /// _isRefreshing guard) forever. A timed-out run returns empty - "no data this tick".</summary>
     private static string RunNvidiaSmi(string args)
-    {
-        var psi = new ProcessStartInfo(ExePath, args)
-        {
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi);
-        if (proc is null) return string.Empty;
-        string output = proc.StandardOutput.ReadToEnd();
-        proc.WaitForExit(10_000);
-        return output;
-    }
+        => ToolRunner.RunCaptured(ExePath, args, TimeSpan.FromSeconds(10)).Output;
 
     private static List<string> SplitIntoGpuBlocks(string report)
     {

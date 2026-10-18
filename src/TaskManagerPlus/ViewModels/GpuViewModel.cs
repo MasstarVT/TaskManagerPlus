@@ -328,7 +328,7 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
 
         LoadGpuEventHistoryCommand = new AsyncRelayCommand(_ => LoadGpuEventHistoryAsync());
         LoadPciLinkInfoCommand = new AsyncRelayCommand(_ => LoadPciLinkInfoAsync());
-        SetAspmOffCommand = new AsyncRelayCommand(_ => SetAspmOffAsync());
+        SetAspmOffCommand = new AsyncRelayCommand(_ => SetAspmOffAsync(), _ => !ReadOnlyModeService.IsReadOnly);
 
         // #671/#672: cheap registry reads, safe to do eagerly (see class remarks).
         RefreshRegistryReadouts();
@@ -469,11 +469,27 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>#683: the "set to Off" one-click action - re-reads the setting afterward so the UI
-    /// reflects what actually took effect rather than assuming success.</summary>
+    /// reflects what actually took effect rather than assuming success. Reads the current AC/DC
+    /// values first and states them in the confirmation and the result, since this rewrites a
+    /// power-plan setting the user may want to put back by hand.</summary>
     private async Task SetAspmOffAsync()
     {
         try
         {
+            var (beforeAc, beforeDc) = await PowerPlanService.ReadAspmSettingAsync();
+            string beforeText = $"AC: {AspmIndexText(beforeAc)}, DC: {AspmIndexText(beforeDc)}";
+
+            var confirm = System.Windows.MessageBox.Show(
+                "Set PCI Express Link State Power Management (ASPM) to Off on the active power plan?\n\n" +
+                $"Current setting - {beforeText}.\n\n" +
+                "This runs \"powercfg /setacvalueindex\" and \"/setdcvalueindex\" (both set to 0) on SCHEME_CURRENT, then " +
+                "re-applies the plan. Off can raise idle power draw, most noticeably on battery. To undo it, set the " +
+                "values back in Power Options > PCI Express > Link State Power Management.",
+                "Turn off PCIe ASPM",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning);
+            if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
             var (success, error) = await PowerPlanService.SetAspmOffAsync();
             var (ac, dc) = await PowerPlanService.ReadAspmSettingAsync();
             _aspmAcIndex = ac;
@@ -482,7 +498,7 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(AspmIsAggressive));
 
             PciLinkStatusText = success
-                ? "ASPM set to Off on the active power plan."
+                ? $"ASPM set to Off on the active power plan (was {beforeText})."
                 : $"Couldn't set ASPM: {error ?? "unknown error"}";
         }
         catch (Exception ex)

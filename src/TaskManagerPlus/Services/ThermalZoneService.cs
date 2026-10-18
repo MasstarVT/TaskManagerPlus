@@ -13,8 +13,8 @@ namespace TaskManagerPlus.Services;
 /// rather than assuming a fixed zone list at startup.
 ///
 /// Every individual counter read is wrapped separately - a zone that doesn't populate one of the
-/// four counters (not every BIOS/zone exposes "Throttle Percentage" or "High Precision
-/// Temperature") just reports null for that field, never a fabricated value.
+/// counters it reads (not every BIOS/zone exposes "High Precision Temperature") just reports null
+/// for that field, never a fabricated value.
 /// </summary>
 public sealed class ThermalZoneService : IDisposable
 {
@@ -22,7 +22,6 @@ public sealed class ThermalZoneService : IDisposable
 
     private readonly Dictionary<string, PerformanceCounter?> _tempCounters = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PerformanceCounter?> _highPrecisionTempCounters = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, PerformanceCounter?> _throttlePercentCounters = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PerformanceCounter?> _passiveLimitCounters = new(StringComparer.OrdinalIgnoreCase);
 
     public bool IsAvailable { get; }
@@ -50,26 +49,30 @@ public sealed class ThermalZoneService : IDisposable
         var seen = new HashSet<string>(instances, StringComparer.OrdinalIgnoreCase);
         PruneStale(_tempCounters, seen);
         PruneStale(_highPrecisionTempCounters, seen);
-        PruneStale(_throttlePercentCounters, seen);
         PruneStale(_passiveLimitCounters, seen);
 
         foreach (var instance in instances)
         {
-            // Windows reports raw ACPI temperature in tenths of a Kelvin - the same unit
-            // MSAcpi_ThermalZoneTemperature uses, converted here to °C for display.
+            // Per the counters' own help text: "Temperature" is whole Kelvin, "High Precision
+            // Temperature" is tenths of a Kelvin. A raw 0 is an unpopulated zone, not absolute zero.
             double? rawTemp = ReadOrCreate(_tempCounters, instance, "Temperature");
             double? rawHighPrecisionTemp = ReadOrCreate(_highPrecisionTempCounters, instance, "High Precision Temperature");
-            double? throttlePercent = ReadOrCreate(_throttlePercentCounters, instance, "Throttle Percentage");
             double? passiveLimit = ReadOrCreate(_passiveLimitCounters, instance, "% Passive Limit");
 
-            if (rawTemp is null && rawHighPrecisionTemp is null && throttlePercent is null && passiveLimit is null)
+            if (rawTemp is null && rawHighPrecisionTemp is null && passiveLimit is null)
                 continue; // nothing usable at all for this zone this tick
+
+            // There is no "Throttle Percentage" counter in this category (it has Temperature, High
+            // Precision Temperature, % Passive Limit and Throttle Reasons), so the throttle amount
+            // is derived from the passive limit: 100% means unconstrained. A raw 0 (an unpopulated
+            // zone reads the same as "fully constrained") or anything out of range -> Unknown.
+            double? throttlePercent = passiveLimit is { } pl and > 0 and <= 100 ? 100 - pl : null;
 
             result.Add(new ThermalZoneReading
             {
                 ZoneName = instance,
-                TemperatureC = rawTemp is { } t ? t / 10.0 - 273.15 : null,
-                HighPrecisionTemperatureC = rawHighPrecisionTemp is { } hp ? hp / 10.0 - 273.15 : null,
+                TemperatureC = rawTemp is { } t and > 0 ? t - 273.15 : null,
+                HighPrecisionTemperatureC = rawHighPrecisionTemp is { } hp and > 0 ? hp / 10.0 - 273.15 : null,
                 ThrottlePercent = throttlePercent,
                 PassiveLimitPercent = passiveLimit,
             });
@@ -105,7 +108,6 @@ public sealed class ThermalZoneService : IDisposable
     {
         foreach (var c in _tempCounters.Values) c?.Dispose();
         foreach (var c in _highPrecisionTempCounters.Values) c?.Dispose();
-        foreach (var c in _throttlePercentCounters.Values) c?.Dispose();
         foreach (var c in _passiveLimitCounters.Values) c?.Dispose();
     }
 }

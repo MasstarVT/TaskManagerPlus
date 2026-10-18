@@ -27,10 +27,12 @@ public static class MinifilterService
         var instanceRows = ParseTable(instancesOutput);
 
         // fltmc instances lists one row per (filter, volume) pair - group volumes by filter name.
+        // Its first column is headed "Filter" on current builds ("Filter Name" is the `fltmc
+        // filters` heading), so accept either.
         var volumesByFilter = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in instanceRows)
         {
-            string? name = row.GetValueOrDefault("Filter Name")?.Trim();
+            string? name = (row.GetValueOrDefault("Filter Name") ?? row.GetValueOrDefault("Filter"))?.Trim();
             string? volume = row.GetValueOrDefault("Volume Name")?.Trim();
             if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(volume)) continue;
             if (!volumesByFilter.TryGetValue(name, out var list)) volumesByFilter[name] = list = new List<string>();

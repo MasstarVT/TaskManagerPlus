@@ -309,7 +309,21 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
 
             if (abortReason is null && _manualStopRequested) abortReason = "stopped by user before completion";
 
-            FinishRun(type, runStart, requestedDuration, Stopwatch.GetElapsedTime(runStartTimestamp), trace, abortReason, effectiveCeiling);
+            var actualDuration = Stopwatch.GetElapsedTime(runStartTimestamp);
+
+            // Final, authoritative WHEA/TDR check - independent of whether AbortOnWheaDelta/
+            // AbortOnTdr were enabled (those only control whether a delta triggers an early abort;
+            // pass/fail itself always checks for one, per #699's fixed criteria list). Read off the
+            // UI thread: up to 500 WHEA records each get FormatDescription + regex parsing, which
+            // froze the window at the end of every run on a machine with a corrected-error backlog.
+            var (wheaCount, tdrCount) = await Task.Run(() =>
+            {
+                var finalEventLog = new EventLogService();
+                return (SafeCount(() => finalEventLog.ReadWheaEvents().Count(e => e.TimeCreated >= runStart)),
+                        SafeCount(() => finalEventLog.ReadGpuTdrEvents().Count(e => e.TimeCreated >= runStart)));
+            });
+
+            FinishRun(type, runStart, requestedDuration, actualDuration, trace, abortReason, effectiveCeiling, wheaCount, tdrCount);
         }
         finally
         {
@@ -411,7 +425,7 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         _ => null,
     };
 
-    private void FinishRun(StressTestType type, DateTime runStart, TimeSpan requestedDuration, TimeSpan actualDuration, List<StressTestTraceSample> trace, string? abortReason, double effectiveCeiling)
+    private void FinishRun(StressTestType type, DateTime runStart, TimeSpan requestedDuration, TimeSpan actualDuration, List<StressTestTraceSample> trace, string? abortReason, double effectiveCeiling, int wheaCount, int tdrCount)
     {
         bool computationChecked = _cpuResult is not null || _memoryResult is not null;
         bool computationOk = (_cpuResult?.Passed ?? true) && (_memoryResult?.Passed ?? true);
@@ -431,13 +445,7 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         var fanSamples = trace.Where(t => t.FanRpm.HasValue).Select(t => t.FanRpm!.Value).ToList();
         double? peakFan = fanSamples.Count > 0 ? fanSamples.Max() : null;
 
-        // Final, authoritative WHEA/TDR check - independent of whether AbortOnWheaDelta/AbortOnTdr
-        // were enabled (those only control whether a delta triggers an early abort; pass/fail
-        // itself always checks for one, per #699's fixed criteria list).
-        var finalEventLog = new EventLogService();
-        int wheaCount = SafeCount(() => finalEventLog.ReadWheaEvents().Count(e => e.TimeCreated >= runStart));
-        int tdrCount = SafeCount(() => finalEventLog.ReadGpuTdrEvents().Count(e => e.TimeCreated >= runStart));
-
+        // wheaCount/tdrCount: the final WHEA/TDR check, read off-thread by StartAsync.
         var criteria = new StressTestCriteria
         {
             ComputationChecked = computationChecked,

@@ -780,6 +780,9 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private DateTime _lastTriggerUtc = DateTime.MinValue;
     private static readonly TimeSpan TriggerCooldown = TimeSpan.FromSeconds(8);
     private bool _isHandlingTrigger;
+    // The DPC rule reads a per-sample value that only changes every few seconds, so each sample
+    // may fire it at most once - see EvaluateTriggerRules.
+    private long _lastDpcTriggerSample = -1;
 
     private string _lastTriggerStatusText = "No trigger has fired yet this session.";
     public string LastTriggerStatusText { get => _lastTriggerStatusText; private set => SetProperty(ref _lastTriggerStatusText, value); }
@@ -1533,11 +1536,13 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         // #245: session-wide USER/GDI handle totals, summed from the process list
         // ProcessesViewModel already polls (ProcessRow.GdiHandleCount/UserHandleCount) - no new
         // per-process syscall needed here, just a cheap in-memory sum every light tick.
-        int totalUser = 0, totalGdi = 0;
+        int totalUser = 0, totalGdi = 0, maxUser = 0;
+        string maxUserName = string.Empty;
         foreach (var p in _processes.Processes)
         {
             totalUser += p.UserHandleCount;
             totalGdi += p.GdiHandleCount;
+            if (p.UserHandleCount > maxUser) { maxUser = p.UserHandleCount; maxUserName = p.Name; }
         }
         DesktopHeap = new DesktopHeapInfo
         {
@@ -1546,6 +1551,8 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             StatusText = _desktopHeapSizes.Status,
             TotalUserHandles = totalUser,
             TotalGdiHandles = totalGdi,
+            MaxProcessUserHandles = maxUser,
+            MaxProcessUserHandlesName = maxUserName,
         };
 
         // #247/#248: DWM composition timing - a cheap dwmapi.dll call, fine on this tick.
@@ -2747,7 +2754,11 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             bool tripped = rule.Kind switch
             {
                 StutterTriggerKind.FrameTimeOverMs => sample.FrameTimeMs is { } ft && ft > rule.Threshold,
-                StutterTriggerKind.DpcLatencyOverUs => HighestDpcUs > 0 && HighestDpcUs > rule.Threshold,
+                // The latest sample's own max, not HighestDpcUs: that is the session-wide max, which
+                // never falls (and survives Stop), so one spike re-fired this every cooldown -
+                // an incident bundle every ~8s for as long as the app stayed open.
+                StutterTriggerKind.DpcLatencyOverUs => IsMeasuring && _dpc.SampleSequence != _lastDpcTriggerSample &&
+                                                       _dpc.LastSampleMaxDpcUs > 0 && _dpc.LastSampleMaxDpcUs > rule.Threshold,
                 StutterTriggerKind.WindowHung => HungWindowRows.Any(r => r.IsHung),
                 StutterTriggerKind.HardFaultsOverPerSec => HardFaultRate.IsAvailable && HardFaultRate.PagesInputPerSec > rule.Threshold,
                 StutterTriggerKind.RunQueueOver => sample.ProcessorQueueLength > rule.Threshold,
@@ -2755,6 +2766,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             };
             if (!tripped) continue;
 
+            if (rule.Kind == StutterTriggerKind.DpcLatencyOverUs) _lastDpcTriggerSample = _dpc.SampleSequence;
             _ = HandleTriggerAsync(DescribeRule(rule));
             break;
         }
@@ -2805,6 +2817,14 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             if (!WprCaptureService.IsAvailable)
             {
                 EtwCircularCaptureStatusText = "wpr.exe/tracerpt.exe weren't found on this system - ETW circular capture isn't available.";
+                _etwCircularCaptureEnabled = false;
+                OnPropertyChanged(nameof(EtwCircularCaptureEnabled));
+                return;
+            }
+            if (IsCapturing)
+            {
+                // Only one WPR session can run at a time - the offline capture owns it until it ends.
+                EtwCircularCaptureStatusText = "The offline WPR capture above is still running - arm circular capture after it finishes.";
                 _etwCircularCaptureEnabled = false;
                 OnPropertyChanged(nameof(EtwCircularCaptureEnabled));
                 return;
@@ -2954,6 +2974,16 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         _measureCts?.Cancel();
         _presentCts?.Cancel();
         _hardFaultEtwCts?.Cancel();
+
+        // Cancelling only wakes the loops; their logman/wpr teardown runs as dispatcher
+        // continuations, which never execute once shutdown follows this Closed-handler call - and
+        // these sessions live in the kernel, outliving the process (the DPC/present/hard-fault ones
+        // keep writing .etl files until reboot). Stop each one this app started, synchronously.
+        if (IsMeasuring) DpcLatencyService.StopSessionBlocking();
+        if (IsMeasuringPresent) PresentMonitorService.StopSessionBlocking();
+        if (IsMeasuringHardFaultEtw) HardFaultEtwService.StopSessionBlocking();
+        if (WprCaptureService.IsCircularCaptureRunning || IsCapturing) WprCaptureService.CancelBlocking();
+
         _vblank.Dispose();
         _inputLatency.Dispose();
         _perCore.Dispose();

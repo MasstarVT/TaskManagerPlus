@@ -30,14 +30,18 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public sealed class DwmCompositionService
 {
-    [StructLayout(LayoutKind.Sequential)]
+    // dwmapi.h declares these under #include <pshpack1.h> (1-byte packing), and cFramesLate is a
+    // DWM_FRAME_COUNT (ULONGLONG): 292 bytes. The default-packed declaration with a uint
+    // cFramesLate came to 312, which the API rejects (0x88980090), so this card always read
+    // Unknown. Verified against DwmGetCompositionTimingInfo on Windows 11.
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct DWM_RATIONAL
     {
         public uint uiNumerator;
         public uint uiDenominator;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct DWM_TIMING_INFO
     {
         public uint cbSize;
@@ -57,7 +61,7 @@ public sealed class DwmCompositionService
         public uint cDXPresentConfirmed;
         public ulong cRefreshConfirmed;
         public uint cDXRefreshConfirmed;
-        public uint cFramesLate;
+        public ulong cFramesLate;
         public uint cFramesOutstanding;
         public ulong cFrameDisplayed;
         public ulong qpcFrameDisplayed;

@@ -39,8 +39,10 @@ public static class LogonDiagnosticsService
         try
         {
             long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            // Newest first, so the MaxWinlogonEvents cap drops the oldest logons rather than the
+            // most recent ones (pairing below sorts by time, so read order doesn't matter to it).
             var query = new EventLogQuery(WinlogonLogName, PathType.LogName,
-                $"*[System[(EventID={SubscriberStartEventId} or EventID={SubscriberStopEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]");
+                $"*[System[(EventID={SubscriberStartEventId} or EventID={SubscriberStopEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]") { ReverseDirection = true };
             using var reader = new EventLogReader(query);
 
             var starts = new List<(string Name, string? Session, DateTime Time)>();
@@ -130,8 +132,8 @@ public static class LogonDiagnosticsService
 
     /// <summary>#716: reads every 8000 (computer boot policy total elapsed time)/8001 (user logon
     /// policy total elapsed time) event still retained in the GroupPolicy operational log - the
-    /// elapsed-time field is read adaptively (any Data field whose name mentions "Time" and whose
-    /// value parses as a plausible millisecond duration), the same tradeoff
+    /// elapsed-time field is read adaptively (any Data field whose name mentions "Time", scaled by
+    /// the unit its name states - see TryReadDurationMs), the same tradeoff
     /// BootPerformanceService.ExtractBootTimeFields already documents.</summary>
     public static List<GroupPolicyProcessingEntry> ReadProcessingTimes()
     {
@@ -183,11 +185,27 @@ public static class LogonDiagnosticsService
         {
             var attrName = data.Attribute("Name")?.Value ?? string.Empty;
             if (!attrName.Contains("Time", StringComparison.OrdinalIgnoreCase)) continue;
-            if (!int.TryParse(data.Value, out int value)) continue;
-            if (value < 0 || value > 30 * 60 * 1000) continue; // plausible processing duration only
-            return value;
+            if (TryReadDurationMs(attrName, data.Value) is { } ms) return ms;
         }
         return null;
+    }
+
+    private const int MaxPlausibleDurationMs = 30 * 60 * 1000;
+
+    /// <summary>Reads a duration field in milliseconds, honouring the unit in its name: 8000/8001
+    /// carry "PolicyElaspedTimeInSeconds" (sic), the CSE events "CSEElaspedTimeInMilliSeconds".
+    /// "MilliSeconds" also contains "Seconds", so it is checked first. Null when unparseable or
+    /// outside a plausible processing duration (0-30 min).</summary>
+    private static int? TryReadDurationMs(string fieldName, string text)
+    {
+        if (!long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long raw) || raw < 0)
+            return null;
+
+        bool isMs = fieldName.Contains("MilliSecond", StringComparison.OrdinalIgnoreCase) ||
+                    fieldName.EndsWith("Ms", StringComparison.Ordinal);
+        bool isSeconds = !isMs && fieldName.Contains("Second", StringComparison.OrdinalIgnoreCase);
+        long ms = isSeconds ? raw * 1000 : raw;
+        return ms <= MaxPlausibleDurationMs ? (int)ms : null;
     }
 
     /// <summary>#717: ranked list of client-side-extension completion events (5016 informational,
@@ -235,16 +253,27 @@ public static class LogonDiagnosticsService
         try { doc = XDocument.Parse(xml); }
         catch { return null; }
 
-        string? extension = null;
+        // 5016/7016's template is CSEElaspedTimeInMilliSeconds, ErrorCode, CSEExtensionName,
+        // CSEExtensionId - the elapsed field also contains "CSE", so the duration is matched first
+        // and the name by "ExtensionName" (a looser "Extension" match is only a fallback, and never
+        // the extension's GUID).
+        string? extension = null, extensionFallback = null;
         int? elapsedMs = null;
         foreach (var data in doc.Descendants(EventNs + "Data"))
         {
             var attrName = data.Attribute("Name")?.Value ?? string.Empty;
-            if (extension is null && (attrName.Contains("Extension", StringComparison.OrdinalIgnoreCase) || attrName.Contains("CSE", StringComparison.OrdinalIgnoreCase)))
+            if (attrName.Contains("Time", StringComparison.OrdinalIgnoreCase))
+            {
+                elapsedMs ??= TryReadDurationMs(attrName, data.Value);
+                continue;
+            }
+            if (extension is null && attrName.Contains("ExtensionName", StringComparison.OrdinalIgnoreCase))
                 extension = data.Value;
-            else if (elapsedMs is null && attrName.Contains("Time", StringComparison.OrdinalIgnoreCase) && int.TryParse(data.Value, out var t) && t >= 0 && t <= 30 * 60 * 1000)
-                elapsedMs = t;
+            else if (extensionFallback is null && attrName.Contains("Extension", StringComparison.OrdinalIgnoreCase) &&
+                     !attrName.EndsWith("Id", StringComparison.OrdinalIgnoreCase) && !attrName.EndsWith("Guid", StringComparison.OrdinalIgnoreCase))
+                extensionFallback = data.Value;
         }
+        extension ??= extensionFallback;
         if (string.IsNullOrWhiteSpace(extension) || elapsedMs is null) return null;
 
         return new GroupPolicyCseEntry

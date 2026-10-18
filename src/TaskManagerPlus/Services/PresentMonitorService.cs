@@ -231,7 +231,13 @@ public sealed class PresentMonitorService
             if (!convOk || !File.Exists(xml))
                 return (false, $"tracerpt couldn't convert the trace: {convErr}", 0);
 
-            int parsed = ParseAndIngest(xml);
+            // The XML load + event walk (a multi-MB document every cycle) runs on a worker; only the
+            // cheap ingest into the per-pid maps stays on the caller's thread, where BuildAppRows and
+            // friends read them. A Stop during the load discards the sample rather than letting it
+            // land in whatever session starts next.
+            var events = await Task.Run(() => LoadEvents(xml), CancellationToken.None);
+            ct.ThrowIfCancellationRequested();
+            int parsed = Ingest(events);
             string message = parsed == 0
                 ? "Trace captured, but no recognizable present/frame events could be parsed from it - nothing may have been actively rendering, or this Windows build's DxgKrnl schema doesn't match what's parsed for."
                 : $"{parsed} present/GPU-packet event(s) parsed from the last {window.TotalSeconds:0}s sample.";
@@ -252,6 +258,15 @@ public sealed class PresentMonitorService
         }
     }
 
+    /// <summary>Synchronous best-effort stop of this service's session, for app shutdown - the async
+    /// loop's own finally-block stop is a dispatcher continuation that never runs once the
+    /// dispatcher has shut down.</summary>
+    public static void StopSessionBlocking()
+    {
+        try { ToolRunner.RunCaptured(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(5)); }
+        catch { /* best-effort */ }
+    }
+
     private static string DescribeLogmanError(string raw)
     {
         if (raw.Contains("Access is denied", StringComparison.OrdinalIgnoreCase))
@@ -263,14 +278,17 @@ public sealed class PresentMonitorService
         return string.IsNullOrWhiteSpace(raw) ? "Couldn't start the present-monitor trace." : $"Couldn't start the present-monitor trace: {raw}";
     }
 
-    private int ParseAndIngest(string xmlPath)
+    /// <summary>Pure parse - touches no instance state, so it is safe on a worker thread.</summary>
+    private static List<RawPresentEvent> LoadEvents(string xmlPath)
     {
-        XDocument doc;
-        try { doc = XDocument.Load(xmlPath); }
-        catch { return 0; }
+        try { return ExtractEvents(XDocument.Load(xmlPath)).ToList(); }
+        catch { return new List<RawPresentEvent>(); }
+    }
 
+    private int Ingest(List<RawPresentEvent> events)
+    {
         int parsed = 0;
-        foreach (var ev in ExtractEvents(doc))
+        foreach (var ev in events)
         {
             if (ev.Pid <= 4) continue; // System/Idle pid noise, never a real render process
 
@@ -299,8 +317,20 @@ public sealed class PresentMonitorService
                 parsed++;
             }
         }
+
+        // Rolling window per process: without a cap a long session grew each list by every frame
+        // ever captured, and BuildOneRow re-sorts all of them on the UI thread every cycle. Sorted
+        // first so the trim keeps the most recent frames; stats then describe that window.
+        foreach (var list in _frameTimesUtcByPid.Values)
+        {
+            if (list.Count <= MaxFramesPerPid) continue;
+            list.Sort();
+            list.RemoveRange(0, list.Count - MaxFramesPerPid);
+        }
         return parsed;
     }
+
+    private const int MaxFramesPerPid = 10_000;
 
     private void IngestPresent(RawPresentEvent ev)
     {

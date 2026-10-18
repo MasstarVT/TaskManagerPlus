@@ -105,6 +105,13 @@ public sealed class FlightRecorderService
 
     private static string Escape(string value)
     {
+        // Spreadsheet formula-injection guard, kept identical to LoggingService.Escape: window
+        // titles and process lists are arbitrary text, and one beginning = + @ (or - followed by
+        // something non-numeric) would be evaluated as a live formula when the incident CSV is
+        // opened in Excel. LogReplayService.ParseFlightRecorderCsv strips the apostrophe again.
+        if (value.Length > 0 && (value[0] is '=' or '+' or '@' ||
+            (value[0] == '-' && !double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _))))
+            value = "'" + value;
         if (value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) < 0) return value;
         return "\"" + value.Replace("\"", "\"\"") + "\"";
     }

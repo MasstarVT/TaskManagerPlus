@@ -694,9 +694,10 @@
                             </TextBlock>
                         </StackPanel>
                     </Border>
-                    <!-- #245: desktop heap size (SharedSection) + session-wide USER/GDI handle totals vs.
-                         the documented 10,000/65,536 session limits - desktop-heap exhaustion presents as
-                         "windows stop drawing / nothing opens" rather than high CPU. -->
+                    <!-- #245: desktop heap size (SharedSection) + the busiest process's USER handles vs. the
+                         default 10,000 per-process quota and the GDI total vs. the 65,536-per-session limit -
+                         desktop-heap exhaustion presents as "windows stop drawing / nothing opens" rather
+                         than high CPU. -->
                     <Border Margin="0,0,0,16">
                         <Border.Style>
                             <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
@@ -711,8 +712,8 @@
                             <TextBlock Text="Desktop heap &amp; USER/GDI handles" FontWeight="SemiBold" Margin="0,0,0,6" />
                             <TextBlock Text="{Binding DesktopHeap.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
 
-                            <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,2">
-                                <Run Text="USER handles: " /><Run Text="{Binding DesktopHeap.TotalUserHandles, StringFormat={}{0:N0}, Mode=OneWay}" /><Run Text=" / 10,000" />
+                            <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,2" TextWrapping="Wrap">
+                                <Run Text="USER handles, busiest process: " /><Run Text="{Binding DesktopHeap.MaxProcessUserHandles, StringFormat={}{0:N0}, Mode=OneWay}" /><Run Text=" / 10,000 per-process quota (" /><Run Text="{Binding DesktopHeap.MaxProcessUserHandlesName, Mode=OneWay}" /><Run Text=") · session total " /><Run Text="{Binding DesktopHeap.TotalUserHandles, StringFormat={}{0:N0}, Mode=OneWay}" />
                             </TextBlock>
                             <Border Height="8" CornerRadius="4" Background="{DynamicResource BgElevatedBrush}" Margin="0,0,0,8">
                                 <Border HorizontalAlignment="Left" Height="8" CornerRadius="4" Background="{DynamicResource AccentBrush}"
