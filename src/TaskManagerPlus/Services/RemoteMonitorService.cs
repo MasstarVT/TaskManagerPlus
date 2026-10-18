@@ -121,12 +121,14 @@ public sealed class RemoteMonitorService : IDisposable
         try
         {
             // #1061: the "+" wildcard prefix binds every interface, including any publicly
-            // routable one (public IP, unfiltered hotspot/VPN adapter) - and the token below is
-            // off by default. When no token is configured, only serve loopback/link-local/RFC1918
-            // source addresses, so this elevated process never answers beyond the "LAN-visible"
-            // scope the Settings drawer advertises. With a token configured, the token check is
-            // the gate instead. Bare 401 for the same no-free-confirmation reason as below.
-            if (string.IsNullOrEmpty(RequiredToken) && !IsLoopbackOrPrivate(ctx.Request.RemoteEndPoint?.Address))
+            // routable one (public IP, unfiltered hotspot/VPN adapter) - so only serve loopback/
+            // link-local/RFC1918 source addresses, keeping this elevated process inside the
+            // "LAN-visible" scope the Settings drawer advertises. #1097: this gate applies whether
+            // or not a token is configured - the token travels in a plaintext-HTTP query string on
+            // every poll (sniffable, kept in proxy/server logs), so it must never be the only
+            // thing standing between a public interface and this process; with a token set, both
+            // checks gate the request. Bare 401 for the same no-free-confirmation reason as below.
+            if (!IsLoopbackOrPrivate(ctx.Request.RemoteEndPoint?.Address))
             {
                 ctx.Response.StatusCode = 401;
                 ctx.Response.OutputStream.Close();

@@ -2613,7 +2613,13 @@ public sealed class EventLogService
     /// excluded here rather than plotted as a fabricated 0.</summary>
     private static List<ReliabilityMetricPoint> ReadReliabilityMetrics()
     {
-        var result = new List<ReliabilityMetricPoint>();
+        // #1093: Win32_ReliabilityStabilityMetrics records the index at sub-daily (hourly)
+        // intervals, so a day the machine was on for several hours yields several rows sharing one
+        // calendar date. This method guarantees ONE point per day - the day's latest measurement,
+        // the same value Reliability Monitor's own daily graph shows - because
+        // StabilityViewModel.Apply keys a dictionary on the date (ToDictionary used to throw
+        // ArgumentException there, aborting the whole Stability refresh partway).
+        var latestPerDay = new Dictionary<DateTime, (DateTime Time, double Index)>();
         try
         {
             using var searcher = new ManagementObjectSearcher(
@@ -2630,9 +2636,10 @@ public sealed class EventLogService
 
                         var dt = ManagementDateTimeConverter.ToDateTime(timeGenerated);
                         double idx = Convert.ToDouble(indexObj);
-                        if (idx < 0) continue; // no data for that day
+                        if (idx < 0) continue; // no data for that measurement
 
-                        result.Add(new ReliabilityMetricPoint { Date = dt.Date, Index = idx });
+                        if (!latestPerDay.TryGetValue(dt.Date, out var existing) || dt > existing.Time)
+                            latestPerDay[dt.Date] = (dt, idx);
                     }
                     catch { /* one malformed row shouldn't stop the rest of the scan */ }
                 }
@@ -2642,7 +2649,10 @@ public sealed class EventLogService
         {
             // Namespace/class unavailable - degrade to "no Microsoft reliability index available".
         }
-        return result.OrderBy(r => r.Date).ToList();
+        return latestPerDay
+            .Select(kv => new ReliabilityMetricPoint { Date = kv.Key, Index = kv.Value.Index })
+            .OrderBy(r => r.Date)
+            .ToList();
     }
 
     // ---------------------------------------------------------------------------------------

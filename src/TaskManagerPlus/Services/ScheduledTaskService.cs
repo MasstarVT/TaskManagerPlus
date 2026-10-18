@@ -177,9 +177,11 @@ public static class ScheduledTaskService
     /// being active at that time. #1059: schtasks expects /sd in the machine's regional short-date
     /// format, not a fixed MM/dd/yyyy - hardcoding the US shape meant a queued fix on a dd/MM
     /// locale ran on the wrong date (or was rejected outright for day &gt; 12), so the date is
-    /// formatted with the current culture's short-date pattern instead.</summary>
+    /// formatted with the current culture's short-date pattern instead. #1096: that pattern can
+    /// itself contain spaces (hu-HU renders "2026. 10. 18."), which would split into several
+    /// arguments and make schtasks reject the command - so the date is quoted as one token.</summary>
     public static Task<(bool Success, string? Error)> CreateOnceAsync(string taskName, string command, DateTime whenLocal) =>
-        CreateAsync(taskName, command, $"/sc once /st {whenLocal:HH:mm} /sd {whenLocal.ToString("d", CultureInfo.CurrentCulture)}");
+        CreateAsync(taskName, command, $"/sc once /st {whenLocal:HH:mm} /sd \"{whenLocal.ToString("d", CultureInfo.CurrentCulture)}\"");
 
     /// <summary>suggestions.md #997: a recurring daily/weekly trigger - used by
     /// UnattendedScanService to set up a nightly/weekly unattended `--scan` run. `dayOfWeek` is

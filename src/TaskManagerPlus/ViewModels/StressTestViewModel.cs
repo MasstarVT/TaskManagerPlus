@@ -219,6 +219,20 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         string? abortReason = null;
 
         StatusText = $"Running {StressTestReportService.DescribeType(type)}...";
+
+        // #1094: the safety monitor's temperature ceiling can only act on a reading - on a machine
+        // with no readable CPU/GPU package temperature (a VM, an unsupported board, a sensor-init
+        // failure) the run would otherwise proceed with the advertised thermal abort silently
+        // inert. Warn up front rather than implying coverage that doesn't exist; the WHEA/TDR half
+        // of the guard still runs either way, and FinishRun repeats the note if no reading ever
+        // appeared during the run.
+        var initialSensors = _energyThermals.GetStressSensorSnapshot();
+        double? initialTemp = type is StressTestType.GpuLoad or StressTestType.CombinedSoak
+            ? HotterOf(initialSensors.CpuPackageTempC, initialSensors.GpuTempC)
+            : initialSensors.CpuPackageTempC;
+        if (initialTemp is null)
+            StatusText += " Warning: no temperature reading is available right now, so the thermal safety ceiling cannot act until one appears - only the WHEA/TDR guard is live.";
+
         LastComparisonText = string.Empty;
         ReportStatusText = string.Empty;
 
@@ -483,11 +497,17 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
             ? StressTestReportService.BuildComparisonText(result, previous)
             : "No previous run of this test type to compare against yet.";
 
-        StatusText = result.Passed
+        // #1094: a verdict with zero temperature samples must say so - "PASSED" would otherwise
+        // imply the thermal ceiling was standing guard when it never had data to act on.
+        string noTempNote = tempSamples.Count == 0
+            ? " No temperature reading was available during this run, so the thermal safety ceiling could not act (only the WHEA/TDR guard was live)."
+            : string.Empty;
+
+        StatusText = (result.Passed
             ? "Run PASSED."
             : abortReason is not null
                 ? $"Run ABORTED: {abortReason}."
-                : "Run FAILED - see the criteria breakdown below.";
+                : "Run FAILED - see the criteria breakdown below.") + noTempNote;
     }
 
     private static int SafeCount(Func<int> read)

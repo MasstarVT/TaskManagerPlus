@@ -161,7 +161,12 @@ public static class SecurityReportService
         // (e.g. malware registering an autorun named "=cmd|'/c calc'!A1") would otherwise be
         // evaluated as a live formula when the saved .csv is opened in Excel. A leading apostrophe
         // makes Excel treat the cell as literal text; any other CSV consumer just sees the data.
-        if (value.Length > 0 && value[0] is '=' or '+' or '-' or '@')
+        // #1095: a plain negative number is a number to Excel, not a formula - '-' only gets the
+        // apostrophe when what follows isn't purely numeric. Kept identical to
+        // LoggingService.Escape.
+        if (value.Length > 0 && (value[0] is '=' or '+' or '@' ||
+            (value[0] == '-' && !double.TryParse(value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out _))))
             value = "'" + value;
         if (value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) < 0) return value;
         return "\"" + value.Replace("\"", "\"\"") + "\"";

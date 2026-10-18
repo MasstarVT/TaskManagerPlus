@@ -375,7 +375,15 @@ public partial class MainWindow : Window
             };
             _trayIcon.DoubleClick += (_, _) => RestoreFromTray();
             UpdateTrayTooltip();
-            _viewModel.Performance.PropertyChanged += (_, _) => UpdateTrayTooltip();
+            // #1099: the tooltip only reads CpuCurrentPercent/RamPercent, but PerformanceViewModel
+            // raises PropertyChanged for most of its properties every 1s tick - unfiltered, this
+            // was dozens of native NotifyIcon.Text (Shell_NotifyIcon) updates per second. Same
+            // filter-on-name shape as MainViewModel's FooterUptimeText subscription.
+            _viewModel.Performance.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName is nameof(PerformanceViewModel.CpuCurrentPercent) or nameof(PerformanceViewModel.RamPercent))
+                    UpdateTrayTooltip();
+            };
 
             // Round 14, item 27: reuse this same NotifyIcon for the new-crash-dump toast rather
             // than inventing a second notification mechanism.

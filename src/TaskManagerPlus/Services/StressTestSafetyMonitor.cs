@@ -25,7 +25,10 @@ public sealed class StressTestSafetyMonitor
     private readonly EventLogService _eventLog = new();
 
     private DateTime _runStart;
-    private DateTime _nextHardwareErrorCheckDue = DateTime.MinValue;
+    // #1098: monotonic (Environment.TickCount64), not wall clock - a DST/NTP step backwards during
+    // an overnight soak must not suspend the WHEA/TDR abort checks for the step's duration, the
+    // same reasoning #1052/#1053 applied to the rest of the stress-test feature's timing.
+    private long _nextHardwareErrorCheckDueMs = long.MinValue;
     private int _wheaEventsSinceStart;
     private int _tdrEventsSinceStart;
 
@@ -46,7 +49,7 @@ public sealed class StressTestSafetyMonitor
     public void BeginRun(DateTime runStart)
     {
         _runStart = runStart;
-        _nextHardwareErrorCheckDue = DateTime.MinValue; // force an immediate first check
+        _nextHardwareErrorCheckDueMs = long.MinValue; // force an immediate first check
         _wheaEventsSinceStart = 0;
         _tdrEventsSinceStart = 0;
     }
@@ -64,9 +67,9 @@ public sealed class StressTestSafetyMonitor
 
         if (!_settings.AbortOnTdr && !_settings.AbortOnWheaDelta) return null;
 
-        var now = DateTime.Now;
-        if (now < _nextHardwareErrorCheckDue) return null;
-        _nextHardwareErrorCheckDue = now + HardwareErrorCheckInterval;
+        long nowMs = Environment.TickCount64; // #1098: monotonic - see _nextHardwareErrorCheckDueMs
+        if (nowMs < _nextHardwareErrorCheckDueMs) return null;
+        _nextHardwareErrorCheckDueMs = nowMs + (long)HardwareErrorCheckInterval.TotalMilliseconds;
 
         if (_settings.AbortOnTdr)
         {

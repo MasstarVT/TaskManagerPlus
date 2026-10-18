@@ -112,12 +112,13 @@ public partial class App : Application
         }
     }
 
-    /// <summary>Last-resort net for an exception that escaped every per-handler try/catch below
-    /// it (AsyncRelayCommand.Execute's own handlers now catch their own failures - see
-    /// Common/RelayCommand.cs's remarks - but a synchronous binding/layout/timer-tick exception
-    /// can still reach here). MessageBox.Show is the same plain, dependency-free reporting
-    /// mechanism the rest of this app already leans on (SaveFileDialog, toasts, etc.) - there's no
-    /// existing logging framework to route this through instead.</summary>
+    /// <summary>Last-resort net for an exception that escaped every per-feature try/catch below
+    /// it. #1101: that includes an AsyncRelayCommand handler's own throw - Execute is async void
+    /// with try/finally but no catch, so a command exception surfaces here via the dispatcher -
+    /// as well as any synchronous binding/layout/timer-tick exception. MessageBox.Show is the same
+    /// plain, dependency-free reporting mechanism the rest of this app already leans on
+    /// (SaveFileDialog, toasts, etc.) - there's no existing logging framework to route this
+    /// through instead.</summary>
     private void OnDispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
     {
         try
