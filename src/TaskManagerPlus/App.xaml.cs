@@ -98,8 +98,27 @@ public partial class App : Application
             return;
         }
 
-        var window = new MainWindow();
-        window.Show();
+        MainWindow window;
+        try
+        {
+            window = new MainWindow();
+            window.Show();
+        }
+        catch (Exception ex)
+        {
+            // A throw here (e.g. a StaticResource miss while MainWindow's BAML loads) would
+            // otherwise be swallowed by OnDispatcherUnhandledException, leaving a never-shown
+            // window registered - so OnLastWindowClose never fires and an invisible elevated
+            // process keeps every polling timer running with no window or tray icon to close it.
+            try
+            {
+                MessageBox.Show($"Task Manager Plus couldn't open its main window:\n\n{ex.Message}",
+                    "Task Manager Plus - Startup Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            catch { /* reporting is best-effort; shutting down is what matters */ }
+            Shutdown(1);
+            return;
+        }
 
         // Round 12, #84: `--tab <name>` opens straight to a given tab (by header text, matching
         // Ctrl+1..9's own header-based lookup in MainWindow.xaml.cs) instead of always landing on

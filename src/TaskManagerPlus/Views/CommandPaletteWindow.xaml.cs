@@ -23,7 +23,20 @@ public partial class CommandPaletteWindow : Window
         Loaded += (_, _) => { SearchBox.Focus(); Keyboard.Focus(SearchBox); };
     }
 
-    private void OnDeactivated(object? sender, EventArgs e) => Close();
+    private bool _closing;
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        _closing = true;
+        base.OnClosing(e);
+    }
+
+    // An explicit Close() (Escape/Enter/double-click) deactivates the window while it is already
+    // closing, and a second Close() from here would throw InvalidOperationException.
+    private void OnDeactivated(object? sender, EventArgs e)
+    {
+        if (!_closing) Close();
+    }
 
     private void SearchBox_KeyDown(object sender, KeyEventArgs e)
     {

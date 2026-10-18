@@ -423,16 +423,21 @@ public partial class MainWindow : Window
     /// via the tray icon's double-click or its "Open" menu entry (RestoreFromTray).</summary>
     private void MainWindow_StateChanged(object? sender, EventArgs e)
     {
+        if (WindowState != WindowState.Minimized) _stateBeforeMinimize = WindowState;
         if (WindowState == WindowState.Minimized && _viewModel.MinimizeToTray && _trayIcon is not null)
         {
             Hide();
         }
     }
 
+    // What RestoreFromTray goes back to: forcing Normal un-maximized a maximized window every
+    // time the Ctrl+Alt+T "bring to front" hotkey fired.
+    private WindowState _stateBeforeMinimize = WindowState.Normal;
+
     private void RestoreFromTray()
     {
         Show();
-        WindowState = WindowState.Normal;
+        if (WindowState == WindowState.Minimized) WindowState = _stateBeforeMinimize;
         Activate();
     }
 

@@ -13,13 +13,18 @@ public sealed class BytesToReadableConverter : IValueConverter
 
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        double bytes = value switch
+        double? maybeBytes = value switch
         {
             long l => l,
             int i => i,
             double d => d,
-            _ => 0,
+            ulong ul => ul,
+            uint ui => ui,
+            float f => f,
+            _ => null,
         };
+        // A null (unreadable) value must not render as a real-looking "0 B".
+        if (maybeBytes is not { } bytes || double.IsNaN(bytes) || double.IsInfinity(bytes)) return "Unknown";
 
         bool isRate = string.Equals(parameter as string, "rate", StringComparison.OrdinalIgnoreCase);
 

@@ -32,7 +32,9 @@ $manifest = Join-Path $WorkDir "app.asinvoker.manifest"
 # and the build fails with ~1600 CS0111 duplicate-member errors. Sharing obj/ is fine.
 dotnet build $project -c Release --nologo -v m `
     -p:ApplicationManifest="$manifest" `
-    -p:BaseOutputPath="$WorkDir\bin\"
+    -p:BaseOutputPath="$WorkDir\bin"
+# (no trailing backslash: with a space in the path, PowerShell 5.1 quotes the argument and a
+# trailing \" would escape the closing quote; MSBuild adds the trailing slash itself)
 if ($LASTEXITCODE -ne 0) { throw "asInvoker build failed (exit $LASTEXITCODE)" }
 
 $exe = Get-ChildItem -Path (Join-Path $WorkDir "bin\Release") -Recurse -Filter TaskManagerPlus.exe |
