@@ -114,13 +114,14 @@ public sealed class ProcessBandwidthEtwService : IDisposable
         {
             if (data.ProviderGuid != ProviderGuid) return;
 
-            string task = data.TaskName ?? string.Empty;
-            bool isTcpOrUdp = task.Contains("TCPIP", StringComparison.OrdinalIgnoreCase) || task.Contains("UDPIP", StringComparison.OrdinalIgnoreCase);
-            if (!isTcpOrUdp) return;
-
-            string opcode = data.OpcodeName ?? string.Empty;
-            bool isSend = opcode.Contains("Send", StringComparison.OrdinalIgnoreCase);
-            bool isRecv = !isSend && opcode.Contains("Recv", StringComparison.OrdinalIgnoreCase);
+            // Matched by the manifest's event IDs, not by OpcodeName text: the decoded opcode name
+            // can be the manifest's display string ("Data sent." / "Data received."), which
+            // contains neither "Send" nor "Recv", so every event was dropped. IDs (from `wevtutil
+            // gp Microsoft-Windows-Kernel-Network /ge`): TCPv4 send 10 / recv 11, TCPv6 26 / 27,
+            // UDPv4 42 / 43, UDPv6 58 / 59. Retransmits and connect/disconnect are not counted.
+            int id = (int)data.ID;
+            bool isSend = id is 10 or 26 or 42 or 58;
+            bool isRecv = id is 11 or 27 or 43 or 59;
             if (!isSend && !isRecv) return;
 
             long? pidField = ReadNumericField(data, "PID", "pid", "ProcessId");

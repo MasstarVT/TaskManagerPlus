@@ -86,9 +86,12 @@ public static class TracerouteService
             {
                 await proc.WaitForExitAsync(cts.Token);
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException)
             {
-                try { proc.Kill(); } catch { /* best-effort */ }
+                // Killed on the caller's cancel too, not only on the timeout - otherwise tracert.exe
+                // kept running unobserved after the caller gave up on it.
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+                if (cancellationToken.IsCancellationRequested) throw;
                 return "Traceroute timed out after 30 seconds (a hop count of 20 with a 1s-per-hop timeout can still run long on a lossy path).";
             }
 

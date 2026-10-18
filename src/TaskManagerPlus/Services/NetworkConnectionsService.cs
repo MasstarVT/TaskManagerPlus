@@ -423,26 +423,35 @@ public static class NetworkConnectionsService
     /// native function to call, the address family, the table class, and the row struct layout.</summary>
     private static List<T> ReadTable<T>(int family, int tableClass, bool isUdp) where T : struct
     {
+        const uint ErrorInsufficientBuffer = 122;
         var list = new List<T>();
         int bufSize = 0;
         NativeGetTable(isUdp, IntPtr.Zero, ref bufSize, family, tableClass);
         if (bufSize <= 0) return list;
 
-        IntPtr buffer = Marshal.AllocHGlobal(bufSize);
-        try
+        // The table can grow between the size query and the real call (a busy machine opens
+        // sockets constantly) - retry with the newly reported size rather than returning an empty
+        // table for this tick.
+        for (int attempt = 0; attempt < 3; attempt++)
         {
-            uint result = NativeGetTable(isUdp, buffer, ref bufSize, family, tableClass);
-            if (result != 0) return list; // non-zero = a Win32 error, not NO_ERROR
+            IntPtr buffer = Marshal.AllocHGlobal(bufSize);
+            try
+            {
+                uint result = NativeGetTable(isUdp, buffer, ref bufSize, family, tableClass);
+                if (result == ErrorInsufficientBuffer) continue; // bufSize now holds the required size
+                if (result != 0) return list; // any other non-zero = a Win32 error, not NO_ERROR
 
-            int numEntries = Marshal.ReadInt32(buffer);
-            IntPtr rowPtr = IntPtr.Add(buffer, 4);
-            int rowSize = Marshal.SizeOf<T>();
-            for (int i = 0; i < numEntries; i++)
-                list.Add(Marshal.PtrToStructure<T>(IntPtr.Add(rowPtr, i * rowSize)));
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(buffer);
+                int numEntries = Marshal.ReadInt32(buffer);
+                IntPtr rowPtr = IntPtr.Add(buffer, 4);
+                int rowSize = Marshal.SizeOf<T>();
+                for (int i = 0; i < numEntries; i++)
+                    list.Add(Marshal.PtrToStructure<T>(IntPtr.Add(rowPtr, i * rowSize)));
+                return list;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
         }
         return list;
     }

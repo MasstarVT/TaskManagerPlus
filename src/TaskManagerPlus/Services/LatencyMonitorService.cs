@@ -73,7 +73,11 @@ public sealed class LatencyMonitorService : IDisposable
     private CancellationTokenSource? _cts;
     private Task? _loopTask;
 
-    public bool IsRunning => _loopTask is { IsCompleted: false };
+    /// <summary>A loop that has been told to stop counts as not running even while its last
+    /// in-flight probe finishes, so a Stop() immediately followed by Start() (the interval setter,
+    /// or a quick off/on toggle) starts a fresh loop instead of returning early and leaving
+    /// monitoring silently stopped.</summary>
+    public bool IsRunning => _loopTask is { IsCompleted: false } && _cts is { IsCancellationRequested: false };
 
     /// <summary>Fired on the background probe loop's own thread once per completed cycle (all
     /// four tiers) - NOT the UI thread. Subscribers must marshal back themselves, same as every
@@ -94,9 +98,12 @@ public sealed class LatencyMonitorService : IDisposable
     public void Start(double intervalSeconds)
     {
         if (IsRunning) return;
-        _cts = new CancellationTokenSource();
+        // The previous source is already cancelled; its winding-down loop only checks its token.
+        try { _cts?.Dispose(); } catch { /* best-effort */ }
+        var cts = new CancellationTokenSource();
+        _cts = cts;
         var interval = TimeSpan.FromSeconds(Math.Clamp(intervalSeconds, 1.0, 30.0));
-        _loopTask = Task.Run(() => RunLoopAsync(interval, _cts.Token));
+        _loopTask = Task.Run(() => RunLoopAsync(interval, cts.Token));
     }
 
     public void Stop()
@@ -121,6 +128,7 @@ public sealed class LatencyMonitorService : IDisposable
                 var tiers = Enum.GetValues<LatencyTier>();
                 var tasks = tiers.Select(t => ProbeAsync(t, token)).ToArray();
                 var results = await Task.WhenAll(tasks);
+                if (token.IsCancellationRequested) break; // stopped mid-cycle - a restarted loop may already be recording
 
                 lock (_lock)
                 {

@@ -9,7 +9,7 @@ namespace TaskManagerPlus.Services;
 /// is false only when the registry key couldn't be opened at all - individual missing values fall
 /// back to the same defaults NCSI itself ships with (a documented Windows default, not a guess).</summary>
 public sealed record NcsiProbeConfig(
-    bool ActiveProbingEnabled, string WebProbeHost, string WebProbePath, string DnsProbeHost, bool ConfigReadable);
+    bool ActiveProbingEnabled, string WebProbeHost, string WebProbePath, string WebProbeExpectedContent, string DnsProbeHost, bool ConfigReadable);
 
 /// <summary>#593's full explainer - which of the three checks NCSI itself runs (DNS probe, HTTP/web
 /// probe, and the NlaSvc service simply being up) is actually failing right now, live, rather than
@@ -70,12 +70,15 @@ public static class NcsiDiagnosticsService
             bool active = key?.GetValue("EnableActiveProbing") is not int e || e != 0; // Windows default is enabled (1); treat "not set" as enabled too
             string webHost = (key?.GetValue("ActiveWebProbeHost") as string)?.Trim() is { Length: > 0 } wh ? wh : DefaultWebProbeHost;
             string webPath = (key?.GetValue("ActiveWebProbePath") as string)?.Trim() is { Length: > 0 } wp ? wp : DefaultWebProbePath;
+            // A custom probe host normally serves its own body, so the expected content comes from
+            // the same key - comparing a private probe's reply to Microsoft's text always "fails".
+            string webContent = (key?.GetValue("ActiveWebProbeContent") as string)?.Trim() is { Length: > 0 } wc ? wc : DefaultWebProbeExpectedBody;
             string dnsHost = (key?.GetValue("ActiveDnsProbeHost") as string)?.Trim() is { Length: > 0 } dh ? dh : DefaultDnsProbeHost;
-            return new NcsiProbeConfig(active, webHost, webPath, dnsHost, key is not null);
+            return new NcsiProbeConfig(active, webHost, webPath, webContent, dnsHost, key is not null);
         }
         catch
         {
-            return new NcsiProbeConfig(true, DefaultWebProbeHost, DefaultWebProbePath, DefaultDnsProbeHost, false);
+            return new NcsiProbeConfig(true, DefaultWebProbeHost, DefaultWebProbePath, DefaultWebProbeExpectedBody, DefaultDnsProbeHost, false);
         }
     }
 
@@ -85,7 +88,7 @@ public static class NcsiDiagnosticsService
         var (nlaText, nlaRunning) = ReadNlaSvcState();
 
         var dnsTask = ProbeDnsAsync(config.DnsProbeHost);
-        var webTask = ProbeWebAsync(config.WebProbeHost, config.WebProbePath);
+        var webTask = ProbeWebAsync(config.WebProbeHost, config.WebProbePath, config.WebProbeExpectedContent);
         await Task.WhenAll(dnsTask, webTask);
 
         var (dnsOk, dnsDetail) = dnsTask.Result;
@@ -146,7 +149,7 @@ public static class NcsiDiagnosticsService
         }
     }
 
-    private static async Task<(bool? Ok, string? Detail)> ProbeWebAsync(string host, string path)
+    private static async Task<(bool? Ok, string? Detail)> ProbeWebAsync(string host, string path, string expectedBody)
     {
         string url = $"http://{host.TrimEnd('/')}/{path.TrimStart('/')}";
         try
@@ -158,7 +161,7 @@ public static class NcsiDiagnosticsService
                 return (false, $"{url} returned HTTP {(int)response.StatusCode}");
 
             string body = (await response.Content.ReadAsStringAsync()).Trim();
-            bool matches = body.Equals(DefaultWebProbeExpectedBody, StringComparison.Ordinal);
+            bool matches = body.Equals(expectedBody, StringComparison.Ordinal);
             return (matches, matches ? $"{url} returned the expected body" : $"{url} returned an unexpected body ({body.Length} chars)");
         }
         catch (Exception ex)

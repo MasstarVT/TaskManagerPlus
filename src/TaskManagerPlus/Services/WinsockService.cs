@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace TaskManagerPlus.Services;
 
 /// <summary>One Winsock catalog entry (#575), from one `netsh winsock show catalog` block.
@@ -28,14 +26,23 @@ public static class WinsockService
 
     public static async Task<WinsockCatalogResult> ReadCatalogAsync()
     {
-        string output = await RunNetshAsync("winsock show catalog", TimeoutMs);
-        var entries = Parse(output);
+        var (output, exitCode) = await RunNetshAsync("winsock show catalog", TimeoutMs);
+        // Only a completed run is parsed - an error/failure message containing ':' would otherwise
+        // turn into a bogus "provider" row.
+        var entries = exitCode == 0 ? Parse(output) : new List<WinsockProviderEntry>();
         return new WinsockCatalogResult(entries, entries.Count(e => e.LooksNonMicrosoft));
     }
 
+    /// <summary>Success only on exit code 0 - a timeout, a start failure or a netsh error (e.g.
+    /// "requires elevation") used to come back as empty output and was reported as a completed
+    /// reset.</summary>
     public static async Task<string> ResetAsync()
     {
-        string output = await RunNetshAsync("winsock reset", ResetTimeoutMs);
+        var (output, exitCode) = await RunNetshAsync("winsock reset", ResetTimeoutMs);
+        if (exitCode is null)
+            return output.Length > 0 ? $"Winsock reset failed: {output}" : "Winsock reset timed out - it may not have completed. Check `netsh winsock show catalog` before restarting.";
+        if (exitCode != 0)
+            return output.Length > 0 ? $"Winsock reset failed (exit code {exitCode}): {output}" : $"Winsock reset failed (exit code {exitCode}).";
         return output.Length == 0 ? "Winsock catalog reset. Restart Windows for this to fully take effect." : output;
     }
 
@@ -89,38 +96,18 @@ public static class WinsockService
         }
     }
 
-    private static async Task<string> RunNetshAsync(string arguments, int timeoutMs)
+    /// <summary>A null ExitCode means the run didn't complete: timed out (Output empty) or
+    /// couldn't start (Output is the reason).</summary>
+    private static async Task<(string Output, int? ExitCode)> RunNetshAsync(string arguments, int timeoutMs)
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", arguments)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return string.Empty;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return string.Empty;
-            }
-
-            return ((await outputTask) + (await errorTask)).Trim();
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("netsh.exe", arguments, timeoutMs, timeoutOutput: string.Empty);
+            return (output.Trim(), exitCode);
         }
-        catch
+        catch (Exception ex)
         {
-            return string.Empty;
+            return ($"couldn't run netsh.exe ({ex.Message})", null);
         }
     }
 }

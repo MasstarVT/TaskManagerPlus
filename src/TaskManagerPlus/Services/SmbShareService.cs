@@ -46,14 +46,16 @@ public sealed record SmbConnectionInfo(
 /// </summary>
 public static class SmbShareService
 {
-    // #586: Win32_PerfRawData_SMBClientShares' own raw counters need a second sample plus the
-    // Timestamp_PerfTime/Frequency_PerfTime fields to convert correctly - the *formatted*
-    // counterpart (Win32_PerfFormattedData_SMBClientShares_SMBClientShares) is the same
-    // "SMB Client Shares" perfmon object with Windows' own perflib already doing that conversion,
-    // the same "known Windows tool/API over hand-rolled raw-counter math" tradeoff CLAUDE.md's
-    // Cross-cutting conventions favor - avoids this app guessing at a raw-to-formatted conversion
-    // it has no live multi-share machine to verify against.
-    private const string SmbShareCountersQuery = "SELECT * FROM Win32_PerfFormattedData_SMBClientShares_SMBClientShares";
+    // #586: read from the "SMB Client Shares" perf category through the shared CategorySampler
+    // (one category read per call, CounterSample.Calculate for the rate math). The WMI class this
+    // used before (Win32_PerfFormattedData_SMBClientShares_SMBClientShares) doesn't exist - the
+    // real one is Win32_PerfFormattedData_Counters_SMBClientShares - and its formatted
+    // AvgsecPerRead/Write are UInt32 whole seconds, so any sub-second latency would read 0 anyway.
+    // Averages are over the interval since the previous call (the caller's own tick).
+    private const string SmbShareCategory = "SMB Client Shares";
+    private static readonly CategorySampler SmbShareSampler = new(SmbShareCategory);
+    private static readonly object SmbShareSamplerLock = new();
+    private static bool _smbShareSamplerPrimed;
 
     // Latency this app flags as "slow enough to look into" - a couple hundred ms average read/write
     // latency on a LAN share is already well outside "feels instant" territory. Informational only.
@@ -65,44 +67,43 @@ public static class SmbShareService
     public static List<SmbShareLatency> ReadShareLatencies()
     {
         var results = new List<SmbShareLatency>();
-        try
+        lock (SmbShareSamplerLock)
         {
-            using var searcher = new ManagementObjectSearcher(SmbShareCountersQuery);
-            foreach (ManagementObject mo in searcher.Get())
+            try
             {
-                string name = (mo["Name"] as string ?? string.Empty).Trim();
-                if (name.Length == 0 || name.Equals("_Total", StringComparison.OrdinalIgnoreCase)) continue;
+                SmbShareSampler.Tick();
+                if (!_smbShareSamplerPrimed)
+                {
+                    // Rate/average counters need two samples - prime once with a short interval so
+                    // the very first read is a real measurement, not a row of zeros. (This runs
+                    // under the caller's Task.Run, never on the UI thread.)
+                    _smbShareSamplerPrimed = true;
+                    Thread.Sleep(500);
+                    SmbShareSampler.Tick();
+                }
 
-                // AvgsecPerRead/Write are reported in seconds by perflib's own "average timer"
-                // counter type - converted to ms here for a readable UI figure.
-                double readMs = ReadDoubleProperty(mo, "AvgsecPerRead") * 1000.0;
-                double writeMs = ReadDoubleProperty(mo, "AvgsecPerWrite") * 1000.0;
-                double queueLength = ReadDoubleProperty(mo, "AvgDataQueueLength");
-                double dataBytesPerSec = ReadDoubleProperty(mo, "DataBytesPersec");
-                bool looksSlow = readMs > SlowLatencyMsThreshold || writeMs > SlowLatencyMsThreshold;
+                foreach (string name in SmbShareSampler.InstanceNames("Avg. sec/Read"))
+                {
+                    if (name.Length == 0 || name.Equals("_Total", StringComparison.OrdinalIgnoreCase)) continue;
 
-                results.Add(new SmbShareLatency(name, readMs, writeMs, queueLength, dataBytesPerSec, looksSlow));
+                    // "Avg. sec/Read"/"Avg. sec/Write" are average-timer counters in seconds -
+                    // converted to ms here for a readable UI figure.
+                    double readMs = SmbShareSampler.Value("Avg. sec/Read", name) * 1000.0;
+                    double writeMs = SmbShareSampler.Value("Avg. sec/Write", name) * 1000.0;
+                    double queueLength = SmbShareSampler.Value("Avg. Data Queue Length", name);
+                    double dataBytesPerSec = SmbShareSampler.Value("Data Bytes/sec", name);
+                    bool looksSlow = readMs > SlowLatencyMsThreshold || writeMs > SlowLatencyMsThreshold;
+
+                    results.Add(new SmbShareLatency(name, readMs, writeMs, queueLength, dataBytesPerSec, looksSlow));
+                }
+            }
+            catch
+            {
+                // No SMB client shares perf object on this machine - the view just shows an empty
+                // list rather than a guessed figure.
             }
         }
-        catch
-        {
-            // No SMB client shares perf object on this machine, or WMI failed outright - the view
-            // just shows an empty list rather than a guessed figure.
-        }
         return results.OrderByDescending(r => Math.Max(r.AvgReadLatencyMs, r.AvgWriteLatencyMs)).ToList();
-    }
-
-    private static double ReadDoubleProperty(ManagementObject mo, string name)
-    {
-        try
-        {
-            var value = mo[name];
-            return value is null ? 0 : Convert.ToDouble(value);
-        }
-        catch
-        {
-            return 0;
-        }
     }
 
     /// <summary>#587: merges `HKCU\Network`'s persisted mappings with live `net use` output by
@@ -143,11 +144,26 @@ public static class SmbShareService
             // Best-effort - fall through with whatever `net use` alone can still provide.
         }
 
+        // Mapped drives belong to a logon session. Under UAC this elevated process runs in a
+        // separate session from the user's normal (filtered) one unless EnableLinkedConnections is
+        // set, so `net use` here lists the user's drives as "Unavailable" (remembered, not connected
+        // in THIS session) even while Explorer has them connected - say that instead of reporting
+        // the drive itself as unavailable.
+        bool splitSession = IsSplitElevatedSession();
+        if (splitSession)
+        {
+            foreach (var d in byLetter.Values)
+                d.ConnectionState = "Unknown - not visible from this elevated session (may be connected in your normal session)";
+        }
+
         try
         {
             string output = await RunCommandAsync("net.exe", "use");
-            foreach (var (letter, remotePath, state) in ParseNetUseOutput(output))
+            foreach (var (letter, remotePath, rawState) in ParseNetUseOutput(output))
             {
+                string state = splitSession && rawState == "Unavailable"
+                    ? "Unavailable in this elevated session (may be connected in your normal session)"
+                    : rawState;
                 if (byLetter.TryGetValue(letter, out var existing))
                 {
                     // MappedDriveInfo is a mutable class specifically so a live `net use` state can
@@ -166,6 +182,28 @@ public static class SmbShareService
         }
 
         return byLetter.Values.OrderBy(d => d.DriveLetter, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>True when this process is elevated under UAC without linked connections - the
+    /// case where its logon session doesn't see the user's own drive mappings. An approximation
+    /// (the built-in Administrator account isn't split), so the UI wording says "may".</summary>
+    private static bool IsSplitElevatedSession()
+    {
+        try
+        {
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            if (!new System.Security.Principal.WindowsPrincipal(identity).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator))
+                return false;
+
+            using var policy = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System");
+            bool uacOn = policy?.GetValue("EnableLUA") is not int lua || lua != 0;
+            bool linked = policy?.GetValue("EnableLinkedConnections") is int l && l == 1;
+            return uacOn && !linked;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>Parses `net use`'s fixed-width text table. Column layout: Status, Local, Remote,

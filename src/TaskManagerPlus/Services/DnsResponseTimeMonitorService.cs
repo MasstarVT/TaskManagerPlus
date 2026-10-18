@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Net.Sockets;
 
 namespace TaskManagerPlus.Services;
@@ -41,7 +42,9 @@ public sealed class DnsResponseTimeMonitorService : IDisposable
     private CancellationTokenSource? _cts;
     private Task? _loopTask;
 
-    public bool IsRunning => _loopTask is { IsCompleted: false };
+    /// <summary>Same "stopped counts as not running" rule as LatencyMonitorService.IsRunning, so a
+    /// quick off/on of the shared toggle restarts the loop instead of returning early.</summary>
+    public bool IsRunning => _loopTask is { IsCompleted: false } && _cts is { IsCancellationRequested: false };
     public event Action? CycleCompleted;
 
     public void Start(IReadOnlyList<string> resolvers, double intervalSeconds)
@@ -54,8 +57,10 @@ public sealed class DnsResponseTimeMonitorService : IDisposable
         }
 
         var interval = TimeSpan.FromSeconds(Math.Clamp(intervalSeconds, 2.0, 30.0));
-        _cts = new CancellationTokenSource();
-        _loopTask = Task.Run(() => RunLoopAsync(resolvers.ToList(), interval, _cts.Token));
+        try { _cts?.Dispose(); } catch { /* best-effort */ }
+        var cts = new CancellationTokenSource();
+        _cts = cts;
+        _loopTask = Task.Run(() => RunLoopAsync(resolvers.ToList(), interval, cts.Token));
     }
 
     public void Stop()
@@ -77,6 +82,7 @@ public sealed class DnsResponseTimeMonitorService : IDisposable
             {
                 var tasks = resolvers.Select(ip => ProbeAsync(ip, token)).ToArray();
                 var results = await Task.WhenAll(tasks);
+                if (token.IsCancellationRequested) break; // stopped mid-cycle - a restarted loop owns the windows now
                 lock (_lock)
                 {
                     foreach (var sample in results) RecordLocked(sample);
@@ -101,8 +107,12 @@ public sealed class DnsResponseTimeMonitorService : IDisposable
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(outerToken);
             timeoutCts.CancelAfter(TimeoutMs);
 
-            using var udp = new UdpClient();
-            udp.Connect(resolverIp, 53);
+            // new UdpClient() is an IPv4-only socket, so Connect to an IPv6 resolver (a common
+            // OS-configured one) always failed - open the socket in the resolver's own family.
+            // IPAddress.Parse keeps a link-local "%scope" suffix.
+            var resolverAddress = IPAddress.Parse(resolverIp);
+            using var udp = new UdpClient(resolverAddress.AddressFamily);
+            udp.Connect(new IPEndPoint(resolverAddress, 53));
 
             byte[] query = BuildQuery(ControlHostname);
             await udp.SendAsync(query, timeoutCts.Token);

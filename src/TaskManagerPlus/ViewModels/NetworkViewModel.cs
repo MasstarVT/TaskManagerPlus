@@ -1496,7 +1496,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         // #517-526: DNS card wiring.
         RunDnsCompareCommand = new AsyncRelayCommand(RunDnsCompareAsync, () => !IsComparingDns && !string.IsNullOrWhiteSpace(DnsCompareHostname));
         RefreshDnsCacheCommand = new AsyncRelayCommand(RefreshDnsCacheAsync, () => !IsLoadingDnsCache);
-        FlushDnsCacheCommand = new AsyncRelayCommand(FlushDnsCacheAsync, () => !IsLoadingDnsCache);
+        FlushDnsCacheCommand = new AsyncRelayCommand(FlushDnsCacheAsync, () => !IsLoadingDnsCache && !ReadOnlyModeService.IsReadOnly);
         RefreshDohConfigCommand = new AsyncRelayCommand(RefreshDohConfigAsync);
         RefreshHostsFileCommand = new AsyncRelayCommand(RefreshHostsFileAsync, () => !IsLoadingHostsFile);
         ScanDnsFailuresCommand = new AsyncRelayCommand(ScanDnsFailuresAsync, () => !IsScanningDnsFailures);
@@ -1547,10 +1547,10 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
         // #527-535: Addressing / ARP-neighbours card wiring.
         RefreshAddressingCommand = new AsyncRelayCommand(RefreshAddressingAsync, () => !IsRefreshingAddressing);
-        ReleaseAddressCommand = new RelayCommand(() => ReleaseSelectedAdapter(), () => SelectedAddressingAdapter is not null && !IsRunningDhcpAction);
-        RenewAddressCommand = new RelayCommand(() => RenewAdapter(SelectedAddressingAdapter), () => SelectedAddressingAdapter is not null && !IsRunningDhcpAction);
-        RegisterDnsCommand = new RelayCommand(() => RegisterDnsForSelectedAdapter(), () => !IsRunningDhcpAction);
-        RenewApipaAdapterCommand = new RelayCommand(param => RenewAdapter(param as AdapterAddressInfo), _ => !IsRunningDhcpAction);
+        ReleaseAddressCommand = new RelayCommand(() => ReleaseSelectedAdapter(), () => SelectedAddressingAdapter is not null && !IsRunningDhcpAction && !ReadOnlyModeService.IsReadOnly);
+        RenewAddressCommand = new RelayCommand(() => RenewAdapter(SelectedAddressingAdapter), () => SelectedAddressingAdapter is not null && !IsRunningDhcpAction && !ReadOnlyModeService.IsReadOnly);
+        RegisterDnsCommand = new RelayCommand(() => RegisterDnsForSelectedAdapter(), () => !IsRunningDhcpAction && !ReadOnlyModeService.IsReadOnly);
+        RenewApipaAdapterCommand = new RelayCommand(param => RenewAdapter(param as AdapterAddressInfo), _ => !IsRunningDhcpAction && !ReadOnlyModeService.IsReadOnly);
         ScanDhcpEventsCommand = new AsyncRelayCommand(ScanDhcpEventsAsync, () => !IsScanningDhcpEvents);
         ScanIpConflictsCommand = new AsyncRelayCommand(ScanIpConflictsAsync, () => !IsScanningIpConflicts);
         ProbeGratuitousArpCommand = new AsyncRelayCommand(ProbeGratuitousArpAsync, () => !IsProbingGratuitousArp);
@@ -1584,11 +1584,11 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         ScanWifiEventsCommand = new AsyncRelayCommand(ScanWifiEventsAsync, () => !IsScanningWifiEvents);
         RunWlanReportCommand = new AsyncRelayCommand(RunWlanReportAsync, () => !IsRunningWlanReport);
         RefreshWifiProfilesCommand = new AsyncRelayCommand(RefreshWifiProfilesAsync, () => !IsLoadingWifiProfiles);
-        DeleteWifiProfileCommand = new AsyncRelayCommand(param => DeleteWifiProfileAsync(param as WifiProfileAudit), _ => !IsLoadingWifiProfiles);
+        DeleteWifiProfileCommand = new AsyncRelayCommand(param => DeleteWifiProfileAsync(param as WifiProfileAudit), _ => !IsLoadingWifiProfiles && !ReadOnlyModeService.IsReadOnly);
 
         // #547-556: Adapter health card wiring.
         ScanLinkFlapsCommand = new AsyncRelayCommand(ScanLinkFlapsAsync, () => !IsScanningLinkFlaps);
-        RestartAdapterCommand = new RelayCommand(RestartSelectedAdapter, () => !string.IsNullOrWhiteSpace(SelectedHealthAdapterName) && !IsRestartingAdapter);
+        RestartAdapterCommand = new RelayCommand(RestartSelectedAdapter, () => !string.IsNullOrWhiteSpace(SelectedHealthAdapterName) && !IsRestartingAdapter && !ReadOnlyModeService.IsReadOnly);
         OpenDeviceManagerCommand = new RelayCommand(_ => OpenDeviceManager());
 
         // #552/#565: one-time machine-wide TCP offload/tuning read - see TcpGlobalSettings' remarks.
@@ -1613,7 +1613,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         };
 
         LookupPortCommand = new AsyncRelayCommand(LookupPortAsync, () => !IsLookingUpPort && !string.IsNullOrWhiteSpace(PortLookupQuery));
-        EndPortLookupProcessCommand = new AsyncRelayCommand(param => EndPortLookupProcessAsync(param as PortLookupResult), _ => !IsLookingUpPort);
+        EndPortLookupProcessCommand = new AsyncRelayCommand(param => EndPortLookupProcessAsync(param as PortLookupResult), _ => !IsLookingUpPort && !ReadOnlyModeService.IsReadOnly);
 
         ShowTcpConnectionsCommand = new RelayCommand(_ => ShowUdpConnections = false);
         ShowUdpConnectionsCommand = new RelayCommand(_ => ShowUdpConnections = true);
@@ -1626,8 +1626,8 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         RefreshFirewallProfilesCommand = new AsyncRelayCommand(RefreshFirewallProfilesAsync, () => !IsLoadingFirewallProfiles);
         RefreshFirewallRulesCommand = new AsyncRelayCommand(RefreshFirewallRulesAsync, () => !IsLoadingFirewallRules);
         RefreshFirewallLogCommand = new AsyncRelayCommand(RefreshFirewallLogAsync, () => !IsLoadingFirewallLog);
-        EnableDroppedLoggingCommand = new AsyncRelayCommand(EnableDroppedLoggingAsync, () => !IsLoadingFirewallLog);
-        EnableWfpAuditingCommand = new AsyncRelayCommand(EnableWfpAuditingAsync, () => !IsEnablingWfpAuditing);
+        EnableDroppedLoggingCommand = new AsyncRelayCommand(EnableDroppedLoggingAsync, () => !IsLoadingFirewallLog && !ReadOnlyModeService.IsReadOnly);
+        EnableWfpAuditingCommand = new AsyncRelayCommand(EnableWfpAuditingAsync, () => !IsEnablingWfpAuditing && !ReadOnlyModeService.IsReadOnly);
         ScanWfpDropsCommand = new AsyncRelayCommand(ScanWfpDropsAsync, () => !IsScanningWfpDrops);
         RefreshStackInventoryCommand = new AsyncRelayCommand(RefreshStackInventoryAsync, () => !IsLoadingStackInventory);
         RunWizardCommand = new AsyncRelayCommand(RunWizardAsync, () => !IsRunningWizard && !string.IsNullOrWhiteSpace(WizardQuery));
@@ -1637,7 +1637,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         RefreshProxyCardCommand = new AsyncRelayCommand(RefreshProxyCardAsync, () => !IsLoadingProxyCard);
         TestBypassCommand = new RelayCommand(_ => TestBypass());
         RefreshWinsockCatalogCommand = new AsyncRelayCommand(RefreshWinsockCatalogAsync, () => !IsLoadingWinsockCatalog);
-        ResetWinsockCommand = new RelayCommand(ConfirmAndResetWinsock, () => !IsResettingWinsock);
+        ResetWinsockCommand = new RelayCommand(ConfirmAndResetWinsock, () => !IsResettingWinsock && !ReadOnlyModeService.IsReadOnly);
         _ = RefreshProxyCardAsync();
         _ = RefreshWinsockCatalogAsync();
 
@@ -1646,19 +1646,19 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         ResetIpStackCommand = new RelayCommand(_ => RunStackResetAction(
             "Reset TCP/IP stack",
             "Resets the TCP/IP stack to its installation defaults (`netsh int ip reset`). Fixes a corrupted Winsock/TCP-IP registry configuration, but wipes any custom IP settings, static routes, and some third-party network filter registrations. A restart is recommended afterward.",
-            NetworkStackResetService.ResetIpStackAsync));
+            NetworkStackResetService.ResetIpStackAsync), _ => !ReadOnlyModeService.IsReadOnly);
         FlushDnsResolverCacheCommand = new RelayCommand(_ => RunStackResetAction(
             "Flush DNS resolver cache",
             "Clears the local DNS resolver cache (`ipconfig /flushdns`). Safe and low-impact - the next lookup for any host is just slightly slower while the cache refills. Fixes a stale/poisoned cached DNS record.",
-            NetworkStackResetService.FlushDnsAsync));
+            NetworkStackResetService.FlushDnsAsync), _ => !ReadOnlyModeService.IsReadOnly);
         ClearArpCacheCommand = new RelayCommand(_ => RunStackResetAction(
             "Clear ARP cache",
             "Clears the cached IP-to-MAC address mappings for the local network (`arp -d *`). Safe - Windows rebuilds it automatically as needed, with a brief delay on the next connection to each host. Fixes a stale ARP entry (e.g. after a device's network card was replaced).",
-            NetworkStackResetService.ClearArpCacheAsync));
+            NetworkStackResetService.ClearArpCacheAsync), _ => !ReadOnlyModeService.IsReadOnly);
         ResetNetBiosCacheCommand = new RelayCommand(_ => RunStackResetAction(
             "Reset NetBIOS name cache",
             "Purges and reloads the NetBIOS name cache (`nbtstat -R`). Safe - only affects NetBIOS name resolution (mostly legacy Windows file-sharing/`\\\\computername` lookups), rebuilt automatically. Fixes a stale cached NetBIOS name-to-address mapping.",
-            NetworkStackResetService.ResetNetBiosCacheAsync));
+            NetworkStackResetService.ResetNetBiosCacheAsync), _ => !ReadOnlyModeService.IsReadOnly);
 
         // #577: VPN default-route / DNS-leak check wiring.
         RunVpnTunnelCheckCommand = new AsyncRelayCommand(RunVpnTunnelCheckAsync, () => !IsCheckingVpnTunnel);
@@ -1707,7 +1707,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         // port-reservation read already uses), plus #589's own on-demand event scan.
         RefreshNetworkDrivesCommand = new AsyncRelayCommand(RefreshNetworkDrivesAsync, () => !IsLoadingNetworkDrives);
         TestDriveReachabilityCommand = new AsyncRelayCommand(TestDriveReachabilityAsync);
-        DisconnectMappedDriveCommand = new AsyncRelayCommand(DisconnectMappedDriveAsync);
+        DisconnectMappedDriveCommand = new AsyncRelayCommand(DisconnectMappedDriveAsync, _ => !ReadOnlyModeService.IsReadOnly);
         ScanSmbEventsCommand = new AsyncRelayCommand(ScanSmbEventsAsync, () => !IsScanningSmbEvents);
         _ = RefreshNetworkDrivesAsync();
 
@@ -2775,12 +2775,46 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             "End process", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
+        // The lookup reads a connections snapshot up to a tick old, and the confirm dialog can sit
+        // open indefinitely - re-check the PID still belongs to the process that was shown before
+        // killing it, so a reused PID never takes down an unrelated process.
+        if (!IsSameProcess(target))
+        {
+            PortLookupStatusText = $"Couldn't confirm PID {target.Pid} is still \"{target.ProcessName}\" (it may have exited, or the PID was reused) - nothing was ended. Run the lookup again.";
+            return;
+        }
+
         var (success, error) = ProcessMonitorService.EndProcess(target.Pid);
         PortLookupStatusText = success
             ? $"Ended {target.ProcessName} (PID {target.Pid})."
             : $"Couldn't end {target.ProcessName}: {error}";
 
         if (success) await LookupPortAsync();
+    }
+
+    /// <summary>True only when the PID is still running under the same name and, when the lookup
+    /// captured one, the same start time. A row whose identity was never known ("(unknown)" name
+    /// and no start time) can't be verified, so it isn't.</summary>
+    private static bool IsSameProcess(PortLookupResult target)
+    {
+        bool nameKnown = target.ProcessName != "(unknown)";
+        if (!nameKnown && target.ProcessStartTime is null) return false;
+        try
+        {
+            using var proc = Process.GetProcessById(target.Pid);
+            if (nameKnown && !string.Equals(proc.ProcessName, target.ProcessName, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (target.ProcessStartTime is { } expectedStart)
+            {
+                try { return proc.StartTime == expectedStart; }
+                catch { return false; } // readable at lookup time but not now - can't confirm, so don't kill
+            }
+            return true;
+        }
+        catch
+        {
+            return false; // exited
+        }
     }
 
     /// <summary>#563: reloads the excluded/dynamic port ranges via netsh, then recomputes #564's
@@ -3998,11 +4032,26 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         try
         {
             BufferbloatStatusText = "Measuring idle latency (a few seconds)...";
-            double idle = await BufferbloatTestService.MeasureIdleLatencyAsync(host, TimeSpan.FromSeconds(4));
+            double? idleMs = await BufferbloatTestService.MeasureIdleLatencyAsync(host, TimeSpan.FromSeconds(4));
 
             BufferbloatStatusText = "Saturating the link (downloading) and measuring loaded latency...";
-            var (loaded, download) = await BufferbloatTestService.MeasureLoadedLatencyAsync(host, SpeedTestDownloadUrl);
+            var (loadedMs, download) = await BufferbloatTestService.MeasureLoadedLatencyAsync(host, SpeedTestDownloadUrl);
 
+            // No successful pings in either phase, or a download that never loaded the link, leaves
+            // nothing to grade - N/A rather than the A+ a 0 ms "delta" would otherwise produce.
+            string? failure = idleMs is null ? $"No ping replies from {host} while idle."
+                : loadedMs is null ? $"No ping replies from {host} during the download."
+                : !download.Succeeded ? $"The saturating download failed ({download.ErrorMessage})."
+                : null;
+            if (failure is not null)
+            {
+                BufferbloatResult = new BufferbloatResult(idleMs ?? 0, loadedMs ?? 0, 0, "N/A", failure);
+                BufferbloatStatusText = $"Test couldn't complete: {failure}";
+                RecordTestHistory("Bufferbloat", host, download.Mbps, BufferbloatStatusText, false);
+                return;
+            }
+
+            double idle = idleMs!.Value, loaded = loadedMs!.Value;
             double delta = loaded - idle;
             string grade = BufferbloatTestService.GradeFor(delta);
             BufferbloatResult = new BufferbloatResult(idle, loaded, delta, grade, null);

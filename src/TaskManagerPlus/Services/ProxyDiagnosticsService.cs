@@ -72,11 +72,17 @@ public static class ProxyDiagnosticsService
     public static async Task<ProxyDivergenceInfo> ReadDivergenceAsync(ProxyConfigInfo perUser)
     {
         string output = await RunNetshAsync("winhttp show proxy");
-        var (systemEnabled, systemServer) = ParseWinHttpProxy(output);
+        var (systemEnabledOrUnknown, systemServer) = ParseWinHttpProxy(output);
 
         string userSummary = perUser.Enabled
             ? (perUser.ProxyServer.Length > 0 ? perUser.ProxyServer : "Enabled, no server configured")
             : "Direct (no proxy)";
+
+        // Unreadable output (netsh failed/timed out, or a non-English Windows whose labels this
+        // can't recognize) is Unknown - never assumed Direct, which flagged a false mismatch.
+        if (systemEnabledOrUnknown is not { } systemEnabled)
+            return new ProxyDivergenceInfo(userSummary, "Unknown (couldn't read `netsh winhttp show proxy`)", false, null);
+
         string systemSummary = systemEnabled ? systemServer : "Direct (no proxy)";
 
         bool mismatch = perUser.Enabled != systemEnabled ||
@@ -94,12 +100,13 @@ public static class ProxyDiagnosticsService
 
     private static string Normalize(string s) => s.Trim().TrimEnd('/');
 
-    private static (bool Enabled, string Server) ParseWinHttpProxy(string output)
+    /// <summary>Null Enabled when neither English marker is present - see ReadDivergenceAsync.</summary>
+    private static (bool? Enabled, string Server) ParseWinHttpProxy(string output)
     {
         if (output.Contains("Direct access", StringComparison.OrdinalIgnoreCase)) return (false, string.Empty);
 
         var match = Regex.Match(output, @"Proxy Server\(s\)\s*:\s*(\S+)");
-        return match.Success ? (true, match.Groups[1].Value.Trim()) : (false, string.Empty);
+        return match.Success ? (true, match.Groups[1].Value.Trim()) : (null, string.Empty);
     }
 
     /// <summary>#574: splits ProxyOverride into individual bypass entries.</summary>

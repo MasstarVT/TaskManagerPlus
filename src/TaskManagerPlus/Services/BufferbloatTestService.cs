@@ -26,17 +26,19 @@ public static class BufferbloatTestService
     private static readonly TimeSpan PingInterval = TimeSpan.FromMilliseconds(200);
 
     /// <summary>Phase 1: average round-trip over <paramref name="duration"/> with no other traffic
-    /// deliberately generated - the baseline #580 compares the loaded phase against.</summary>
-    public static async Task<double> MeasureIdleLatencyAsync(string host, TimeSpan duration, CancellationToken ct = default)
+    /// deliberately generated - the baseline #580 compares the loaded phase against. Null when no
+    /// ping succeeded at all - an average of zero samples isn't a 0 ms latency.</summary>
+    public static async Task<double?> MeasureIdleLatencyAsync(string host, TimeSpan duration, CancellationToken ct = default)
     {
         var samples = await CollectPingsAsync(host, duration, ct);
-        return samples.Count > 0 ? samples.Average() : 0;
+        return samples.Count > 0 ? samples.Average() : null;
     }
 
     /// <summary>Phase 2: starts the #579 download and pings the same host continuously until it
     /// finishes, returning the average loaded round-trip alongside the download's own result (so
-    /// the caller can also surface "how fast was the saturating download itself").</summary>
-    public static async Task<(double LoadedLatencyMs, SpeedTestResult Download)> MeasureLoadedLatencyAsync(
+    /// the caller can also surface "how fast was the saturating download itself"). Loaded latency is
+    /// null when no ping succeeded during the download.</summary>
+    public static async Task<(double? LoadedLatencyMs, SpeedTestResult Download)> MeasureLoadedLatencyAsync(
         string pingHost, string downloadUrl, CancellationToken ct = default)
     {
         var downloadTask = SpeedTestService.RunDownloadAsync(downloadUrl, ct);
@@ -59,7 +61,7 @@ public static class BufferbloatTestService
         }
 
         var download = await downloadTask;
-        double loaded = pingSamples.Count > 0 ? pingSamples.Average() : 0;
+        double? loaded = pingSamples.Count > 0 ? pingSamples.Average() : null;
         return (loaded, download);
     }
 

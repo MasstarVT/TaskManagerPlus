@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace TaskManagerPlus.Services;
 
 /// <summary>One adapter's routing metric (#535), from `netsh interface ipv4/ipv6 show interfaces`.</summary>
@@ -8,8 +6,7 @@ public sealed record InterfaceMetricInfo(string AddressFamily, int Index, int Me
 /// <summary>
 /// Item #535: parses each adapter's routing metric out of `netsh interface ipv4 show interfaces`
 /// (and the ipv6 equivalent) - the same "known tool over raw interop" tradeoff every other
-/// netsh/route/sc call in this app already takes, and the same column shape InterfaceMtuService
-/// (#511) already parses for `netsh interface ipv6 show subinterfaces` (Idx/Met/MTU/State/Name).
+/// netsh/route/sc call in this app already takes. Columns: Idx/Met/MTU/State/Name.
 ///
 /// Windows prefers the *lowest* effective metric among connected interfaces with a default route
 /// when deciding which adapter actually carries outbound traffic for a given address family -
@@ -37,19 +34,8 @@ public static class InterfaceMetricService
         var results = new List<InterfaceMetricInfo>();
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", $"interface {family} show interfaces")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return results;
-
-            string output = await proc.StandardOutput.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            try { await proc.WaitForExitAsync(cts.Token); } catch (OperationCanceledException) { try { proc.Kill(); } catch { /* best-effort */ } }
+            // A timeout returns the sentinel (not partial output), which parses to no rows.
+            var (output, _) = await ToolRunner.RunCapturedAsync("netsh.exe", $"interface {family} show interfaces", 10000, includeStderr: false);
 
             string af = family == "ipv4" ? "IPv4" : "IPv6";
             foreach (var rawLine in output.Split('\n'))

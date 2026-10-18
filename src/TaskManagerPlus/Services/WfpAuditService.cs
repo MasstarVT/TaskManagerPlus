@@ -64,7 +64,9 @@ public static class WfpAuditService
     public static async Task<WfpAuditScanResult> ScanAsync(TimeSpan window)
     {
         var events = new List<WfpDropEvent>();
-        bool channelOk = TryScanSecurityLog(window, events);
+        // Up to 2,000 Security-log reads + FormatDescription calls - off the caller's (UI) thread;
+        // this method had no await before it, so the whole scan ran synchronously on the dispatcher.
+        bool channelOk = await Task.Run(() => TryScanSecurityLog(window, events));
 
         bool resolved = false;
         if (events.Count > 0)
@@ -171,15 +173,19 @@ public static class WfpAuditService
             int end = output.LastIndexOf('>');
             if (start < 0 || end <= start) return map;
 
-            var doc = XDocument.Parse(output[start..(end + 1)]);
-            foreach (var item in doc.Descendants("item"))
+            // The whole-machine filter dump can be large - parsed off the UI thread too.
+            await Task.Run(() =>
             {
-                string? id = item.Element("filterId")?.Value?.Trim();
-                if (string.IsNullOrEmpty(id)) continue;
-                string? name = item.Element("displayData")?.Element("name")?.Value?.Trim();
-                if (string.IsNullOrEmpty(name)) continue;
-                map[id] = name;
-            }
+                var doc = XDocument.Parse(output[start..(end + 1)]);
+                foreach (var item in doc.Descendants("item"))
+                {
+                    string? id = item.Element("filterId")?.Value?.Trim();
+                    if (string.IsNullOrEmpty(id)) continue;
+                    string? name = item.Element("displayData")?.Element("name")?.Value?.Trim();
+                    if (string.IsNullOrEmpty(name)) continue;
+                    map[id] = name;
+                }
+            });
         }
         catch
         {

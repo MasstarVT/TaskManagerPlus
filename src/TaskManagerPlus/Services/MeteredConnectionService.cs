@@ -29,8 +29,13 @@ public sealed record MeteredAdapterInfo(string ProfileName, bool IsMetered, stri
 /// </summary>
 public static class MeteredConnectionService
 {
-    private const string ProfilesKeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\NetworkList\Profiles";
-    private const string CostKeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\NetworkList\DefaultMediaCost";
+    // NetworkList lives under "Windows NT", not "Windows" - the latter path doesn't exist, which left
+    // this card permanently empty. DefaultMediaCost holds one DWORD per media type (Ethernet, WiFi,
+    // 3G, 4G, Default), not per-profile subkeys, so a profile's cost is its media type's default.
+    // A per-network override set in Settings (e.g. on a Wi-Fi profile) isn't stored here, hence the
+    // "default for ..." wording on the cost text.
+    private const string ProfilesKeyPath = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles";
+    private const string CostKeyPath = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\DefaultMediaCost";
 
     public static List<MeteredAdapterInfo> ReadMeteredStatus()
     {
@@ -48,11 +53,17 @@ public static class MeteredConnectionService
                     using var profile = profilesKey.OpenSubKey(guid);
                     string name = (profile?.GetValue("ProfileName") as string ?? "Network").Trim();
 
-                    int cost = 0;
-                    using (var costSub = costKey?.OpenSubKey(guid))
+                    // NameType is the profile's IANA interface type: 6 = wired, 71 = wireless.
+                    // Mobile broadband has separate 3G/4G costs this can't choose between, and
+                    // anything else falls back to the "Default" value Windows itself uses.
+                    var (mediaValue, mediaLabel) = (profile?.GetValue("NameType") is int nameType ? nameType : -1) switch
                     {
-                        if (costSub?.GetValue("Cost") is int c) cost = c;
-                    }
+                        6 => ("Ethernet", "wired"),
+                        71 => ("WiFi", "Wi-Fi"),
+                        243 => ((string?)null, "mobile broadband"),
+                        _ => ("Default", "this network type"),
+                    };
+                    int? cost = mediaValue is not null && costKey?.GetValue(mediaValue) is int c ? c : null;
 
                     // Low bit values match the documented NLM_CONNECTION_COST flags: 0/1 =
                     // unrestricted (not metered), 2 = fixed, 4 = variable - fixed/variable both
@@ -60,10 +71,11 @@ public static class MeteredConnectionService
                     bool metered = cost is 2 or 4;
                     string costText = cost switch
                     {
-                        0 or 1 => "Unrestricted",
-                        2 => "Fixed",
-                        4 => "Variable",
-                        _ => $"Cost code {cost}",
+                        null => "Cost unknown",
+                        0 or 1 => $"Unrestricted (default for {mediaLabel})",
+                        2 => $"Fixed / metered (default for {mediaLabel})",
+                        4 => $"Variable / metered (default for {mediaLabel})",
+                        _ => $"Cost code {cost} (default for {mediaLabel})",
                     };
 
                     // #595: NLM_NETWORK_CATEGORY - 0 Public, 1 Private, 2 Domain (matches

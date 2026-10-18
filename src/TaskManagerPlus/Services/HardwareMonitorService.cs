@@ -64,8 +64,11 @@ public sealed class HardwareMonitorService : IDisposable
     // Network counters use System.Net.NetworkInformation instead of perf counters:
     // interface instance names in the "Network Interface" perf category are unstable
     // across driver updates, whereas NetworkInterface.GetIPv4Statistics is not.
-    private long _lastBytesReceived;
-    private long _lastBytesSent;
+    // Kept per interface (NetworkInterface.Id), not as one summed total: the counters are
+    // lifetime totals, so an adapter that drops out of the Up set and comes back (VPN connect,
+    // Wi-Fi reassociation, cable replug) would otherwise re-add its whole lifetime byte count to
+    // the sum and show as a one-tick GB/s spike.
+    private Dictionary<string, (long Received, long Sent)> _lastNetBytes = new();
     private DateTime _lastNetSampleUtc;
 
     public HardwareMonitorService()
@@ -129,7 +132,7 @@ public sealed class HardwareMonitorService : IDisposable
         _pageFileVolumeInstance = pageFileDrive is null ? null : pageFileDrive + ":";
         if (_pageFileVolumeInstance is not null) _logicalDisk.Tick();
 
-        (_lastBytesReceived, _lastBytesSent) = ReadTotalNetworkBytes();
+        _lastNetBytes = ReadNetworkBytesPerInterface();
         _lastNetSampleUtc = DateTime.UtcNow;
     }
 
@@ -199,13 +202,21 @@ public sealed class HardwareMonitorService : IDisposable
         for (int i = 0; i < _diskInstanceNames.Length; i++)
             physicalDisks[i] = SamplePhysicalDisk(_diskInstanceNames[i], diskIdleTimeAvailable);
 
-        var (bytesReceived, bytesSent) = ReadTotalNetworkBytes();
+        var netBytes = ReadNetworkBytesPerInterface();
         var (netInErrors, netInDiscards, netOutErrors, netOutDiscards) = ReadNetworkErrorCounters();
         var elapsedSec = Math.Max(0.001, (now - _lastNetSampleUtc).TotalSeconds);
-        double netRecvRate = Math.Max(0, (bytesReceived - _lastBytesReceived) / elapsedSec);
-        double netSendRate = Math.Max(0, (bytesSent - _lastBytesSent) / elapsedSec);
-        _lastBytesReceived = bytesReceived;
-        _lastBytesSent = bytesSent;
+        long receivedDelta = 0, sentDelta = 0;
+        foreach (var (id, current) in netBytes)
+        {
+            // An interface absent last tick (newly up, or back up) only establishes its baseline;
+            // a negative delta is a counter reset (driver reload) and counts as 0.
+            if (!_lastNetBytes.TryGetValue(id, out var previous)) continue;
+            receivedDelta += Math.Max(0, current.Received - previous.Received);
+            sentDelta += Math.Max(0, current.Sent - previous.Sent);
+        }
+        double netRecvRate = receivedDelta / elapsedSec;
+        double netSendRate = sentDelta / elapsedSec;
+        _lastNetBytes = netBytes;
         _lastNetSampleUtc = now;
 
         GetMemoryStatus(out long totalBytes, out long availBytes);
@@ -366,19 +377,18 @@ public sealed class HardwareMonitorService : IDisposable
         return int.TryParse(head, out int index) ? index : int.MaxValue;
     }
 
-    private static (long Received, long Sent) ReadTotalNetworkBytes()
+    private static Dictionary<string, (long Received, long Sent)> ReadNetworkBytesPerInterface()
     {
-        long received = 0, sent = 0;
+        var result = new Dictionary<string, (long Received, long Sent)>(StringComparer.OrdinalIgnoreCase);
         foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
         {
             if (ni.OperationalStatus != OperationalStatus.Up) continue;
             if (ni.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) continue;
 
             var stats = ni.GetIPStatistics();
-            received += stats.BytesReceived;
-            sent += stats.BytesSent;
+            result[ni.Id] = (stats.BytesReceived, stats.BytesSent);
         }
-        return (received, sent);
+        return result;
     }
 
     /// <summary>

@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace TaskManagerPlus.Services;
 
 /// <summary>
@@ -17,51 +15,45 @@ public static class AdapterRestartService
 
     public static async Task<string> RestartAsync(string adapterName)
     {
-        string disableOutput = await RunNetshAsync($"interface set interface \"{adapterName}\" admin=disable");
+        // The re-enable always runs, even after a failed or timed-out disable - a disable that timed
+        // out may still have taken effect, and enabling an already-enabled adapter is harmless.
+        var (disableOk, disableOutput) = await RunNetshAsync($"interface set interface \"{adapterName}\" admin=disable");
 
         // A brief pause so the adapter actually finishes going down before the immediate re-enable -
         // without it, some drivers appear to just ignore the second command entirely.
         await Task.Delay(1500);
 
-        string enableOutput = await RunNetshAsync($"interface set interface \"{adapterName}\" admin=enable");
+        var (enableOk, enableOutput) = await RunNetshAsync($"interface set interface \"{adapterName}\" admin=enable");
+        if (!enableOk)
+        {
+            // A failed re-enable can leave the adapter OFF - say so plainly and give the exact
+            // command, rather than a bare tool error the user can't act on.
+            string disablePart = disableOk ? "The adapter was disabled, but" : $"Disabling reported: {disableOutput}. Then";
+            return $"{disablePart} re-enabling it failed ({enableOutput}) - \"{adapterName}\" may still be disabled. " +
+                   $"Re-enable it in Network Connections, or run: netsh interface set interface \"{adapterName}\" admin=enable";
+        }
+        if (!disableOk)
+            return $"Couldn't disable the adapter ({disableOutput}), so it wasn't actually restarted; it is enabled.";
 
         string combined = $"{disableOutput}\n{enableOutput}".Trim();
         return combined.Length == 0 ? "Adapter restarted." : combined;
     }
 
-    private static async Task<string> RunNetshAsync(string arguments)
+    /// <summary>Ok is false on a timeout, a start failure or a non-zero netsh exit code; Output is
+    /// then the reason. Exit code 0 with empty output is netsh's normal success.</summary>
+    private static async Task<(bool Ok, string Output)> RunNetshAsync(string arguments)
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", arguments)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return "Couldn't start netsh.exe.";
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(); } catch { /* best-effort */ }
-                return "netsh.exe timed out.";
-            }
-
-            string output = ((await outputTask) + (await errorTask)).Trim();
-            return output;
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("netsh.exe", arguments, TimeoutMs, timeoutOutput: "netsh.exe timed out");
+            output = output.Trim();
+            if (exitCode is null) return (false, output);
+            if (exitCode != 0) return (false, output.Length > 0 ? output : $"netsh.exe exited with code {exitCode}");
+            return (true, output);
         }
         catch (Exception ex)
         {
-            return $"Failed: {ex.Message}";
+            return (false, $"Failed: {ex.Message}");
         }
     }
 }

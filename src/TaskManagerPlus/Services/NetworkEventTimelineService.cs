@@ -5,12 +5,19 @@ namespace TaskManagerPlus.Services;
 /// <summary>One event on the unified #596 timeline, flattened from whichever source scan actually
 /// produced it - a common shape the grid/chart-marker code can treat uniformly, even though each
 /// underlying provider's own event schema is completely different.</summary>
-public sealed record NetworkTimelineEvent(DateTime TimeUtc, string Source, string Category, string Message);
+public sealed record NetworkTimelineEvent(DateTime TimeUtc, string Source, string Category, string Message)
+{
+    /// <summary>For display - the grid shows wall-clock time, not UTC.</summary>
+    public DateTime TimeLocal => TimeUtc.ToLocalTime();
+}
 
 /// <summary>#598's derived finding - a resume-from-sleep event followed, within a few minutes, by
 /// something that looks like a network problem. Framed as a correlation, not a diagnosis: the
 /// timing lines up, which is the most this app can actually claim.</summary>
-public sealed record SleepResumeFinding(DateTime ResumeTimeUtc, DateTime FirstIssueTimeUtc, string IssueSource, string IssueSummary);
+public sealed record SleepResumeFinding(DateTime ResumeTimeUtc, DateTime FirstIssueTimeUtc, string IssueSource, string IssueSummary)
+{
+    public DateTime ResumeTimeLocal => ResumeTimeUtc.ToLocalTime();
+}
 
 /// <summary>#596's full scan result. <see cref="UnavailableSources"/> lists which of the (up to)
 /// eight sources couldn't be read - several of the channels involved are analytic logs disabled by
@@ -84,28 +91,31 @@ public static class NetworkEventTimelineService
         AddScan(events, unavailable, "NlaSvc", nlaSvcTask.Result);
         AddScan(events, unavailable, "NetworkProfile", networkProfileTask.Result);
 
+        // The sibling scanners store EventRecord.TimeCreated as-is, which is LOCAL time (Kind=Local)
+        // despite their TimeUtc field names - normalized here so the window filter, the chart
+        // markers and the sleep/resume correlation all compare against real UTC.
         var dns = dnsTask.Result;
-        foreach (var e in dns.Events) events.Add(new NetworkTimelineEvent(e.TimeUtc, "DNS-Client", e.Source, $"{e.QueriedName}: {e.Summary}"));
+        foreach (var e in dns.Events) events.Add(new NetworkTimelineEvent(ToUtc(e.TimeUtc), "DNS-Client", e.Source, $"{e.QueriedName}: {e.Summary}"));
         if (!dns.OperationalChannelAvailable) unavailable.Add("DNS-Client/Operational");
 
         var dhcp = dhcpTask.Result;
-        foreach (var e in dhcp.Events) events.Add(new NetworkTimelineEvent(e.TimeUtc, $"Dhcp-Client/{e.Channel}", e.Category, e.Message));
+        foreach (var e in dhcp.Events) events.Add(new NetworkTimelineEvent(ToUtc(e.TimeUtc), $"Dhcp-Client/{e.Channel}", e.Category, e.Message));
         if (!dhcp.AdminChannelAvailable) unavailable.Add("Dhcp-Client/Admin");
         if (!dhcp.OperationalChannelAvailable) unavailable.Add("Dhcp-Client/Operational");
 
         var wlan = wlanTask.Result;
         foreach (var e in wlan.Events)
-            events.Add(new NetworkTimelineEvent(e.TimeUtc, "WLAN-AutoConfig",
+            events.Add(new NetworkTimelineEvent(ToUtc(e.TimeUtc), "WLAN-AutoConfig",
                 e.Kind, $"{e.Kind}{(e.Ssid is null ? string.Empty : $" ({e.Ssid})")}{(e.ReasonText is null ? string.Empty : $" - {e.ReasonText}")}"));
         if (!wlan.ChannelAvailable) unavailable.Add("WLAN-AutoConfig/Operational");
 
         var linkFlap = linkFlapTask.Result;
         foreach (var e in linkFlap.Events)
-            events.Add(new NetworkTimelineEvent(e.TimeUtc, $"NIC miniport ({e.ProviderName})", e.Kind, e.Message));
+            events.Add(new NetworkTimelineEvent(ToUtc(e.TimeUtc), $"NIC miniport ({e.ProviderName})", e.Kind, e.Message));
         if (!linkFlap.ChannelAvailable) unavailable.Add("System (NIC miniport link-state)");
 
         var smb = smbTask.Result;
-        foreach (var e in smb.Events) events.Add(new NetworkTimelineEvent(e.TimeUtc, "SMBClient", e.Category, e.Message));
+        foreach (var e in smb.Events) events.Add(new NetworkTimelineEvent(ToUtc(e.TimeUtc), "SMBClient", e.Category, e.Message));
         if (!smb.ConnectivityChannelAvailable) unavailable.Add("SMBClient/Connectivity");
         if (!smb.OperationalChannelAvailable) unavailable.Add("SMBClient/Operational");
 
@@ -154,7 +164,7 @@ public static class NetworkEventTimelineService
                     try { message = record.FormatDescription() ?? string.Empty; }
                     catch { message = string.Empty; }
 
-                    events.Add(new NetworkTimelineEvent(record.TimeCreated ?? DateTime.MinValue, categoryLabel,
+                    events.Add(new NetworkTimelineEvent(ToUtc(record.TimeCreated), categoryLabel,
                         $"Event {record.Id} ({record.LevelDisplayName})", Truncate(message, 260)));
                 }
             }
@@ -202,7 +212,7 @@ public static class NetworkEventTimelineService
                         NetworkProfileDisconnected => "Network disconnected",
                         _ => $"Event {record.Id}",
                     };
-                    events.Add(new NetworkTimelineEvent(record.TimeCreated ?? DateTime.MinValue, "NetworkProfile", category, Truncate(message, 260)));
+                    events.Add(new NetworkTimelineEvent(ToUtc(record.TimeCreated), "NetworkProfile", category, Truncate(message, 260)));
                 }
             }
             return (events, true);
@@ -238,7 +248,7 @@ public static class NetworkEventTimelineService
                 {
                     count++;
                     if (record.TimeCreated is not { } time) continue;
-                    results.Add((time, record.Id == KernelPowerResumeId));
+                    results.Add((ToUtc(time), record.Id == KernelPowerResumeId));
                 }
             }
         }
@@ -274,4 +284,14 @@ public static class NetworkEventTimelineService
     }
 
     private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
+
+    /// <summary>EventRecord.TimeCreated is local time; already-UTC values pass through unchanged.
+    /// A missing timestamp stays MinValue (marked UTC) so it still sorts last and is filtered out.</summary>
+    private static DateTime ToUtc(DateTime? time) => time switch
+    {
+        null => DateTime.SpecifyKind(DateTime.MinValue, DateTimeKind.Utc),
+        { Kind: DateTimeKind.Utc } t => t,
+        { } t when t == DateTime.MinValue => DateTime.SpecifyKind(t, DateTimeKind.Utc),
+        { } t => t.ToUniversalTime(),
+    };
 }

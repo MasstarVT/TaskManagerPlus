@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using System.Globalization;
 
 namespace TaskManagerPlus.Services;
 
@@ -39,19 +39,8 @@ public static class InterfaceMtuService
         var results = new List<InterfaceMtuInfo>();
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", $"interface {family} show subinterfaces")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return results;
-
-            string output = await proc.StandardOutput.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            try { await proc.WaitForExitAsync(cts.Token); } catch (OperationCanceledException) { try { proc.Kill(); } catch { /* best-effort */ } }
+            // A timeout returns the sentinel (not partial output), which parses to no rows.
+            var (output, _) = await ToolRunner.RunCapturedAsync("netsh.exe", $"interface {family} show subinterfaces", 10000, includeStderr: false);
 
             string af = family == "ipv4" ? "IPv4" : "IPv6";
             foreach (var rawLine in output.Split('\n'))
@@ -61,29 +50,19 @@ public static class InterfaceMtuService
 
                 var tokens = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
 
-                if (family == "ipv4")
-                {
-                    // "    MTU  MediaSenseState   Bytes In  Bytes Out  Interface" - 4 numeric
-                    // columns then the interface name (which itself may contain spaces).
-                    if (tokens.Length < 5) continue;
-                    if (!int.TryParse(tokens[0], out int mtu)) continue; // header/separator row
-                    if (!int.TryParse(tokens[1], out _)) continue;
-                    if (!int.TryParse(tokens[2], out _)) continue;
-                    if (!int.TryParse(tokens[3], out _)) continue;
-                    string name = string.Join(' ', tokens.Skip(4));
-                    results.Add(new InterfaceMtuInfo { AddressFamily = af, InterfaceName = name, Mtu = mtu });
-                }
-                else
-                {
-                    // "Idx     Met         MTU          State                Name" - 3 numeric
-                    // columns, a state word, then the interface name.
-                    if (tokens.Length < 5) continue;
-                    if (!int.TryParse(tokens[0], out _)) continue; // header/separator row
-                    if (!int.TryParse(tokens[1], out _)) continue;
-                    if (!int.TryParse(tokens[2], out int mtu)) continue;
-                    string name = string.Join(' ', tokens.Skip(4));
-                    results.Add(new InterfaceMtuInfo { AddressFamily = af, InterfaceName = name, Mtu = mtu });
-                }
+                // Both families print the same table: "MTU  MediaSenseState  Bytes In  Bytes Out
+                // Interface" - 4 numeric columns then the interface name (which may contain spaces).
+                // The byte counters are lifetime totals that pass int.MaxValue on any busy adapter,
+                // so they're parsed as long; an MTU too big for int is loopback's 4294967295
+                // "no limit" value, which has nothing to compare against a path MTU anyway.
+                if (tokens.Length < 5) continue;
+                if (!long.TryParse(tokens[0], NumberStyles.None, CultureInfo.InvariantCulture, out long mtu)) continue; // header/separator row
+                if (!long.TryParse(tokens[1], NumberStyles.None, CultureInfo.InvariantCulture, out _)) continue;
+                if (!long.TryParse(tokens[2], NumberStyles.None, CultureInfo.InvariantCulture, out _)) continue;
+                if (!long.TryParse(tokens[3], NumberStyles.None, CultureInfo.InvariantCulture, out _)) continue;
+                if (mtu > int.MaxValue) continue;
+                string name = string.Join(' ', tokens.Skip(4));
+                results.Add(new InterfaceMtuInfo { AddressFamily = af, InterfaceName = name, Mtu = (int)mtu });
             }
         }
         catch

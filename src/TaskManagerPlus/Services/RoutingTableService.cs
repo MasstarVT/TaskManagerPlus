@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using Microsoft.Win32;
 
@@ -67,22 +66,15 @@ public static class RoutingTableService
         var results = new List<RouteEntry>();
         try
         {
-            var psi = new ProcessStartInfo("route.exe", $"print {familyFlag}")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return results;
-
-            string output = await proc.StandardOutput.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            try { await proc.WaitForExitAsync(cts.Token); } catch (OperationCanceledException) { try { proc.Kill(); } catch { /* best-effort */ } }
+            // A timeout returns the sentinel (not partial output), which parses to no rows.
+            var (output, _) = await ToolRunner.RunCapturedAsync("route.exe", $"print {familyFlag}", 10000, includeStderr: false);
 
             bool inActiveSection = false;
             string af = familyFlag == "-4" ? "IPv4" : "IPv6";
+            // `route print -6` wraps a long destination's Gateway onto its own line:
+            //   "  8    281 2604:2d80:...:393/128" then "                  On-link".
+            // The 3-token head is held here until its 1-token continuation arrives.
+            string[]? pendingIpv6 = null;
             foreach (var rawLine in output.Split('\n'))
             {
                 string line = rawLine.TrimEnd('\r');
@@ -95,6 +87,14 @@ public static class RoutingTableService
                 if (line.Trim().Equals("None", StringComparison.OrdinalIgnoreCase)) continue;
 
                 var tokens = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
+                if (af == "IPv6")
+                {
+                    if (pendingIpv6 is not null && tokens.Length == 1)
+                        tokens = new[] { pendingIpv6[0], pendingIpv6[1], pendingIpv6[2], tokens[0] };
+                    pendingIpv6 = null;
+                    if (tokens.Length == 3) { pendingIpv6 = tokens; continue; }
+                }
 
                 if (af == "IPv4" && tokens.Length == 5)
                 {

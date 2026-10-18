@@ -4260,7 +4260,7 @@
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
                                                     <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,2" TextWrapping="Wrap">
-                                                        <Run Text="{Binding ResumeTimeUtc, StringFormat={}{0:g}, Mode=OneWay}" FontFamily="Consolas" />
+                                                        <Run Text="{Binding ResumeTimeLocal, StringFormat={}{0:g}, Mode=OneWay}" FontFamily="Consolas" />
                                                         <Run Text=" — " /><Run Text="{Binding IssueSummary, Mode=OneWay}" />
                                                     </TextBlock>
                                                 </DataTemplate>
@@ -4276,7 +4276,7 @@
                                      Text="{Binding NetworkEventFilterText, UpdateSourceTrigger=PropertyChanged}" />
                             <DataGrid ItemsSource="{Binding NetworkEvents}" AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" CanUserSortColumns="True" MaxHeight="320">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Time" Binding="{Binding TimeUtc, StringFormat={}{0:g}}" Width="1.2*" />
+                                    <DataGridTextColumn Header="Time" Binding="{Binding TimeLocal, Mode=OneWay, StringFormat={}{0:g}}" Width="1.2*" />
                                     <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="1.3*" />
                                     <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="1.1*" />
                                     <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="3*" />
