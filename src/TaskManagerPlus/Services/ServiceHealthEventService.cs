@@ -83,12 +83,16 @@ public sealed class ServiceHealthEventService
         return result.OrderByDescending(r => r.TotalCount).ToList();
     }
 
-    /// <summary>Service Control Manager 7000/7009/7024/7031/7034's first insertion string is always
-    /// the service's display/internal name - the same positional convention EventLogService.
-    /// ReadServiceStartDurations and EventsViewModel.ExtractServiceName already rely on for 7036/
-    /// 7031/7009 respectively.</summary>
+    /// <summary>Service Control Manager 7000/7024/7031/7034's first insertion string is the
+    /// service's display name - the same positional convention EventLogService.
+    /// ReadServiceStartDurations relies on for 7036. 7009 is the exception: its message is "A
+    /// timeout was reached (%1 milliseconds) while waiting for the %2 service to connect", so the
+    /// name is the second string (reading the first grouped every timeout under "30000").</summary>
     private static string? ExtractServiceName(EventRecordRow row)
-        => row.PropertyValues.Count > 0 && !string.IsNullOrWhiteSpace(row.PropertyValues[0]) ? row.PropertyValues[0] : null;
+    {
+        int index = row.EventId == 7009 ? 1 : 0;
+        return row.PropertyValues.Count > index && !string.IsNullOrWhiteSpace(row.PropertyValues[index]) ? row.PropertyValues[index] : null;
+    }
 
     // ==================== #193: start-timeout diagnosis ====================
 

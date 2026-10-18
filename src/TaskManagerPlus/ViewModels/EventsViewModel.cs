@@ -1044,11 +1044,15 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         return (null, null);
     }
 
-    /// <summary>Service Control Manager 7031/7009's first insertion string is always the service's
-    /// display/internal name - the same convention EventLogService.ReadServiceStartDurations'
-    /// own 7036 parsing already relies on for a different SCM event.</summary>
+    /// <summary>Service Control Manager 7031's first insertion string is the service's display
+    /// name - the same convention EventLogService.ReadServiceStartDurations' own 7036 parsing
+    /// relies on. 7009's template puts the timeout first ("A timeout was reached (%1
+    /// milliseconds) while waiting for the %2 service to connect"), so its name is the second.</summary>
     private static string? ExtractServiceName(EventRecordRow row)
-        => row.PropertyValues.Count > 0 && !string.IsNullOrWhiteSpace(row.PropertyValues[0]) ? row.PropertyValues[0] : null;
+    {
+        int index = row.EventId == 7009 ? 1 : 0;
+        return row.PropertyValues.Count > index && !string.IsNullOrWhiteSpace(row.PropertyValues[index]) ? row.PropertyValues[index] : null;
+    }
 
     private void RunKbAction()
     {
