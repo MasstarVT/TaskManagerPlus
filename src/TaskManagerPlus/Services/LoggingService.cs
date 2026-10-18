@@ -46,12 +46,24 @@ public sealed class LoggingService : IDisposable
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
-        _writer = new StreamWriter(path, append: false, Encoding.UTF8) { AutoFlush = true };
+        // Only published once the header is written, so a failed open never leaves a half-open
+        // writer behind for IsLogging/WriteRow to keep using.
+        var writer = new StreamWriter(path, append: false, Encoding.UTF8) { AutoFlush = true };
+        try
+        {
+            writer.WriteLine(string.Join(",", _headers.Select(Escape)));
+        }
+        catch
+        {
+            writer.Dispose();
+            throw;
+        }
+        _writer = writer;
         FilePath = path;
-        _writer.WriteLine(string.Join(",", _headers.Select(Escape)));
     }
 
-    /// <summary>No-op when not currently logging, so callers don't need to check IsLogging first.</summary>
+    /// <summary>No-op when not currently logging, so callers don't need to check IsLogging first.
+    /// Throws on an I/O failure (disk full, drive removed) - the caller decides how to stop.</summary>
     public void WriteRow(IReadOnlyList<string> values)
     {
         if (_writer is null) return;
@@ -63,8 +75,12 @@ public sealed class LoggingService : IDisposable
 
     private void RotateFile()
     {
-        _writer!.Dispose();
         var justClosedPath = FilePath!;
+        // Cleared before reopening: if the next part can't be opened, IsLogging must read false
+        // rather than leave a disposed writer that throws ObjectDisposedException on every row.
+        _writer!.Dispose();
+        _writer = null;
+        FilePath = null;
         _part++;
         var dir = Path.GetDirectoryName(_basePath!) ?? string.Empty;
         var name = Path.GetFileNameWithoutExtension(_basePath!);

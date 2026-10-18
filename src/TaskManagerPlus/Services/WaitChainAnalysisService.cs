@@ -125,7 +125,7 @@ public static class WaitChainAnalysisService
         return outcome;
     }
 
-    /// <summary>Formats one WAITCHAIN_NODE_INFO entry - WctThreadType (a running thread, the usual
+    /// <summary>Formats one WAITCHAIN_NODE_INFO entry - WctThreadType (a thread node, the usual
     /// end of a chain) reads the ThreadObject union member (PID/TID); every other object type
     /// (CriticalSection/Mutex/Alpc/Com/...) reads the LockObject union member's own name, the same
     /// branch Microsoft's own sample code for this API uses.</summary>
@@ -158,21 +158,24 @@ public static class WaitChainAnalysisService
             : $"{typeName} \"{name}\" ({statusName})";
     }
 
-    private const int WctThreadType = 7;
+    // WCT_OBJECT_TYPE (wct.h) starts at 1, not 0 - an off-by-one table here read every real
+    // thread node (8) as "COM activation" and decoded process-wait nodes (7) as PID/TID pairs.
+    // Same values as WaitChainTraversalService's constants.
+    private const int WctThreadType = 8;
 
     private static string ObjectTypeName(int type) => type switch
     {
-        0 => "Execution context",
-        1 => "Spinlock",
-        2 => "Mutex",
-        3 => "ALPC",
-        4 => "COM",
-        5 => "Thread wait",
-        6 => "Process wait",
-        7 => "Thread",
-        8 => "COM activation",
-        10 => "Socket I/O",
-        11 => "SMB I/O",
+        1 => "Critical section",
+        2 => "SendMessage",
+        3 => "Mutex",
+        4 => "ALPC",
+        5 => "COM",
+        6 => "Thread wait",
+        7 => "Process wait",
+        8 => "Thread",
+        9 => "COM activation",
+        11 => "Socket I/O",
+        12 => "SMB I/O",
         _ => "Unknown wait object",
     };
 

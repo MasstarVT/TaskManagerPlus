@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -11,6 +13,10 @@ namespace TaskManagerPlus.Services;
 /// environment once, at CreateProcess time - it never picks up a later PATH/TEMP edit on its own,
 /// which is exactly the gap this flags: "this process inherited an environment from before your
 /// last change - restart it to pick up the new value."
+///
+/// Only processes running as this app's own user in this app's own session are compared. The
+/// baseline is HKLM plus *this* user's HKCU, so a SYSTEM/LocalService/NetworkService or other-user
+/// process (C:\Windows\TEMP, no user PATH) would always "differ" - a false "restart it", not drift.
 /// </summary>
 public static class ProcessEnvironmentDriftService
 {
@@ -23,6 +29,11 @@ public static class ProcessEnvironmentDriftService
             return new ProcessEnvironmentDrift { Pid = pid, ProcessName = processName, HasDrift = false, Detail = "Environment couldn't be read for this process (see above) - drift can't be determined." };
         }
 
+        if (!IsSameUserAndSession(pid, CurrentUserSid(), CurrentSessionId()))
+        {
+            return new ProcessEnvironmentDrift { Pid = pid, ProcessName = processName, HasDrift = false, Detail = "Runs as a different account or in a different session (or its owner couldn't be read) - its environment comes from that account, so it isn't compared against yours." };
+        }
+
         var (effectivePath, effectiveTemp) = EnvironmentHealthService.ReadEffectivePathAndTemp();
         return BuildDrift(pid, processName, processEnvironment, effectivePath, effectiveTemp);
     }
@@ -31,7 +42,8 @@ public static class ProcessEnvironmentDriftService
     /// running process (a PEB walk per process, so - like this app's other heavier on-demand scans,
     /// e.g. DISM's component-store analysis - this is gated behind its own button, never run on a
     /// tick). Best-effort: a process this app can't open (protected/elevated beyond this app's own
-    /// elevation, or one that exits mid-scan) is silently skipped rather than counted as drifted.</summary>
+    /// elevation, or one that exits mid-scan), or one owned by another account/session (see the
+    /// class remarks), is silently skipped rather than counted as checked or drifted.</summary>
     public static async Task<(int Checked, List<ProcessEnvironmentDrift> Drifted)> ScanAllAsync()
     {
         return await Task.Run(() =>
@@ -39,6 +51,8 @@ public static class ProcessEnvironmentDriftService
             var (effectivePath, effectiveTemp) = EnvironmentHealthService.ReadEffectivePathAndTemp();
             var drifted = new List<ProcessEnvironmentDrift>();
             int checkedCount = 0;
+            var mySid = CurrentUserSid();
+            int mySession = CurrentSessionId();
 
             Process[] processes;
             try { processes = Process.GetProcesses(); }
@@ -50,6 +64,7 @@ public static class ProcessEnvironmentDriftService
                 {
                     int pid = proc.Id;
                     string name = proc.ProcessName;
+                    if (!IsSameUserAndSession(pid, mySid, mySession)) continue;
                     var env = ProcessEnvironmentService.Read(pid);
                     // ProcessEnvironmentService degrades to a single explanatory placeholder line
                     // (no "=" in it) for anything it couldn't read - those aren't real environment
@@ -103,4 +118,90 @@ public static class ProcessEnvironmentDriftService
         var setB = b.Split(';', StringSplitOptions.RemoveEmptyEntries).Select(s => s.TrimEnd('\\').ToLowerInvariant()).ToHashSet();
         return setA.SetEquals(setB);
     }
+
+    private static SecurityIdentifier? CurrentUserSid()
+    {
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            return identity.User;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static int CurrentSessionId()
+    {
+        try
+        {
+            using var self = Process.GetCurrentProcess();
+            return self.SessionId;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>True only when the process is in <paramref name="sessionId"/> and its primary
+    /// token's user SID is <paramref name="userSid"/>; false when either can't be read, so an
+    /// unreadable owner is skipped rather than compared.</summary>
+    private static bool IsSameUserAndSession(int pid, SecurityIdentifier? userSid, int sessionId)
+    {
+        if (userSid is null || sessionId < 0) return false;
+
+        IntPtr hProcess = IntPtr.Zero, hToken = IntPtr.Zero, buffer = IntPtr.Zero;
+        try
+        {
+            if (!ProcessIdToSessionId((uint)pid, out uint processSession) || processSession != (uint)sessionId) return false;
+
+            hProcess = OpenProcess(ProcessQueryLimitedInformation, false, pid);
+            if (hProcess == IntPtr.Zero) return false;
+            if (!OpenProcessToken(hProcess, TokenQuery, out hToken)) return false;
+
+            GetTokenInformation(hToken, TokenUserClass, IntPtr.Zero, 0, out int size);
+            if (size <= 0) return false;
+            buffer = Marshal.AllocHGlobal(size);
+            if (!GetTokenInformation(hToken, TokenUserClass, buffer, size, out _)) return false;
+
+            // TOKEN_USER is { SID_AND_ATTRIBUTES User } - the SID pointer comes first.
+            IntPtr sidPtr = Marshal.ReadIntPtr(buffer, 0);
+            return sidPtr != IntPtr.Zero && new SecurityIdentifier(sidPtr).Equals(userSid);
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            if (hToken != IntPtr.Zero) CloseHandle(hToken);
+            if (hProcess != IntPtr.Zero) CloseHandle(hProcess);
+        }
+    }
+
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+    private const uint TokenQuery = 0x0008;
+    private const int TokenUserClass = 1; // TOKEN_INFORMATION_CLASS.TokenUser
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetTokenInformation(IntPtr tokenHandle, int tokenInformationClass, IntPtr tokenInformation, int tokenInformationLength, out int returnLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
 }

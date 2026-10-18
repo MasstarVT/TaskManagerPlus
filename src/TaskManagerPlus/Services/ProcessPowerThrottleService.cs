@@ -20,6 +20,9 @@ public static class ProcessPowerThrottleService
 {
     private const int ProcessPowerThrottling = 4; // PROCESS_INFORMATION_CLASS
     private const uint PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1;
+    // PROCESS_POWER_THROTTLING_CURRENT_VERSION - the call rejects Version 0 with
+    // ERROR_INVALID_PARAMETER, which used to make every read come back Unknown.
+    private const uint PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct PROCESS_POWER_THROTTLING_STATE
@@ -40,7 +43,7 @@ public static class ProcessPowerThrottleService
         if (processHandle == IntPtr.Zero) return "Unknown";
         try
         {
-            var state = new PROCESS_POWER_THROTTLING_STATE();
+            var state = new PROCESS_POWER_THROTTLING_STATE { Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION };
             uint size = (uint)Marshal.SizeOf<PROCESS_POWER_THROTTLING_STATE>();
             if (!GetProcessInformation(processHandle, ProcessPowerThrottling, ref state, size))
                 return "Unknown";

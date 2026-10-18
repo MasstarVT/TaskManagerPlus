@@ -176,7 +176,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
 
         ToggleLoggingCommand = new RelayCommand(_ => ToggleLogging());
         AddMarkerCommand = new RelayCommand(_ => AddMarker(), _ => IsLogging);
-        LoadLogFileCommand = new RelayCommand(_ => LoadLogFile());
+        LoadLogFileCommand = new RelayCommand(_ => _ = LoadLogFileAsync());
 
         ReplayXAxes = new[] { new Axis { Labels = Array.Empty<string>(), LabelsPaint = new SolidColorPaint(new SKColor(0x9A, 0x9A, 0xA2)), SeparatorsPaint = null } };
         ReplayYAxes = new[]
@@ -208,16 +208,48 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
 
     private void Tick()
     {
-        if (IsLogging) { WriteRowIfLogging(); return; }
-        if (AutoStartRollingBufferEnabled) WriteRollingBufferRow();
+        if (IsLogging)
+        {
+            string? path = LogFilePath;
+            try
+            {
+                WriteRowIfLogging();
+            }
+            catch (Exception ex)
+            {
+                StopAfterWriteFailure(path, ex);
+            }
+            return;
+        }
+        if (AutoStartRollingBufferEnabled)
+        {
+            try { WriteRollingBufferRow(); }
+            catch { /* best-effort background buffer - a failed row is just a missing row */ }
+        }
     }
+
+    /// <summary>A write failure (disk full, USB drive removed, file deleted) repeats on every
+    /// tick, so the session is stopped once and the reason shown once - instead of the app-wide
+    /// unhandled-exception dialog firing every second. Stopped before the dialog opens: the modal
+    /// pumps the dispatcher, so this timer keeps ticking while it's up.</summary>
+    private void StopAfterWriteFailure(string? path, Exception ex)
+    {
+        _logging.Stop();
+        RaiseLoggingChanged();
+        System.Windows.MessageBox.Show(
+            $"Logging stopped - couldn't write to {path ?? "the log file"}:\n\n{ex.Message}",
+            "Task Manager Plus - Logging", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+    }
+
+    private List<(string Identifier, SensorType Type)> CurrentSensorColumns() =>
+        _energyThermals.Temperatures
+            .Concat(_energyThermals.Fans).Concat(_energyThermals.Voltages).Concat(_energyThermals.Wattages)
+            .Select(s => (s.Identifier, s.Type)).ToList();
 
     private void StartRollingBuffer()
     {
         _rollingCoreCountAtStart = _performance.Cores.Count;
-        _rollingSensorColumnsAtStart = _energyThermals.Temperatures
-            .Concat(_energyThermals.Fans).Concat(_energyThermals.Voltages).Concat(_energyThermals.Wattages)
-            .Select(s => (s.Identifier, s.Type)).ToList();
+        _rollingSensorColumnsAtStart = CurrentSensorColumns();
         _rollingBuffer.Clear();
         _rollingFlushCountdown = 0;
     }
@@ -229,6 +261,17 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     /// always-on feature.</summary>
     private void WriteRollingBufferRow()
     {
+        // The ctor's snapshot normally runs before the first sample lands (Cores and the sensor
+        // lists fill asynchronously), which left the per-core and sensor columns out for the whole
+        // session. Re-snapshot when more columns become available - growth only, so a sensor that
+        // briefly drops out just leaves a blank cell instead of wiping the buffer. Rows built
+        // against the narrower column set no longer match the new header, so they're dropped.
+        if (_performance.Cores.Count > _rollingCoreCountAtStart ||
+            CurrentSensorColumns().Count > _rollingSensorColumnsAtStart.Count)
+        {
+            StartRollingBuffer();
+        }
+
         var row = BuildRow(_rollingCoreCountAtStart, _rollingSensorColumnsAtStart);
         _rollingBuffer.Enqueue(string.Join(",", row.Select(Escape)));
 
@@ -270,7 +313,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         ReplayYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
-    private void LoadLogFile()
+    private async Task LoadLogFileAsync()
     {
         var dialog = new OpenFileDialog
         {
@@ -280,7 +323,15 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         };
         if (dialog.ShowDialog() != true) return;
 
-        var (result, error) = LogReplayService.Parse(dialog.FileName);
+        int generation = ++_replayLoadGeneration;
+        string fileName = dialog.FileName;
+        ReplayStatusText = $"Loading {Path.GetFileName(fileName)}...";
+
+        // A log part can be up to ~100 MB (see LoggingService's rotation size) - parse it off the
+        // UI thread rather than freezing the window for the whole read.
+        var (result, error) = await Task.Run(() => LogReplayService.Parse(fileName));
+        if (generation != _replayLoadGeneration) return; // a newer load superseded this one
+
         if (result is null)
         {
             ReplaySeries = null;
@@ -315,22 +366,26 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
             .Select((t, i) => i % labelEvery == 0 ? t.ToString("t") : string.Empty)
             .ToArray();
 
-        ReplayStatusText = $"{result.RowCount} rows: {result.Timestamps[0]:g} – {result.Timestamps[^1]:g} ({Path.GetFileName(dialog.FileName)})";
+        ReplayStatusText = $"{result.RowCount} rows: {result.Timestamps[0]:g} – {result.Timestamps[^1]:g} ({Path.GetFileName(fileName)})";
 
         // #145: overlay event-log error markers on this replay - bounded to exactly the file's own
         // [first, last] timestamp range, fetched once and cached (see ShowReplayEventMarkers).
         _replayTimestamps = result.Timestamps;
         _replayMarkerRows = new List<EventRecordRow>();
         ReplayMarkerSections.Clear();
-        _ = LoadReplayEventMarkersAsync(result.Timestamps[0], result.Timestamps[^1]);
+        _ = LoadReplayEventMarkersAsync(result.Timestamps[0], result.Timestamps[^1], generation);
     }
+
+    // Bumped on every log load, so a slower parse or event-marker query for an earlier file can't
+    // land on top of (and mis-mark) the file loaded after it.
+    private int _replayLoadGeneration;
 
     /// <summary>#145: a single bounded, on-demand multi-channel query (System+Application,
     /// Critical/Error) for exactly the loaded log file's own time range - the same
     /// EventLogExplorerService.ReadMultiChannel/BuildStructuredQuery pair #112/#138 already use,
     /// here reused so a thermal event and an error burst can be lined up on this chart without
     /// exporting both to a spreadsheet.</summary>
-    private async Task LoadReplayEventMarkersAsync(DateTime startLocal, DateTime endLocal)
+    private async Task LoadReplayEventMarkersAsync(DateTime startLocal, DateTime endLocal, int generation)
     {
         ReplayMarkerStatusText = "Looking for Critical/Error events in this log's time range...";
         try
@@ -338,6 +393,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
             string xpath = $"*[System[(Level=1 or Level=2) and TimeCreated[@SystemTime>='{startLocal.ToUniversalTime():o}'] and TimeCreated[@SystemTime<='{endLocal.ToUniversalTime():o}']]]";
             string structuredXml = EventLogExplorerService.BuildStructuredQuery(new[] { "System", "Application" }, xpath);
             var result = await Task.Run(() => _events.ReadMultiChannel(structuredXml, null, pageSize: 300));
+            if (generation != _replayLoadGeneration) return; // results for a previously loaded file
             if (result.ErrorText is not null)
             {
                 ReplayMarkerStatusText = null;
@@ -352,7 +408,8 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReplayMarkerStatusText = $"Couldn't check for events: {ex.Message}";
+            if (generation == _replayLoadGeneration)
+                ReplayMarkerStatusText = $"Couldn't check for events: {ex.Message}";
         }
     }
 
@@ -435,8 +492,16 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
             .Select(s => (s.Identifier, s.Type))
             .ToList();
 
-        _logging.Start(path, BuildHeaders(_coreCountAtStart, _sensorColumnsAtStart));
-        WriteRowIfLogging(); // capture the current values immediately, not just on the next tick
+        try
+        {
+            _logging.Start(path, BuildHeaders(_coreCountAtStart, _sensorColumnsAtStart));
+            WriteRowIfLogging(); // capture the current values immediately, not just on the next tick
+        }
+        catch (Exception ex)
+        {
+            StopAfterWriteFailure(path, ex);
+            return;
+        }
         RaiseLoggingChanged();
     }
 

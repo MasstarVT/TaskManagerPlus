@@ -164,12 +164,16 @@ public static class PoolTagInspectionService
     /// more than one driver file (shared headers, statically-linked libraries) - the first file
     /// found wins, which is a real limitation of this technique, not just this implementation
     /// (same caveat findstr itself has).
+    ///
+    /// Complete is false when the file cap or the overall deadline cut the pass short - a tag not
+    /// found by then was never checked against the unscanned files, so the caller mustn't cache it
+    /// as a definitive "no driver contains this tag".
     /// </summary>
-    public static Dictionary<string, string> ScanForDriverAttribution(IEnumerable<string> tags, IEnumerable<string> extraModulePaths)
+    public static (Dictionary<string, string> Found, bool Complete) ScanForDriverAttribution(IEnumerable<string> tags, IEnumerable<string> extraModulePaths)
     {
         var remaining = new HashSet<string>(tags, StringComparer.Ordinal);
         var found = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (remaining.Count == 0) return found;
+        if (remaining.Count == 0) return (found, true);
 
         var deadline = DateTime.UtcNow + AttributionOverallTimeout;
 
@@ -193,9 +197,11 @@ public static class PoolTagInspectionService
         catch { /* best-effort */ }
 
         int scanned = 0;
+        bool complete = true;
         foreach (var file in files)
         {
-            if (remaining.Count == 0 || scanned >= MaxDriverFilesToScan || DateTime.UtcNow > deadline) break;
+            if (remaining.Count == 0) break;
+            if (scanned >= MaxDriverFilesToScan || DateTime.UtcNow > deadline) { complete = false; break; }
             scanned++;
 
             byte[] bytes;
@@ -214,6 +220,9 @@ public static class PoolTagInspectionService
             var matchedThisFile = new List<string>();
             foreach (var tag in remaining)
             {
+                // Also honour the deadline inside one large file's per-tag pass; that file then
+                // counts as only partly scanned.
+                if (DateTime.UtcNow > deadline) { complete = false; break; }
                 var needle = System.Text.Encoding.ASCII.GetBytes(tag);
                 if (ContainsBytes(bytes, needle))
                     matchedThisFile.Add(tag);
@@ -223,9 +232,10 @@ public static class PoolTagInspectionService
                 found[tag] = driverName;
                 remaining.Remove(tag);
             }
+            if (!complete) break;
         }
 
-        return found;
+        return (found, complete || remaining.Count == 0);
     }
 
     private static bool ContainsBytes(byte[] haystack, byte[] needle)

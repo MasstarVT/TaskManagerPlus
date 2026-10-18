@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 namespace TaskManagerPlus.Services;
 
@@ -17,9 +18,14 @@ namespace TaskManagerPlus.Services;
 /// In real process hollowing, an attacker replaces the mapped pages after the loader has already
 /// recorded the original path, so these two can diverge - the classic tell. GetMappedFileNameW
 /// returns paths in NT device form (e.g. "\Device\HarddiskVolume3\Windows\System32\x.exe"), so
-/// TryConvertDeviceToDrivePath resolves that back to a drive-letter path via QueryDosDevice (the
-/// same technique documented in Microsoft's own "Retrieving a File Name From a File Handle" sample)
-/// before comparing.
+/// the comparison is done in that same form: the reported path is opened and its own NT name read
+/// back with GetFinalPathNameByHandleW, which resolves SUBST drives, junctions and network
+/// redirectors the same way the loader's own open did. A drive-letter conversion of the device
+/// path (TryConvertDeviceToDrivePath, via QueryDosDevice - the technique in Microsoft's
+/// "Retrieving a File Name From a File Handle" sample) is still shown, but comparing drive-letter
+/// strings falsely flagged every exe run from a SUBST drive, a mapped drive or a UNC path. When
+/// the reported path can't be opened from this process (a mapped drive or SUBST that only exists
+/// in the user's non-elevated logon session, for instance) the comparison is reported as not done.
 ///
 /// Also flags "image file deleted while running" - File.Exists false on the reported path is a
 /// second, independent hollowing/replacement tell (the disk file is gone but the process is still
@@ -37,11 +43,13 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class HollowedImageIndicatorService
 {
+    /// <summary>FileExists/PathMismatch are null when that check couldn't be made - an unreadable
+    /// or unresolvable path is reported as such, never as a "Yes"/"No" verdict.</summary>
     public sealed record HollowingCheckResult(
         string? ReportedPath,
         string? MappedPath,
-        bool FileExists,
-        bool PathMismatch,
+        bool? FileExists,
+        bool? PathMismatch,
         string? Note);
 
     public static HollowingCheckResult CheckMainModule(int pid)
@@ -55,20 +63,32 @@ public static class HollowedImageIndicatorService
             try { mainModule = proc.MainModule; }
             catch (Exception ex)
             {
-                return new HollowingCheckResult(null, null, false, false, $"Couldn't read the main module: {ex.Message}");
+                return new HollowingCheckResult(null, null, null, null, $"Couldn't read the main module: {ex.Message}");
             }
 
             if (mainModule is null)
-                return new HollowingCheckResult(null, null, false, false, "Couldn't read the main module (access denied, or it has already exited).");
+                return new HollowingCheckResult(null, null, null, null, "Couldn't read the main module (access denied, or it has already exited).");
 
             reportedPath = mainModule.FileName;
             IntPtr baseAddress = mainModule.BaseAddress;
 
-            bool fileExists = false;
-            try { fileExists = !string.IsNullOrEmpty(reportedPath) && File.Exists(reportedPath); }
-            catch { /* leave false - a stat failure here is itself worth surfacing as "can't confirm it exists" but not worth throwing over */ }
+            string? reportedNtPath = TryGetNtPath(reportedPath);
+
+            // "No" only when this process could have seen the file: a path on a network share, or
+            // on a drive letter that doesn't exist in this (elevated) logon session, reads as
+            // missing here even though the process is running it fine.
+            bool? fileExists = null;
+            try
+            {
+                if (reportedNtPath is not null || (!string.IsNullOrEmpty(reportedPath) && File.Exists(reportedPath)))
+                    fileExists = true;
+                else if (IsOnLocalDriveVisibleHere(reportedPath))
+                    fileExists = false;
+            }
+            catch { /* leave null - can't confirm either way */ }
 
             string? mappedPath = null;
+            string? mappedDevicePath = null;
             IntPtr hProcess = IntPtr.Zero;
             try
             {
@@ -79,8 +99,8 @@ public static class HollowedImageIndicatorService
                     uint len = GetMappedFileNameW(hProcess, baseAddress, sb, (uint)sb.Capacity);
                     if (len > 0)
                     {
-                        string devicePath = sb.ToString();
-                        mappedPath = TryConvertDeviceToDrivePath(devicePath) ?? devicePath;
+                        mappedDevicePath = sb.ToString();
+                        mappedPath = TryConvertDeviceToDrivePath(mappedDevicePath) ?? mappedDevicePath;
                     }
                 }
             }
@@ -90,26 +110,77 @@ public static class HollowedImageIndicatorService
                 if (hProcess != IntPtr.Zero) CloseHandle(hProcess);
             }
 
-            bool pathMismatch = mappedPath is not null && reportedPath is not null &&
-                !string.Equals(NormalizeForCompare(mappedPath), NormalizeForCompare(reportedPath), StringComparison.OrdinalIgnoreCase);
+            bool? pathMismatch = mappedDevicePath is not null && reportedNtPath is not null
+                ? !string.Equals(NormalizeForCompare(mappedDevicePath), NormalizeForCompare(reportedNtPath), StringComparison.OrdinalIgnoreCase)
+                : null;
 
-            string? note = !fileExists
+            string? note = fileExists == false
                 ? "The reported image file no longer exists on disk while the process is still running - a classic process-hollowing/replacement tell."
-                : pathMismatch
+                : pathMismatch == true
                     ? "The actually-mapped file path differs from the process's own reported path - a classic process-hollowing/replacement tell."
                     : mappedPath is null
-                        ? "Couldn't read the actually-mapped file path (access denied) - only the on-disk existence check above could be completed."
-                        : null;
+                        ? "Couldn't read the actually-mapped file path (access denied) - the mapped-path comparison couldn't be made."
+                        : pathMismatch is null
+                            ? "The reported path couldn't be opened from this app (a network share, or a mapped/SUBST drive that only exists in your normal non-elevated session) - the mapped-path comparison was skipped rather than guessed."
+                            : null;
 
             return new HollowingCheckResult(reportedPath, mappedPath, fileExists, pathMismatch, note);
         }
         catch (Exception ex)
         {
-            return new HollowingCheckResult(reportedPath, null, false, false, $"Couldn't complete the check: {ex.Message}");
+            return new HollowingCheckResult(reportedPath, null, null, null, $"Couldn't complete the check: {ex.Message}");
         }
     }
 
     private static string NormalizeForCompare(string path) => path.TrimEnd('\\', '/');
+
+    /// <summary>The reported path's NT device-form name as this process resolves it (SUBST,
+    /// junction and redirector included) - directly comparable with GetMappedFileNameW's output.
+    /// FILE_NAME_OPENED rather than normalized, so a short (8.3) name the loader opened by stays
+    /// in the same form GetMappedFileNameW reports it in. Null when the file can't be opened.</summary>
+    private static string? TryGetNtPath(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        try
+        {
+            using var handle = CreateFileW(path, FileReadAttributes, FileShareAll, IntPtr.Zero, OpenExisting, FileFlagBackupSemantics, IntPtr.Zero);
+            if (handle.IsInvalid) return null;
+
+            var sb = new StringBuilder(1024);
+            uint len = GetFinalPathNameByHandleW(handle, sb, (uint)sb.Capacity, FileNameOpened | VolumeNameNt);
+            if (len == 0) return null;
+            if (len >= sb.Capacity)
+            {
+                sb = new StringBuilder((int)len + 1);
+                len = GetFinalPathNameByHandleW(handle, sb, (uint)sb.Capacity, FileNameOpened | VolumeNameNt);
+                if (len == 0 || len >= sb.Capacity) return null;
+            }
+            return sb.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>True for a drive-letter path whose drive exists in this process's own logon
+    /// session and isn't a network drive - the only case where "File.Exists is false" really
+    /// means the file is gone rather than out of this process's sight.</summary>
+    private static bool IsOnLocalDriveVisibleHere(string? path)
+    {
+        if (string.IsNullOrEmpty(path) || path.Length < 3 || path[1] != ':' || !char.IsLetter(path[0])) return false;
+        try
+        {
+            string drive = path[..2];
+            var target = new StringBuilder(512);
+            if (QueryDosDevice(drive, target, target.Capacity) == 0) return false;
+            return new DriveInfo(drive).DriveType != DriveType.Network;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     /// <summary>Resolves an NT device-form path (as returned by GetMappedFileNameW) back to a
     /// drive-letter path by matching against each mounted drive's QueryDosDevice target - the
@@ -146,6 +217,20 @@ public static class HollowedImageIndicatorService
 
     private const uint ProcessQueryInformation = 0x0400;
     private const uint ProcessVmRead = 0x0010;
+
+    private const uint FileReadAttributes = 0x0080;
+    private const uint FileShareAll = 0x1 | 0x2 | 0x4; // FILE_SHARE_READ | WRITE | DELETE
+    private const uint OpenExisting = 3;
+    private const uint FileFlagBackupSemantics = 0x02000000;
+    private const uint FileNameOpened = 0x8;
+    private const uint VolumeNameNt = 0x2;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string lpFileName, uint dwDesiredAccess, uint dwShareMode,
+        IntPtr lpSecurityAttributes, uint dwCreationDisposition, uint dwFlagsAndAttributes, IntPtr hTemplateFile);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(SafeFileHandle hFile, StringBuilder lpszFilePath, uint cchFilePath, uint dwFlags);
 
     [DllImport("psapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetMappedFileNameW(IntPtr hProcess, IntPtr lpv, StringBuilder lpFilename, uint nSize);

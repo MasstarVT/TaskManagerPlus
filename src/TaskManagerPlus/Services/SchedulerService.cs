@@ -24,7 +24,9 @@ namespace TaskManagerPlus.Services;
 /// #265: context-switch storm attribution - aggregates #263's per-thread rates up to the owning
 /// process (AttributeByProcess).
 ///
-/// WaitTime is in units of the kernel's clock-interval tick, not milliseconds - Windows doesn't
+/// SYSTEM_THREAD_INFORMATION.WaitTime is the tick count at which the thread entered its wait (a
+/// timestamp, not a duration), so Sweep converts it to ticks-waited-so-far against the current
+/// tick count. Ticks are the kernel's clock-interval tick, not milliseconds - Windows doesn't
 /// document an exact, guaranteed-stable tick length, so the ~15.625ms conversion used here
 /// (ClockTickMs) is a widely-used approximation, not an exact figure; treat WaitSecondsApprox as
 /// "roughly how long", not a certified duration.
@@ -118,8 +120,12 @@ public sealed class SchedulerService
     [DllImport("ntdll.dll")]
     private static extern int NtQuerySystemInformation(int systemInformationClass, IntPtr systemInformation, int systemInformationLength, out int returnLength);
 
+    [DllImport("kernel32.dll")]
+    private static extern ulong GetTickCount64();
+
     /// <summary>One thread's scheduling state from a single sweep - the shared raw shape every
-    /// #261-265/267 consumer builds its own view from.</summary>
+    /// #261-265/267 consumer builds its own view from. WaitTimeTicks is how long the thread has
+    /// been waiting so far, in clock ticks (see the class remarks).</summary>
     public sealed record ThreadSnapshot(
         int Pid, string ProcessName, int Tid,
         int ThreadState, int WaitReason, uint WaitTimeTicks,
@@ -147,6 +153,9 @@ public sealed class SchedulerService
                 }
                 if (status != 0) return new List<ThreadSnapshot>();
 
+                // Low 32 bits of the current tick count, the same width as KTHREAD's WaitTime.
+                uint nowTicks = (uint)((ulong)(GetTickCount64() / ClockTickMs) & 0xFFFFFFFF);
+
                 var list = new List<ThreadSnapshot>(4096);
                 IntPtr entry = buffer;
                 while (true)
@@ -163,7 +172,7 @@ public sealed class SchedulerService
                         var th = Marshal.PtrToStructure<SYSTEM_THREAD_INFORMATION>(threadPtr);
                         list.Add(new ThreadSnapshot(
                             pid, name, th.ClientId.UniqueThread.ToInt32(),
-                            (int)th.ThreadState, (int)th.WaitReason, th.WaitTime,
+                            (int)th.ThreadState, (int)th.WaitReason, TicksWaited(nowTicks, th.WaitTime),
                             th.ContextSwitches, th.StartAddress.ToInt64(), th.Priority, th.BasePriority));
                         threadPtr = IntPtr.Add(threadPtr, threadSize);
                     }
@@ -183,6 +192,15 @@ public sealed class SchedulerService
             }
         }
         return new List<ThreadSnapshot>();
+    }
+
+    /// <summary>Ticks elapsed since a wait began. Signed so a wait start a tick "ahead" of the
+    /// rounded current tick count reads 0 instead of wrapping to ~4 billion; the unchecked
+    /// subtraction also stays correct across the 32-bit tick counter's own wrap.</summary>
+    private static uint TicksWaited(uint nowTicks, uint waitStartTicks)
+    {
+        int delta = unchecked((int)(nowTicks - waitStartTicks));
+        return delta > 0 ? (uint)delta : 0;
     }
 
     // KTHREAD_STATE (undocumented but stable across Windows versions - the same "reversed but
@@ -266,7 +284,7 @@ public sealed class SchedulerService
             .OrderByDescending(r => r.ThreadCount)
             .ToList();
 
-    /// <summary>#262: every Waiting thread ranked by WaitTime, worst first - a thread stuck for
+    /// <summary>#262: every Waiting thread ranked by time spent waiting, worst first - a thread stuck for
     /// minutes becomes immediately visible. <paramref name="kernelModules"/> is passed in (rather
     /// than fetched here) so a caller sampling both this and #263/#265 in the same tick only pays
     /// for one DpcModuleMapService.GetModuleMap() call.</summary>

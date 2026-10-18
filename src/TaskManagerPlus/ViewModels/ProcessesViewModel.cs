@@ -353,7 +353,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         ViewModulesCommand = new RelayCommand(_ => _ = LoadSelectedProcessModulesAsync(), _ => SelectedProcess is not null);
         ViewEnvironmentCommand = new RelayCommand(_ => LoadSelectedProcessEnvironment(), _ => SelectedProcess is not null);
         ViewHandleTypesCommand = new RelayCommand(_ => _ = LoadSelectedProcessHandleTypesAsync(), _ => SelectedProcess is not null);
-        ViewHostedServicesCommand = new RelayCommand(_ => LoadSelectedProcessHostedServices(), _ => IsSvchostSelected());
+        ViewHostedServicesCommand = new RelayCommand(_ => _ = LoadSelectedProcessHostedServicesAsync(), _ => IsSvchostSelected());
         LookupFileLockCommand = new RelayCommand(_ => _ = LookupFileLockAsync(), _ => !string.IsNullOrWhiteSpace(FileLockPath));
         ViewUnbackedMemoryCommand = new RelayCommand(_ => _ = LoadSelectedProcessUnbackedMemoryAsync(), _ => SelectedProcess is not null);
         ViewHollowingCheckCommand = new RelayCommand(_ => _ = LoadSelectedProcessHollowingCheckAsync(), _ => SelectedProcess is not null);
@@ -361,7 +361,9 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         ViewMitigationsCommand = new RelayCommand(_ => _ = LoadSelectedProcessMitigationsAsync(), _ => SelectedProcess is not null);
         ViewPrivilegesCommand = new RelayCommand(_ => _ = LoadSelectedProcessPrivilegesAsync(), _ => SelectedProcess is not null);
         DecodeEncodedCommandCommand = new RelayCommand(_ => DecodeEncodedCommand(), _ => HasEncodedCommand());
-        ScanWithDefenderCommand = new AsyncRelayCommand(ScanSelectedWithDefenderAsync, () => !string.IsNullOrWhiteSpace(SelectedProcess?.FilePath));
+        // MpCmdRun -Scan without -DisableRemediation applies Defender's default action to a
+        // detection (quarantining the file), so this counts as a mutating action too.
+        ScanWithDefenderCommand = new AsyncRelayCommand(ScanSelectedWithDefenderAsync, () => !ReadOnlyModeService.IsReadOnly && !string.IsNullOrWhiteSpace(SelectedProcess?.FilePath));
         ViewAddressSpaceCommand = new RelayCommand(_ => _ = LoadSelectedProcessAddressSpaceAsync(), _ => SelectedProcess is not null);
         // #980: read-only mode disables every state-mutating process action below.
         TrimWorkingSetCommand = new RelayCommand(_ => TrimWorkingSet(), _ => !ReadOnlyModeService.IsReadOnly && SelectedProcess is not null);
@@ -990,11 +992,18 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         SelectedProcessHollowingCheck.Clear();
         SelectedProcessHollowingCheck.Add($"Reported path: {result.ReportedPath ?? "(unknown)"}");
         SelectedProcessHollowingCheck.Add($"Actually-mapped path: {result.MappedPath ?? "(couldn't be read)"}");
-        SelectedProcessHollowingCheck.Add($"Image file still exists on disk: {(result.FileExists ? "Yes" : "No")}");
-        SelectedProcessHollowingCheck.Add($"Path mismatch: {(result.PathMismatch ? "Yes" : "No")}");
+        SelectedProcessHollowingCheck.Add($"Image file still exists on disk: {YesNoUnknown(result.FileExists, "Couldn't check")}");
+        SelectedProcessHollowingCheck.Add($"Path mismatch: {YesNoUnknown(result.PathMismatch, "Couldn't compare")}");
         if (result.Note is not null)
             SelectedProcessHollowingCheck.Add(result.Note);
     }
+
+    private static string YesNoUnknown(bool? value, string unknownText) => value switch
+    {
+        true => "Yes",
+        false => "No",
+        null => unknownText,
+    };
 
     /// <summary>Round 15, #848: on-demand foreign-thread-start-address scan for SelectedProcess - see
     /// ForeignThreadStartService for the safety discipline behind this call.</summary>
@@ -1210,14 +1219,22 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     private bool IsSvchostSelected() =>
         SelectedProcess is not null && SelectedProcess.Name.Equals("svchost", StringComparison.OrdinalIgnoreCase);
 
-    private void LoadSelectedProcessHostedServices()
+    private async Task LoadSelectedProcessHostedServicesAsync()
     {
         SelectedProcessHostedServices.Clear();
         var target = SelectedProcess;
         if (target is null) return;
+        int pid = target.Pid;
 
-        var byPid = ServiceControlService.ReadServicesByPid();
-        if (!byPid.TryGetValue(target.Pid, out var services) || services.Count == 0)
+        SelectedProcessHostedServices.Add("Checking…");
+
+        // A Win32_Service WMI query - off the UI thread, like every other on-demand lookup here.
+        var byPid = await Task.Run(() => ServiceControlService.ReadServicesByPid());
+
+        if (SelectedProcess?.Pid != pid) return;
+
+        SelectedProcessHostedServices.Clear();
+        if (!byPid.TryGetValue(pid, out var services) || services.Count == 0)
         {
             SelectedProcessHostedServices.Add("(no hosted services found)");
             return;

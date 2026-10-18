@@ -78,6 +78,10 @@ public sealed class ProcessHistoryService
     // each other and against the background load's merge, without holding the data lock during I/O.
     private readonly object _flushGate = new();
     private long _journalBytes;
+    // Journal size that triggers the next compaction - at least CompactThresholdBytes, and at
+    // least twice the last snapshot line, since a snapshot carrying hours of history can itself
+    // exceed the fixed threshold (which would otherwise recompact on every single flush).
+    private long _compactAtBytes = CompactThresholdBytes;
 
     // Newest sample timestamp already persisted per image name - what BuildDeltaLocked diffs
     // against so a flush appends each sample at most once. Pruned alongside _byName.
@@ -324,10 +328,9 @@ public sealed class ProcessHistoryService
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(JournalPath)!);
 
-                if (_journalBytes >= CompactThresholdBytes)
+                if (_journalBytes >= _compactAtBytes)
                 {
-                    List<ProcessHistoryRecord> snapshot;
-                    lock (_gate) snapshot = BuildDecimatedSnapshotLocked();
+                    var snapshot = BuildCompactionSnapshot(delta);
                     var line = JsonSerializer.Serialize(new JournalLine { Kind = "snapshot", Records = snapshot }) + Environment.NewLine;
 
                     // Temp-then-replace so a crash mid-compaction leaves the old journal intact
@@ -336,6 +339,7 @@ public sealed class ProcessHistoryService
                     File.WriteAllText(temp, line);
                     File.Move(temp, JournalPath, overwrite: true);
                     _journalBytes = line.Length;
+                    _compactAtBytes = Math.Max(CompactThresholdBytes, _journalBytes * 2);
                 }
                 else if (delta.Count > 0)
                 {
@@ -375,6 +379,50 @@ public sealed class ProcessHistoryService
         return delta;
     }
 
+    /// <summary>What a compaction writes: the journal's own history (already FlushInterval-
+    /// decimated, up to MaxSamplesPerName per name - hours deep) plus this flush's delta. The
+    /// in-memory store only spans the last MaxSamplesPerName ticks (~12 minutes at the default 1s
+    /// poll), so snapshotting it alone threw away every older on-disk sample at each compaction.
+    /// Falls back to the in-memory store when there's no readable journal yet - the legacy-store
+    /// upgrade, whose history exists only in memory at that point. Called under _flushGate.</summary>
+    private List<ProcessHistoryRecord> BuildCompactionSnapshot(List<ProcessHistoryRecord> delta)
+    {
+        Dictionary<string, ProcessHistoryRecord>? merged = null;
+        try
+        {
+            if (File.Exists(JournalPath)) merged = LoadFromJournal(out _, out _);
+        }
+        catch
+        {
+            merged = null;
+        }
+
+        if (merged is null)
+        {
+            lock (_gate) return BuildDecimatedSnapshotLocked();
+        }
+
+        foreach (var record in delta)
+        {
+            if (merged.TryGetValue(record.ImageName, out var existing))
+            {
+                existing.Samples.AddRange(record.Samples);
+                while (existing.Samples.Count > MaxSamplesPerName) existing.Samples.RemoveAt(0);
+                if (record.LastSeenUtc > existing.LastSeenUtc) existing.LastSeenUtc = record.LastSeenUtc;
+            }
+            else
+            {
+                merged[record.ImageName] = record;
+            }
+        }
+
+        // Same least-recently-seen-first bound PruneStaleNames applies in memory.
+        return merged.Values
+            .OrderByDescending(r => r.LastSeenUtc)
+            .Take(MaxTrackedNames)
+            .ToList();
+    }
+
     /// <summary>The full store, decimated per name to FlushInterval spacing (always keeping the
     /// newest sample) - the same resolution the delta lines persist at, so compaction never
     /// bloats the file back up with this session's 1s-resolution in-memory samples.</summary>
@@ -407,13 +455,14 @@ public sealed class ProcessHistoryService
     {
         Dictionary<string, ProcessHistoryRecord> loaded;
         long journalBytes = 0;
+        long snapshotBytes = 0;
         bool forceCompactOnFirstFlush = false;
 
         try
         {
             if (File.Exists(JournalPath))
             {
-                loaded = LoadFromJournal(out journalBytes);
+                loaded = LoadFromJournal(out journalBytes, out snapshotBytes);
             }
             else if (File.Exists(LegacyStorePath))
             {
@@ -463,14 +512,18 @@ public sealed class ProcessHistoryService
                 if (forceCompactOnFirstFlush) _dirty = true;
             }
             _journalBytes = forceCompactOnFirstFlush ? CompactThresholdBytes : Math.Max(_journalBytes, journalBytes);
+            _compactAtBytes = forceCompactOnFirstFlush ? CompactThresholdBytes : Math.Max(CompactThresholdBytes, snapshotBytes * 2);
         }
     }
 
-    private static Dictionary<string, ProcessHistoryRecord> LoadFromJournal(out long journalBytes)
+    /// <param name="snapshotBytes">Length of the last snapshot line (0 when there is none) - what
+    /// the next compaction threshold is scaled from.</param>
+    private static Dictionary<string, ProcessHistoryRecord> LoadFromJournal(out long journalBytes, out long snapshotBytes)
     {
         var byName = new Dictionary<string, ProcessHistoryRecord>(StringComparer.OrdinalIgnoreCase);
         var lines = File.ReadAllLines(JournalPath);
         journalBytes = new FileInfo(JournalPath).Length;
+        snapshotBytes = 0;
 
         foreach (var raw in lines)
         {
@@ -482,7 +535,11 @@ public sealed class ProcessHistoryService
             if (line is null) continue;
 
             // A snapshot line supersedes everything before it.
-            if (string.Equals(line.Kind, "snapshot", StringComparison.OrdinalIgnoreCase)) byName.Clear();
+            if (string.Equals(line.Kind, "snapshot", StringComparison.OrdinalIgnoreCase))
+            {
+                byName.Clear();
+                snapshotBytes = raw.Length;
+            }
 
             foreach (var record in line.Records)
             {

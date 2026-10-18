@@ -5,7 +5,8 @@ namespace TaskManagerPlus.Services;
 /// <summary>
 /// #410/#412: reads one named counter, per-pid, out of a "Process"-shaped performance counter
 /// category ("Process" itself for Page Faults/sec, "Process V2" for Working Set - Private) -
-/// every instance in these categories also exposes an "ID Process" counter that maps the
+/// every instance in these categories also exposes a pid counter ("ID Process" in "Process",
+/// "Process ID" in "Process V2") that maps the
 /// (churning, non-stable) instance name back to a real pid, which is what actually lets several
 /// instances that happen to share a name (two chrome.exe processes, one showing up as "chrome"
 /// and the other as "chrome#1") get summed onto the right row instead of guessed at from the
@@ -56,7 +57,9 @@ public sealed class ProcessPerfCounterService : IDisposable
         try
         {
             var category = new PerformanceCounterCategory(_categoryName).ReadCategory();
-            var idData = category["ID Process"];
+            // "Process V2" names its pid counter "Process ID"; without the fallback every lookup
+            // there found no pid counter and returned an empty result.
+            var idData = category["ID Process"] ?? category["Process ID"];
             var valueData = category[_valueCounterName];
             if (idData is null || valueData is null) return result;
 

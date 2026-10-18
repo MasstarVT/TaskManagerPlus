@@ -463,19 +463,19 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         PurgeStandbyListCommand = new AsyncRelayCommand(() => RunMemoryPurgeAsync(
             "Empty standby list",
             "This frees the reclaimable standby (file cache) list now, showing more “available” RAM immediately - but every file Windows had cached there will need to be re-read from disk the next time it's opened, which will be slower until the cache rebuilds.\n\nContinue?",
-            MemoryListPurgeService.PurgeStandbyList), () => !IsPurgingMemoryList);
+            MemoryListPurgeService.PurgeStandbyList), () => !IsPurgingMemoryList && !ReadOnlyModeService.IsReadOnly);
         PurgeLowPriorityStandbyListCommand = new AsyncRelayCommand(() => RunMemoryPurgeAsync(
             "Empty low-priority standby list",
             "This frees only the lowest-priority tier of the standby list (the portion Windows itself already reclaims first under pressure) - a smaller, lower-impact version of “Empty standby list.”\n\nContinue?",
-            MemoryListPurgeService.PurgeLowPriorityStandbyList), () => !IsPurgingMemoryList);
+            MemoryListPurgeService.PurgeLowPriorityStandbyList), () => !IsPurgingMemoryList && !ReadOnlyModeService.IsReadOnly);
         FlushModifiedListCommand = new AsyncRelayCommand(() => RunMemoryPurgeAsync(
             "Flush modified page list",
             "This forces Windows to write out every dirty page currently waiting in the modified list right now, instead of at its own pace - a burst of disk write activity, then a smaller modified list.\n\nContinue?",
-            MemoryListPurgeService.FlushModifiedList), () => !IsPurgingMemoryList);
+            MemoryListPurgeService.FlushModifiedList), () => !IsPurgingMemoryList && !ReadOnlyModeService.IsReadOnly);
         EmptyWorkingSetsCommand = new AsyncRelayCommand(() => RunMemoryPurgeAsync(
             "Empty working sets",
             "This trims every running process's working set down to the minimum right now - reported per-process RAM usage will drop immediately, but every process will take a burst of page faults refilling its working set as it keeps running, which can make things feel briefly sluggish.\n\nContinue?",
-            MemoryListPurgeService.EmptyWorkingSets), () => !IsPurgingMemoryList);
+            MemoryListPurgeService.EmptyWorkingSets), () => !IsPurgingMemoryList && !ReadOnlyModeService.IsReadOnly);
 
         // #452
         StartPatternTestCommand = new AsyncRelayCommand(RunPatternTestAsync, () => !IsPatternTestRunning);
@@ -629,10 +629,18 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var found = await Task.Run(() => PoolTagInspectionService.ScanForDriverAttribution(unresolvedTags, modulePaths));
+            var (found, complete) = await Task.Run(() => PoolTagInspectionService.ScanForDriverAttribution(unresolvedTags, modulePaths));
 
+            // "Unknown" is cached (and so never rescanned) only after a full pass; when the
+            // deadline or file cap cut the scan short, unmatched tags stay unresolved so the
+            // next click scans them again.
             foreach (var tag in unresolvedTags)
-                cache.TagToDriver[tag] = found.TryGetValue(tag, out var driver) ? driver : "Unknown";
+            {
+                if (found.TryGetValue(tag, out var driver))
+                    cache.TagToDriver[tag] = driver;
+                else if (complete)
+                    cache.TagToDriver[tag] = "Unknown";
+            }
             cache.LastScanUtc = DateTime.UtcNow;
             PoolTagDriverCacheService.Save(cache);
 
@@ -647,7 +655,8 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
             PoolTagRows.Clear();
             foreach (var row in snapshot) PoolTagRows.Add(row);
 
-            DriverAttributionStatusText = $"Found a likely driver for {found.Count:N0} of {unresolvedTags.Count:N0} previously-unattributed tag(s).";
+            DriverAttributionStatusText = $"Found a likely driver for {found.Count:N0} of {unresolvedTags.Count:N0} previously-unattributed tag(s)."
+                + (complete ? string.Empty : " The scan hit its time/file limit before checking every driver file - unmatched tags weren't cached, so running it again retries them.");
         }
         finally
         {
