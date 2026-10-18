@@ -19,8 +19,9 @@ namespace TaskManagerPlus.Services;
 /// recorded the original path, so these two can diverge - the classic tell. GetMappedFileNameW
 /// returns paths in NT device form (e.g. "\Device\HarddiskVolume3\Windows\System32\x.exe"), so
 /// the comparison is done in that same form: the reported path is opened and its own NT name read
-/// back with GetFinalPathNameByHandleW, which resolves SUBST drives, junctions and network
-/// redirectors the same way the loader's own open did. A drive-letter conversion of the device
+/// back with GetFinalPathNameByHandleW, which resolves SUBST drives and junctions the same way the
+/// loader's own open did (network images aren't compared - redirector device names can differ per
+/// logon session). A drive-letter conversion of the device
 /// path (TryConvertDeviceToDrivePath, via QueryDosDevice - the technique in Microsoft's
 /// "Retrieving a File Name From a File Handle" sample) is still shown, but comparing drive-letter
 /// strings falsely flagged every exe run from a SUBST drive, a mapped drive or a UNC path. When
@@ -110,8 +111,13 @@ public static class HollowedImageIndicatorService
                 if (hProcess != IntPtr.Zero) CloseHandle(hProcess);
             }
 
-            bool? pathMismatch = mappedDevicePath is not null && reportedNtPath is not null
-                ? !string.Equals(NormalizeForCompare(mappedDevicePath), NormalizeForCompare(reportedNtPath), StringComparison.OrdinalIgnoreCase)
+            // A redirector path can carry a per-logon-session segment (e.g. ";Z:<logon id>"), so
+            // this elevated session's name for the same network file may differ from the
+            // loader's - treated as not comparable rather than as a mismatch.
+            bool comparable = mappedDevicePath is not null && reportedNtPath is not null
+                && !IsNetworkDevicePath(mappedDevicePath) && !IsNetworkDevicePath(reportedNtPath);
+            bool? pathMismatch = comparable
+                ? !string.Equals(NormalizeForCompare(mappedDevicePath!), NormalizeForCompare(reportedNtPath!), StringComparison.OrdinalIgnoreCase)
                 : null;
 
             string? note = fileExists == false
@@ -121,7 +127,7 @@ public static class HollowedImageIndicatorService
                     : mappedPath is null
                         ? "Couldn't read the actually-mapped file path (access denied) - the mapped-path comparison couldn't be made."
                         : pathMismatch is null
-                            ? "The reported path couldn't be opened from this app (a network share, or a mapped/SUBST drive that only exists in your normal non-elevated session) - the mapped-path comparison was skipped rather than guessed."
+                            ? "The mapped-path comparison was skipped rather than guessed - the image is on a network share (whose device names differ per logon session), or the reported path couldn't be opened from this app (a mapped/SUBST drive that only exists in your normal non-elevated session, or access denied)."
                             : null;
 
             return new HollowingCheckResult(reportedPath, mappedPath, fileExists, pathMismatch, note);
@@ -133,6 +139,10 @@ public static class HollowedImageIndicatorService
     }
 
     private static string NormalizeForCompare(string path) => path.TrimEnd('\\', '/');
+
+    private static bool IsNetworkDevicePath(string path) =>
+        path.StartsWith(@"\Device\Mup", StringComparison.OrdinalIgnoreCase)
+        || path.Contains("Redirector", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The reported path's NT device-form name as this process resolves it (SUBST,
     /// junction and redirector included) - directly comparable with GetMappedFileNameW's output.
