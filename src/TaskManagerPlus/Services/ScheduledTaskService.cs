@@ -790,7 +790,8 @@ public static class ScheduledTaskService
         var boundary = ExecutableBoundaryRegex.Match(trimmed);
         if (boundary.Success) return boundary.Value;
 
-        // Local paths only - a File.Exists per token against a dead UNC share would block per call.
+        // Bounded probes (see FileExistsWithTimeout): a drive letter mapped to a dead share blocks
+        // like a UNC path does. Skip UNC outright and stop at the first probe that times out.
         if (!trimmed.StartsWith(@"\\", StringComparison.Ordinal))
         {
             try
@@ -798,9 +799,11 @@ public static class ScheduledTaskService
                 for (int space = trimmed.IndexOf(' '); space > 0; space = trimmed.IndexOf(' ', space + 1))
                 {
                     string prefix = trimmed[..space];
-                    if (File.Exists(Environment.ExpandEnvironmentVariables(prefix))) return prefix;
+                    bool? exists = FileExistsWithTimeout(Environment.ExpandEnvironmentVariables(prefix));
+                    if (exists is null) return StartupManagerService.ExtractPath(trimmed);
+                    if (exists == true) return prefix;
                 }
-                if (File.Exists(Environment.ExpandEnvironmentVariables(trimmed))) return trimmed;
+                if (FileExistsWithTimeout(Environment.ExpandEnvironmentVariables(trimmed)) == true) return trimmed;
             }
             catch { /* malformed path - fall back below */ }
         }

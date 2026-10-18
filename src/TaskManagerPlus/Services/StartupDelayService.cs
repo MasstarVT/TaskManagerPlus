@@ -68,6 +68,7 @@ public static class StartupDelayService
     {
         var result = new Dictionary<StartupItem, StartupMeasurement>();
         var bootTime = SessionBootTime;
+        var coldBootTime = DateTime.Now - TimeSpan.FromMilliseconds(Environment.TickCount64);
 
         Process[] processes;
         try { processes = Process.GetProcesses(); }
@@ -82,7 +83,7 @@ public static class StartupDelayService
 
             foreach (var item in itemList)
             {
-                var (text, delay, process) = MeasureOne(item, processes, bootTime);
+                var (text, delay, process) = MeasureOne(item, processes, bootTime, coldBootTime);
                 delayTexts[item] = text;
                 if (delay is { } d) delays[item] = d;
                 if (process is not null) matched[item] = process;
@@ -172,7 +173,7 @@ public static class StartupDelayService
         return (label, detail);
     }
 
-    private static (string Text, TimeSpan? Delay, Process? Process) MeasureOne(StartupItem item, Process[] processes, DateTime bootTime)
+    private static (string Text, TimeSpan? Delay, Process? Process) MeasureOne(StartupItem item, Process[] processes, DateTime bootTime, DateTime coldBootTime)
     {
         string target = ExtractExeName(item.Command);
         if (target.Length == 0) return ("Not currently running", null, null);
@@ -185,6 +186,9 @@ public static class StartupDelayService
             {
                 if (!p.ProcessName.Equals(target, StringComparison.OrdinalIgnoreCase)) continue;
                 var delay = p.StartTime - bootTime;
+                // A process a hybrid boot didn't relaunch (a boot-triggered task, anything in
+                // session 0) still carries its cold-boot start time - measure it from that boot.
+                if (delay < TimeSpan.Zero) delay = p.StartTime - coldBootTime;
                 if (delay < TimeSpan.Zero || delay > MaxPlausibleDelay) continue;
                 if (best is null || delay < best.Value)
                 {
