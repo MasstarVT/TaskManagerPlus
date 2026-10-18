@@ -328,18 +328,31 @@ public static class BackgroundHealthStoreService
     // "must stay lightweight" point. A ~30s TTL means an aggregate rule's condition is still
     // genuinely computed on demand (per this chunk's own instruction) - it just isn't recomputed
     // more often than a human could notice anyway for a window that's typically hours-to-months
-    // long.
+    // long. The recompute itself runs off the caller's thread (see ComputeAggregateCached).
     private static readonly ConcurrentDictionary<string, (DateTime ComputedUtc, double? Value)> AggregateCache = new();
+    private static readonly ConcurrentDictionary<string, byte> AggregateInFlight = new();
     private static readonly TimeSpan AggregateCacheTtl = TimeSpan.FromSeconds(30);
 
+    /// <summary>Returns the last computed value and, once it is older than the TTL, recomputes on a
+    /// background task - the rules engine calls this from SummaryViewModel's 2s UI-thread tick,
+    /// and a 30-day window is tens of thousands of rows to re-parse. Null (reads as "not exists")
+    /// until the first computation for a key lands.</summary>
     public static double? ComputeAggregateCached(string metric, string aggregate, int overSeconds, double? countAboveThreshold)
     {
         string key = $"{metric}|{aggregate}|{overSeconds}|{countAboveThreshold}";
-        if (AggregateCache.TryGetValue(key, out var cached) && DateTime.UtcNow - cached.ComputedUtc < AggregateCacheTtl)
+        bool haveCached = AggregateCache.TryGetValue(key, out var cached);
+        if (haveCached && DateTime.UtcNow - cached.ComputedUtc < AggregateCacheTtl)
             return cached.Value;
 
-        double? value = ComputeAggregate(metric, aggregate, overSeconds, countAboveThreshold);
-        AggregateCache[key] = (DateTime.UtcNow, value);
-        return value;
+        if (AggregateInFlight.TryAdd(key, 0))
+        {
+            _ = Task.Run(() =>
+            {
+                try { AggregateCache[key] = (DateTime.UtcNow, ComputeAggregate(metric, aggregate, overSeconds, countAboveThreshold)); }
+                catch { /* best-effort - keep serving the previous value */ }
+                finally { AggregateInFlight.TryRemove(key, out _); }
+            });
+        }
+        return haveCached ? cached.Value : null;
     }
 }

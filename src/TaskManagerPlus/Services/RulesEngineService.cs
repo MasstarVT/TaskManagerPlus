@@ -188,40 +188,55 @@ public sealed class RulesEngineService : IDisposable
         bool isBuiltIn = string.Equals(fileName, BuiltInPackFileName, StringComparison.OrdinalIgnoreCase);
         int loadedCount = 0;
 
-        foreach (var rule in pack.Rules)
+        // An explicit JSON null ("Rules": null, a null rule, "Condition": null) overwrites the
+        // models' initializers, and this runs from the RulesEngineService constructor - so a bad
+        // file must disable itself here rather than throw out of LoadPacks.
+        try
         {
-            if (string.IsNullOrWhiteSpace(rule.Id))
+            foreach (var rule in pack.Rules ?? new List<Rule>())
             {
-                vr.Warnings.Add("A rule with no Id was skipped.");
-                continue;
+                if (rule is null || string.IsNullOrWhiteSpace(rule.Id))
+                {
+                    vr.Warnings.Add("A rule with no Id was skipped.");
+                    continue;
+                }
+
+                string? conditionError = ValidateCondition(rule.Condition);
+                if (conditionError is not null)
+                {
+                    vr.Warnings.Add($"Rule '{rule.Id}': {conditionError} - rule disabled.");
+                    continue;
+                }
+
+                rule.Title ??= string.Empty;
+                rule.Body ??= string.Empty;
+                rule.Category ??= string.Empty;
+
+                foreach (var unknown in FindUnknownMetrics(rule.Condition).Distinct())
+                    vr.Warnings.Add($"Rule '{rule.Id}': references unrecognized metric key '{unknown}' (will simply never match if it's really absent from the live metric bag).");
+
+                if (!isOverrideFile && byId.ContainsKey(rule.Id))
+                {
+                    vr.Warnings.Add($"Rule '{rule.Id}': duplicate id (already loaded from another pack) - skipped.");
+                    continue;
+                }
+
+                byId[rule.Id] = new LoadedRule
+                {
+                    Rule = rule,
+                    SourceFile = fileName,
+                    IsBuiltIn = isBuiltIn,
+                    IsUserOverride = isOverrideFile,
+                    Enabled = true,
+                    EffectiveSeverity = rule.Severity,
+                };
+                loadedCount++;
             }
-
-            string? conditionError = ValidateCondition(rule.Condition);
-            if (conditionError is not null)
-            {
-                vr.Warnings.Add($"Rule '{rule.Id}': {conditionError} - rule disabled.");
-                continue;
-            }
-
-            foreach (var unknown in FindUnknownMetrics(rule.Condition).Distinct())
-                vr.Warnings.Add($"Rule '{rule.Id}': references unrecognized metric key '{unknown}' (will simply never match if it's really absent from the live metric bag).");
-
-            if (!isOverrideFile && byId.ContainsKey(rule.Id))
-            {
-                vr.Warnings.Add($"Rule '{rule.Id}': duplicate id (already loaded from another pack) - skipped.");
-                continue;
-            }
-
-            byId[rule.Id] = new LoadedRule
-            {
-                Rule = rule,
-                SourceFile = fileName,
-                IsBuiltIn = isBuiltIn,
-                IsUserOverride = isOverrideFile,
-                Enabled = true,
-                EffectiveSeverity = rule.Severity,
-            };
-            loadedCount++;
+        }
+        catch (Exception ex)
+        {
+            vr.IsValid = false;
+            vr.Warnings.Add($"Load error: {ex.Message}");
         }
 
         vr.RuleCount = loadedCount;
@@ -250,8 +265,9 @@ public sealed class RulesEngineService : IDisposable
     private static readonly HashSet<string> KnownOps =
         new(StringComparer.OrdinalIgnoreCase) { "eq", "ne", "lt", "lte", "gt", "gte", "exists" };
 
-    private static string? ValidateCondition(RuleCondition cond)
+    private static string? ValidateCondition(RuleCondition? cond)
     {
+        if (cond is null) return "missing condition";
         if (cond.All is { } all)
         {
             if (all.Count == 0) return "'all' has no child conditions";
@@ -973,7 +989,8 @@ public sealed class RulesEngineService : IDisposable
             {
                 var json = File.ReadAllText(OverridesSettingsPath);
                 var loaded = JsonSerializer.Deserialize<Dictionary<string, RuleOverride>>(json, JsonOpts);
-                if (loaded is not null) return new Dictionary<string, RuleOverride>(loaded, StringComparer.OrdinalIgnoreCase);
+                if (loaded is not null)
+                    return new Dictionary<string, RuleOverride>(loaded.Where(kv => kv.Value is not null), StringComparer.OrdinalIgnoreCase);
             }
         }
         catch { /* corrupt/unreadable - fall back to no overrides */ }
@@ -1020,7 +1037,7 @@ public sealed class RulesEngineService : IDisposable
             {
                 var json = File.ReadAllText(SuppressionsSettingsPath);
                 var loaded = JsonSerializer.Deserialize<List<RuleSuppression>>(json, JsonOpts);
-                if (loaded is not null) return loaded;
+                if (loaded is not null) return loaded.Where(x => x is not null && x.RuleId is not null).ToList();
             }
         }
         catch { /* corrupt/unreadable - fall back to no suppressions */ }
@@ -1048,7 +1065,7 @@ public sealed class RulesEngineService : IDisposable
             {
                 var json = File.ReadAllText(path);
                 if (!string.IsNullOrWhiteSpace(json))
-                    return JsonSerializer.Deserialize<RulePackFile>(json, JsonOpts) ?? new RulePackFile { PackName = "My rules" };
+                    return WithNonNullRules(JsonSerializer.Deserialize<RulePackFile>(json, JsonOpts) ?? new RulePackFile { PackName = "My rules" });
             }
         }
         catch { /* corrupt - treat as empty rather than losing the ability to save a new edit */ }
@@ -1098,7 +1115,14 @@ public sealed class RulesEngineService : IDisposable
     public RulePackFile GetUserPack() => ReadPackFileOrEmpty(UserOverridesPath);
 
     public static RulePackFile ParsePackFile(string json) =>
-        JsonSerializer.Deserialize<RulePackFile>(json, JsonOpts) ?? new RulePackFile();
+        WithNonNullRules(JsonSerializer.Deserialize<RulePackFile>(json, JsonOpts) ?? new RulePackFile());
+
+    // "Rules": null or null elements in a hand-edited/imported file.
+    private static RulePackFile WithNonNullRules(RulePackFile file)
+    {
+        file.Rules = (file.Rules ?? new List<Rule>()).Where(r => r is not null).ToList();
+        return file;
+    }
 
     public void Dispose()
     {

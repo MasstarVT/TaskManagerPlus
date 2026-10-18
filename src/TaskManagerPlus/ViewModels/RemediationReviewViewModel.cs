@@ -259,7 +259,7 @@ public sealed class RemediationReviewViewModel : ObservableObject
         _originatingRuleId = issue.RuleId;
 
         RunPreviewCommand = new AsyncRelayCommand(RunPreviewAsync, () => !IsBusy && SelectedAction is not null && _preconditionsPassed);
-        CreateRestorePointCommand = new AsyncRelayCommand(CreateRestorePointAsync, () => !IsBusy && NeedsRestorePointPrompt);
+        CreateRestorePointCommand = new AsyncRelayCommand(CreateRestorePointAsync, () => !IsBusy && NeedsRestorePointPrompt && !ReadOnlyModeService.IsReadOnly);
         SkipRestorePointCommand = new RelayCommand(_ =>
         {
             _restorePointResolved = true;
@@ -446,9 +446,14 @@ public sealed class RemediationReviewViewModel : ObservableObject
         {
             string taskName = $"TaskManagerPlus-Deferred-{action.Id}-{Guid.NewGuid():N}";
             DateTime whenLocal = CombineDeferredDateTime();
+            // An onstart trigger fires on every boot, not once - the queued command deletes its
+            // own task after running so "next boot" means exactly one run.
+            string command = atSpecificTime
+                ? action.Command
+                : $"cmd.exe /c {action.Command} & schtasks.exe /delete /tn {taskName} /f";
             var (success, error) = atSpecificTime
-                ? await ScheduledTaskService.CreateOnceAsync(taskName, action.Command, whenLocal)
-                : await ScheduledTaskService.CreateOnStartAsync(taskName, action.Command);
+                ? await ScheduledTaskService.CreateOnceAsync(taskName, command, whenLocal)
+                : await ScheduledTaskService.CreateOnStartAsync(taskName, command);
 
             if (!success)
             {
@@ -460,7 +465,7 @@ public sealed class RemediationReviewViewModel : ObservableObject
             {
                 TaskName = taskName,
                 ActionTitle = action.Title,
-                Command = action.Command,
+                Command = command,
                 ScheduleText = atSpecificTime ? $"At {whenLocal:g}" : "Next boot",
                 TriggeredBy = $"Health Check finding: {FindingTitle} -> Fix this ({action.Title})",
             });

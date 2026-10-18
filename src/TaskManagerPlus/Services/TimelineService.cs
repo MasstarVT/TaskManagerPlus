@@ -146,7 +146,9 @@ public static class TimelineService
                 if (hotfix.Length == 0) continue;
                 string description = (mo["Description"] as string ?? string.Empty).Trim();
                 string installedOnRaw = (mo["InstalledOn"] as string ?? string.Empty).Trim();
-                if (!DateTime.TryParse(installedOnRaw, out var installedOn)) continue; // no usable date on this entry
+                // WMI emits InstalledOn as an invariant M/d/yyyy string regardless of locale.
+                if (!DateTime.TryParseExact(installedOnRaw, "M/d/yyyy", System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out var installedOn)) continue; // no usable date on this entry
 
                 events.Add(new TimelineEvent
                 {
@@ -200,6 +202,8 @@ public static class TimelineService
     #endregion
 
     #region 939 - Driver installs lane (setupapi.dev.log + pnputil /enum-drivers)
+
+    private const string PnpUtilSource = "pnputil /enum-drivers";
 
     private static readonly Regex SetupApiSectionStart = new(
         @">>>\s*\[(?<kind>Device Install \(.*?\))\s*-\s*(?<name>.+?)\]", RegexOptions.Compiled);
@@ -286,8 +290,8 @@ public static class TimelineService
                         Lane = TimelineLane.DriverInstalls,
                         Timestamp = d.Date!.Value,
                         Title = d.Provider,
-                        Detail = $"Staged driver package: {d.PublishedName} (date-only - no time-of-day from pnputil)",
-                        Source = "pnputil /enum-drivers",
+                        Detail = $"Staged driver package: {d.PublishedName} (placed at its driver date from pnputil - not the install time)",
+                        Source = PnpUtilSource,
                         IsFailure = false,
                     });
                 }
@@ -453,7 +457,9 @@ public static class TimelineService
 
         foreach (var lane in new[] { TimelineLane.DriverInstalls, TimelineLane.WindowsUpdates })
         {
-            var changes = events.Where(e => e.Lane == lane).ToList();
+            // pnputil-sourced markers sit at the driver's own release date, not when it was
+            // installed - counting them would report coincidences with installs that never happened.
+            var changes = events.Where(e => e.Lane == lane && e.Source != PnpUtilSource).ToList();
             if (changes.Count == 0) continue;
 
             int matchCount = failures.Count(f => changes.Any(c => Math.Abs((c.Timestamp - f.Timestamp).TotalHours) <= window.TotalHours));

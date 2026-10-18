@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 
 namespace TaskManagerPlus.Services;
 
@@ -21,14 +22,37 @@ namespace TaskManagerPlus.Services;
 public static class ExternalLinkService
 {
     /// <summary>Opens a URL or local file path in the OS's default handler. Best-effort - a
-    /// missing browser association or a malformed URL just means nothing happens, not a crash.</summary>
+    /// missing browser association or a malformed URL just means nothing happens, not a crash.
+    /// Only an absolute http/https URL or an existing local .html/.htm file is accepted: DocsUrl
+    /// comes from user-writable rule packs, and ShellExecute from this elevated process would
+    /// otherwise run any executable path written there with admin rights.</summary>
     public static bool TryOpen(string urlOrPath)
     {
         if (string.IsNullOrWhiteSpace(urlOrPath)) return false;
+        if (!IsWebUrl(urlOrPath) && !IsLocalHtmlFile(urlOrPath)) return false;
         try
         {
             Process.Start(new ProcessStartInfo(urlOrPath) { UseShellExecute = true });
             return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsWebUrl(string s) =>
+        Uri.TryCreate(s, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private static bool IsLocalHtmlFile(string s)
+    {
+        try
+        {
+            if (!Path.IsPathFullyQualified(s)) return false;
+            string ext = Path.GetExtension(s);
+            return (ext.Equals(".html", StringComparison.OrdinalIgnoreCase) || ext.Equals(".htm", StringComparison.OrdinalIgnoreCase))
+                && File.Exists(s);
         }
         catch
         {

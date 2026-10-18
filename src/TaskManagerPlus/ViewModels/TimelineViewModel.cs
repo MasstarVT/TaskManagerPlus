@@ -231,7 +231,9 @@ public sealed class TimelineViewModel : ObservableObject
         StatusText = null;
         try
         {
-            var driverTask = TimelineService.GetDriverInstallEventsAsync();
+            // Task.Run: the setupapi.dev.log line loop, regexes and pnputil parse/dedupe would
+            // otherwise resume on the dispatcher after each buffered read.
+            var driverTask = Task.Run(TimelineService.GetDriverInstallEventsAsync);
 
             var syncEvents = await Task.Run(() =>
             {
@@ -423,7 +425,17 @@ public sealed class TimelineViewModel : ObservableObject
     private string BuildCsv()
     {
         var sb = new StringBuilder();
-        static string Escape(string v) => v.IndexOfAny(new[] { ',', '"', '\n', '\r' }) < 0 ? v : "\"" + v.Replace("\"", "\"\"") + "\"";
+        // Titles come from Uninstall DisplayName / event message text - neutralize a leading
+        // = + @ (or - not followed by a plain number) so Excel can't evaluate it as a formula.
+        // Same rule as LoggingService.Escape / SecurityReportService.Escape.
+        static string Escape(string v)
+        {
+            if (v.Length > 0 && (v[0] is '=' or '+' or '@' ||
+                (v[0] == '-' && !double.TryParse(v, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out _))))
+                v = "'" + v;
+            return v.IndexOfAny(new[] { ',', '"', '\n', '\r' }) < 0 ? v : "\"" + v.Replace("\"", "\"\"") + "\"";
+        }
 
         sb.Append("Time,Lane,Title,Detail,Source,IsFailure\n");
         foreach (var e in FilteredEvents.OrderBy(e => e.Timestamp))

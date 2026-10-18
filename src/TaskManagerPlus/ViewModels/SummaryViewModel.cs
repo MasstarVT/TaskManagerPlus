@@ -1423,9 +1423,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         SafeFixes.Refresh(issues);
 
         // #978: cross-check this app's own "actions that said they'd need a reboot" list against
-        // the existing RebootPending registry detection - once RebootPending itself goes false
-        // (the user actually restarted, or whatever set it resolved another way), this app's own
-        // list is stale either way, so it's cleared rather than kept around forever.
+        // the existing RebootPending registry detection - entries from before the current boot
+        // are pruned (a restart is what they were waiting for).
         RefreshRebootBanner();
     }
 
@@ -1436,14 +1435,15 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     /// connected fact instead of two separate banners.</summary>
     private void RefreshRebootBanner()
     {
-        if (!_systemSpecs.RebootPending)
+        // Only entries from before the current boot are stale. RebootPending is refreshed on demand
+        // (and is still false at startup), so it can't be what clears this app's own list.
+        var mine = PendingRebootActionsService.LoadCurrentBoot();
+        if (!_systemSpecs.RebootPending && mine.Count == 0)
         {
-            PendingRebootActionsService.ClearAll();
             RebootBannerText = string.Empty;
             return;
         }
 
-        var mine = PendingRebootActionsService.LoadAll();
         RebootBannerText = mine.Count switch
         {
             0 => "A restart is pending on this system.",

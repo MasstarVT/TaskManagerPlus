@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
+using System.Globalization;
 using System.IO;
 using System.Management;
 using System.Net.NetworkInformation;
@@ -431,6 +432,9 @@ public static class TroubleshootService
                 return DiagnosticStepResult.Skip("Couldn't enumerate installed drivers via pnputil.");
 
             var drivers = ParsePnpUtilDrivers(output);
+            // No parseable date at all (unrecognized/localized labels) is "unknown", not "none found".
+            if (!drivers.Any(d => d.Date is not null))
+                return DiagnosticStepResult.Skip("Couldn't read driver dates from pnputil's output on this system.");
             DateTime firstCrash = ctx.CrashTimes.Min();
 
             var candidates = drivers
@@ -439,13 +443,14 @@ public static class TroubleshootService
                 .ToList();
 
             if (candidates.Count == 0)
-                return DiagnosticStepResult.Pass("No drivers were installed in the 7 days before the first detected crash.");
+                return DiagnosticStepResult.Pass("No staged driver package is dated within the 7 days before the first detected crash.");
 
-            var evidence = candidates.Select(d => $"{d.Provider} ({d.PublishedName}) - installed {d.Date:d}").ToList();
+            var evidence = candidates.Select(d => $"{d.Provider} ({d.PublishedName}) - driver date {d.Date:d}").ToList();
             var top = candidates[0];
             return DiagnosticStepResult.Warn(
-                $"Lead, not a confirmed cause: crashes cluster around \"{top.Provider}\" installed on {top.Date:d}. " +
-                $"{candidates.Count} driver(s) total were installed within the week before the first crash.",
+                $"Lead, not a confirmed cause: crashes cluster around a \"{top.Provider}\" driver dated {top.Date:d}. " +
+                $"{candidates.Count} staged driver package(s) are dated within the week before the first crash " +
+                "(the driver's own release date, which pnputil reports - not when it was installed).",
                 evidence);
         }
         catch (Exception ex)
@@ -461,12 +466,18 @@ public static class TroubleshootService
         {
             string published = ExtractField(block, @"Published [Nn]ame\s*:\s*(.+)");
             if (published.Length == 0) continue;
-            string provider = ExtractField(block, @"Driver package provider\s*:\s*(.+)");
-            string dateVersion = ExtractField(block, @"Driver date and version\s*:\s*(.+)");
+            // Win10/11 pnputil prints "Provider Name:" / "Driver Version: MM/dd/yyyy x.y.z.w";
+            // the Win7-era labels are kept as a fallback. The date is the INF's DriverVer date
+            // (always month/day/year), not when the package was installed.
+            string provider = ExtractField(block, @"Provider Name\s*:\s*(.+)");
+            if (provider.Length == 0) provider = ExtractField(block, @"Driver package provider\s*:\s*(.+)");
+            string dateVersion = ExtractField(block, @"Driver Version\s*:\s*(.+)");
+            if (dateVersion.Length == 0) dateVersion = ExtractField(block, @"Driver date and version\s*:\s*(.+)");
 
             DateTime? date = null;
             var dateMatch = Regex.Match(dateVersion, @"(\d{1,2}/\d{1,2}/\d{4})");
-            if (dateMatch.Success && DateTime.TryParse(dateMatch.Groups[1].Value, out var parsed))
+            if (dateMatch.Success && DateTime.TryParseExact(dateMatch.Groups[1].Value, "M/d/yyyy",
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
                 date = parsed;
 
             drivers.Add(new PnpDriverInfo(published.Trim(), provider.Length > 0 ? provider.Trim() : "(unknown provider)", date));

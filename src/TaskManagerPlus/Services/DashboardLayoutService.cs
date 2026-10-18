@@ -22,7 +22,11 @@ public static class DashboardLayoutService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var tiles = JsonSerializer.Deserialize<List<DashboardTileConfig>>(json);
-                if (tiles is not null) return tiles;
+                // A hand-edited file can carry null elements, "Id": null or duplicate Ids -
+                // SummaryViewModel.BuildTiles keys a dictionary on Id inside its constructor.
+                if (tiles is not null)
+                    return tiles.Where(t => t is not null && !string.IsNullOrEmpty(t.Id))
+                        .GroupBy(t => t.Id).Select(g => g.First()).ToList();
             }
         }
         catch

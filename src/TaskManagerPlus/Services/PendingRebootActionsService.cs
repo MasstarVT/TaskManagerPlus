@@ -12,10 +12,11 @@ namespace TaskManagerPlus.Services;
 /// AppPaths.SettingsDirectory), same fail-silently-to-empty convention as every other settings/log
 /// file in this app.
 ///
-/// The list is cleared the moment SystemSpecsViewModel next observes RebootPending go false (see
-/// SummaryViewModel.RefreshHealthIssues) - once Windows' own pending-reboot flag clears (the user
-/// actually restarted, or whatever set it resolved another way), whatever this app recorded is
-/// stale either way, so there's nothing honest left to keep.
+/// Entries recorded before the current boot are dropped (<see cref="LoadCurrentBoot"/>) - a
+/// restart is exactly what they were waiting for. This deliberately doesn't key on
+/// SystemSpecsViewModel.RebootPending going false: that flag is only refreshed on demand (and is
+/// still its default false at startup), so clearing on it deleted every entry seconds after it
+/// was written.
 /// </summary>
 public static class PendingRebootActionsService
 {
@@ -57,6 +58,30 @@ public static class PendingRebootActionsService
             // Best-effort - the action itself already ran; a failed tracking-file write shouldn't
             // surface as if the action failed.
         }
+    }
+
+    /// <summary>Entries recorded during the current boot session; older ones are pruned from the
+    /// file (rewritten only when something was actually dropped).</summary>
+    public static List<PendingRebootAction> LoadCurrentBoot()
+    {
+        var all = LoadAll();
+        if (all.Count == 0) return all;
+
+        DateTime bootUtc = DateTime.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
+        var current = all.Where(a => a.RanAtUtc >= bootUtc).ToList();
+        if (current.Count != all.Count)
+        {
+            try
+            {
+                if (current.Count == 0) File.Delete(FilePath);
+                else File.WriteAllText(FilePath, JsonSerializer.Serialize(current, JsonOpts));
+            }
+            catch
+            {
+                // Best-effort - the filtered list is still what gets shown.
+            }
+        }
+        return current;
     }
 
     public static void ClearAll()

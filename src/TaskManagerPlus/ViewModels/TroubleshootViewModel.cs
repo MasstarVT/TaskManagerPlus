@@ -389,15 +389,26 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         RunManualStepCommand = new AsyncRelayCommand(
             async param =>
             {
-                if (param is not DiagnosticStep step || !step.IsManualPending) return;
-                await RunOneStepAsync(step);
-                if (SelectedRun is { VerdictBuilder: { } builder } run)
+                if (param is not DiagnosticStep step || !step.IsManualPending || IsRunning) return;
+                // Capture the run that owns this step before the (up to 150s) await, and hold
+                // IsRunning so Back/RunSymptom can't swap SelectedRun underneath it.
+                var run = SelectedRun;
+                IsRunning = true;
+                try
+                {
+                    await RunOneStepAsync(step);
+                }
+                finally
+                {
+                    IsRunning = false;
+                }
+                if (run is { VerdictBuilder: { } builder } && run.Steps.Contains(step))
                 {
                     run.VerdictText = SafeBuildVerdict(builder, run);
                     TroubleshootRunHistoryService.Save(run);
                 }
             },
-            param => param is DiagnosticStep step && step.IsManualPending);
+            param => param is DiagnosticStep step && step.IsManualPending && !IsRunning);
     }
 
     private void RegisterBranch(string id, string title, string description, Func<List<DiagnosticStep>> buildSteps, Func<TroubleshootRun, string> buildVerdict)
@@ -473,7 +484,10 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     /// <summary>Runs one step's Check, racing it against its own Timeout via Task.WhenAny + a
     /// per-step CancellationTokenSource - shared by the automatic run loop above and
     /// RunManualStepCommand below, so a manual/opt-in step gets exactly the same "can never hang
-    /// the UI forever" treatment as every automatic one.</summary>
+    /// the UI forever" treatment as every automatic one. step.Check is invoked on the UI thread, so
+    /// a check doing blocking WMI/event-log/sensor/counter work is registered as Task.Run(...) -
+    /// otherwise it runs to completion here before the timeout race even starts. Checks that only
+    /// snapshot live UI-bound collections stay inline.</summary>
     private static async Task RunOneStepAsync(DiagnosticStep step)
     {
         step.Status = DiagnosticStepStatus.Running;
@@ -589,7 +603,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             Id = "slow.paging", Label = "Memory paging rate (thrashing check)",
             Description = "Memory\\Pages Input/sec, sampled fresh over about a second.",
             Timeout = TimeSpan.FromSeconds(6),
-            Check = ct => TroubleshootService.CheckMemoryThrashingAsync(ct),
+            Check = ct => Task.Run(() => TroubleshootService.CheckMemoryThrashingAsync(ct)),
         },
         new DiagnosticStep
         {
@@ -630,33 +644,33 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Id = "crash.events", Label = "BugCheck (1001) & Kernel-Power (41) events",
                 Description = "The System/Application log scan Windows' own Reliability Monitor is based on, last 30 days.",
                 Timeout = TimeSpan.FromSeconds(20),
-                Check = _ => Task.FromResult(TroubleshootService.CheckCrashEvents(ctx)),
+                Check = _ => Task.Run(() => TroubleshootService.CheckCrashEvents(ctx)),
             },
             new DiagnosticStep
             {
                 Id = "crash.minidumps", Label = "Minidump files",
                 Description = "%SystemRoot%\\Minidump enumeration.",
                 Timeout = TimeSpan.FromSeconds(10),
-                Check = _ => Task.FromResult(TroubleshootService.CheckMinidumps(ctx)),
+                Check = _ => Task.Run(() => TroubleshootService.CheckMinidumps(ctx)),
             },
             new DiagnosticStep
             {
                 Id = "crash.reliability", Label = "Reliability Monitor records (surrounding week)",
                 Description = "Win32_ReliabilityRecords entries within a week of the last crash.",
                 Timeout = TimeSpan.FromSeconds(15),
-                Check = _ => Task.FromResult(TroubleshootService.CheckReliabilityRecords(ctx)),
+                Check = _ => Task.Run(() => TroubleshootService.CheckReliabilityRecords(ctx)),
             },
             new DiagnosticStep
             {
                 Id = "crash.whea", Label = "WHEA-Logger hardware-error events (17/18/19)",
                 Description = "Windows Hardware Error Architecture events - a sign of actual hardware involvement.",
                 Timeout = TimeSpan.FromSeconds(15),
-                Check = _ => Task.FromResult(TroubleshootService.CheckWheaEvents()),
+                Check = _ => Task.Run(TroubleshootService.CheckWheaEvents),
             },
             new DiagnosticStep
             {
                 Id = "crash.drivers", Label = "Recently-installed drivers (pnputil)",
-                Description = "Correlates drivers installed within 7 days before the first crash - a lead, not a verdict.",
+                Description = "Correlates staged driver packages dated within 7 days before the first crash - a lead, not a verdict.",
                 Timeout = TimeSpan.FromSeconds(20),
                 Check = _ => TroubleshootService.CheckRecentDriverCorrelationAsync(ctx),
             },
@@ -740,14 +754,14 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Id = "net.adapter", Label = "Adapter link state",
                 Description = "Win32_NetworkAdapter.NetConnectionStatus - is any adapter actually Connected?",
                 Timeout = TimeSpan.FromSeconds(10), StopOnFailure = true,
-                Check = _ => Task.FromResult(TroubleshootService.CheckAdapterLinkState()),
+                Check = _ => Task.Run(TroubleshootService.CheckAdapterLinkState),
             },
             new DiagnosticStep
             {
                 Id = "net.address", Label = "DHCP / APIPA address check",
                 Description = "A 169.254.x.x address means DHCP never answered.",
                 Timeout = TimeSpan.FromSeconds(10), StopOnFailure = true,
-                Check = _ => Task.FromResult(TroubleshootService.CheckApipaAddress()),
+                Check = _ => Task.Run(TroubleshootService.CheckApipaAddress),
             },
             new DiagnosticStep
             {
@@ -786,7 +800,11 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         {
             Id = "fans.correlation", Label = "Fan/temperature sensors vs. CPU load",
             Timeout = TimeSpan.FromSeconds(10),
-            Check = _ => Task.FromResult(TroubleshootService.CheckFanTempCorrelation(_performance.CpuCurrentPercent)),
+            Check = _ =>
+            {
+                double cpuLoad = _performance.CpuCurrentPercent;
+                return Task.Run(() => TroubleshootService.CheckFanTempCorrelation(cpuLoad));
+            },
         },
         new DiagnosticStep
         {
@@ -850,7 +868,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Id = "boot.events", Label = "Boot-performance degradation events (100-110)",
                 Description = "Microsoft-Windows-Diagnostics-Performance/Operational - degraded boot, slow services, slow startup apps, slow group policy, slow profile load.",
                 Timeout = TimeSpan.FromSeconds(20),
-                Check = _ => Task.FromResult(TroubleshootService.CheckBootDegradationEvents(ctx)),
+                Check = _ => Task.Run(() => TroubleshootService.CheckBootDegradationEvents(ctx)),
             },
             new DiagnosticStep
             {
@@ -886,14 +904,14 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Id = "shutdown.events", Label = "Shutdown-degradation events (200-208)",
                 Description = "Microsoft-Windows-Diagnostics-Performance/Operational.",
                 Timeout = TimeSpan.FromSeconds(20),
-                Check = _ => Task.FromResult(TroubleshootService.CheckShutdownDegradationEvents(ctx)),
+                Check = _ => Task.Run(() => TroubleshootService.CheckShutdownDegradationEvents(ctx)),
             },
             new DiagnosticStep
             {
                 Id = "shutdown.profile", Label = "User Profile Service events (1530/1534)",
                 Description = "Registry handles left open at logoff can delay sign-out/shutdown.",
                 Timeout = TimeSpan.FromSeconds(15),
-                Check = _ => Task.FromResult(TroubleshootService.CheckProfileUnloadEvents()),
+                Check = _ => Task.Run(TroubleshootService.CheckProfileUnloadEvents),
             },
             new DiagnosticStep
             {
@@ -932,7 +950,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             Id = "games.dpc", Label = "DPC/interrupt time & context switches",
             Description = "Processor Information\\% DPC Time / % Interrupt Time and System\\Context Switches/sec, sampled fresh over about a second.",
             Timeout = TimeSpan.FromSeconds(6),
-            Check = ct => TroubleshootService.CheckDpcInterruptTimeAsync(ct),
+            Check = ct => Task.Run(() => TroubleshootService.CheckDpcInterruptTimeAsync(ct)),
         },
         new DiagnosticStep
         {
@@ -981,7 +999,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Id = "wifi.events", Label = "WLAN-AutoConfig events (8000-8003/11000-series)",
                 Timeout = TimeSpan.FromSeconds(15),
                 ShouldRun = run => StepById(run, "wifi.adapter")?.Status == DiagnosticStepStatus.Passed,
-                Check = _ => Task.FromResult(TroubleshootService.CheckWlanAutoConfigEvents()),
+                Check = _ => Task.Run(TroubleshootService.CheckWlanAutoConfigEvents),
             },
             new DiagnosticStep
             {
@@ -1025,7 +1043,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Id = "disk.latency", Label = "Disk latency vs. throughput",
                 Description = "LogicalDisk\\Avg. Disk sec/Transfer vs. Disk Bytes/sec, sampled fresh over about a second.",
                 Timeout = TimeSpan.FromSeconds(6),
-                Check = ct => TroubleshootService.CheckDiskLatencyVsThroughputAsync(ct),
+                Check = ct => Task.Run(() => TroubleshootService.CheckDiskLatencyVsThroughputAsync(ct)),
             },
             new DiagnosticStep
             {
@@ -1038,7 +1056,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             {
                 Id = "disk.mediatype", Label = "System drive media type (HDD/SSD)",
                 Timeout = TimeSpan.FromSeconds(10),
-                Check = _ => Task.FromResult(TroubleshootService.CheckSystemDriveMediaType(ctx)),
+                Check = _ => Task.Run(() => TroubleshootService.CheckSystemDriveMediaType(ctx)),
             },
             new DiagnosticStep
             {
@@ -1046,7 +1064,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Description = "An analyze-only defrag.exe pass across the whole volume - opt-in, since even an analyze pass can take a while.",
                 Timeout = TimeSpan.FromSeconds(130),
                 IsManual = true,
-                Check = _ => TroubleshootService.CheckFragmentationManualAsync(ctx),
+                Check = _ => Task.Run(() => TroubleshootService.CheckFragmentationManualAsync(ctx)),
             },
             new DiagnosticStep
             {
@@ -1086,7 +1104,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             {
                 Id = "battery.presence", Label = "Battery presence",
                 Timeout = TimeSpan.FromSeconds(10),
-                Check = _ => Task.FromResult(TroubleshootService.CheckBatteryPresence(ctx)),
+                Check = _ => Task.Run(() => TroubleshootService.CheckBatteryPresence(ctx)),
             },
             new DiagnosticStep
             {
@@ -1147,20 +1165,20 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Id = "device.pnp", Label = "Devices reporting a problem (Device Manager)",
                 Description = "Win32_PnPEntity entries with a nonzero ConfigManagerErrorCode.",
                 Timeout = TimeSpan.FromSeconds(15),
-                Check = _ => Task.FromResult(TroubleshootService.CheckPnpProblemDevices(ctx)),
+                Check = _ => Task.Run(() => TroubleshootService.CheckPnpProblemDevices(ctx)),
             },
             new DiagnosticStep
             {
                 Id = "device.events", Label = "Kernel-PnP/USBHUB3 events (last 7 days)",
                 Timeout = TimeSpan.FromSeconds(20),
-                Check = _ => Task.FromResult(TroubleshootService.CheckDeviceDisconnectEvents(ctx)),
+                Check = _ => Task.Run(() => TroubleshootService.CheckDeviceDisconnectEvents(ctx)),
             },
             new DiagnosticStep
             {
                 Id = "device.power", Label = "USB root hub power setting",
                 Description = "Whether \"allow the computer to turn off this device to save power\" is enabled on any USB root hub.",
                 Timeout = TimeSpan.FromSeconds(10),
-                Check = _ => Task.FromResult(TroubleshootService.CheckUsbRootHubPowerSetting()),
+                Check = _ => Task.Run(TroubleshootService.CheckUsbRootHubPowerSetting),
             },
         };
     }

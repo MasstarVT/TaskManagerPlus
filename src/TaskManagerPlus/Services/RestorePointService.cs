@@ -284,10 +284,11 @@ public static class RestorePointService
             // Checkpoint-Computer throttles to one checkpoint per 24h by default for
             // MODIFY_SETTINGS-type points on client SKUs - reported the same way as any other
             // failure below rather than special-cased, since the message it returns already says
-            // so plainly.
+            // so plainly. That throttle is a WARNING, not an error (no point is created, yet the
+            // cmdlet returns normally), so -WarningAction Stop turns it into a caught failure.
             string safeDescription = description.Replace("'", "''");
             string psCommand =
-                $"$ErrorActionPreference='Stop'; try {{ Checkpoint-Computer -Description '{safeDescription}' -RestorePointType MODIFY_SETTINGS; Write-Output 'RESTORE_POINT_OK' }} catch {{ Write-Output $_.Exception.Message }}";
+                $"$ErrorActionPreference='Stop'; try {{ Checkpoint-Computer -Description '{safeDescription}' -RestorePointType MODIFY_SETTINGS -WarningAction Stop; Write-Output 'RESTORE_POINT_OK' }} catch {{ Write-Output $_.Exception.Message }}";
 
             var (output, exitCode) = await TroubleshootService.RunCapturedAsync(
                 "powershell.exe", $"-NoProfile -NonInteractive -Command \"{psCommand.Replace("\"", "\\\"")}\"", timeoutMs: 60000);

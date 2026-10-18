@@ -63,9 +63,9 @@ public sealed class ChangeJournalViewModel : ObservableObject
     public ChangeJournalViewModel()
     {
         RefreshCommand = new RelayCommand(_ => Refresh());
-        UndoCommand = new AsyncRelayCommand(param => UndoAsync(param as ChangeJournalRow), param => param is ChangeJournalRow { CanUndoNow: true, IsBusy: false });
-        RestoreFromBackupCommand = new AsyncRelayCommand(param => RestoreFromBackupAsync(param as ChangeJournalRow), param => param is ChangeJournalRow { HasRegistryBackup: true, IsBusy: false });
-        CancelDeferredCommand = new AsyncRelayCommand(param => CancelDeferredAsync(param as DeferredAction), param => param is DeferredAction);
+        UndoCommand = new AsyncRelayCommand(param => UndoAsync(param as ChangeJournalRow), param => param is ChangeJournalRow { CanUndoNow: true, IsBusy: false } && !ReadOnlyModeService.IsReadOnly);
+        RestoreFromBackupCommand = new AsyncRelayCommand(param => RestoreFromBackupAsync(param as ChangeJournalRow), param => param is ChangeJournalRow { HasRegistryBackup: true, IsBusy: false } && !ReadOnlyModeService.IsReadOnly);
+        CancelDeferredCommand = new AsyncRelayCommand(param => CancelDeferredAsync(param as DeferredAction), param => param is DeferredAction && !ReadOnlyModeService.IsReadOnly);
         Refresh();
     }
 
@@ -89,19 +89,32 @@ public sealed class ChangeJournalViewModel : ObservableObject
     }
 
     /// <summary>#979: cancels the underlying scheduled task (schtasks /delete) and drops the
-    /// tracking entry either way once the task itself is gone - a task that schtasks reports as
-    /// already missing (e.g. the user removed it from Task Scheduler directly) is still cleaned up
-    /// here rather than left as a permanently-stuck row.</summary>
+    /// tracking entry once the task itself is gone - a task that is already missing (e.g. the user
+    /// removed it from Task Scheduler directly) is still cleaned up here rather than left as a
+    /// permanently-stuck row.</summary>
     private async Task CancelDeferredAsync(DeferredAction? action)
     {
         if (action is null) return;
 
         DeferredStatusText = $"Cancelling \"{action.ActionTitle}\"...";
         var (success, error) = await ScheduledTaskService.DeleteAsync(action.TaskName);
-        DeferredActionService.Remove(action.Id);
+
+        // A failed delete (access denied, timeout, ...) leaves the task scheduled - only drop the
+        // tracking row when it's really gone, or the queued fix would still run with no way to
+        // cancel it from here. A follow-up /query failing is the locale-independent "not found".
+        bool gone = success;
+        if (!success)
+        {
+            var (_, queryExit) = await TroubleshootService.RunCapturedAsync("schtasks.exe", $"/query /tn \"{action.TaskName}\"", timeoutMs: 10_000);
+            gone = queryExit is { } code && code != 0;
+        }
+
+        if (gone) DeferredActionService.Remove(action.Id);
         DeferredStatusText = success
             ? $"Cancelled \"{action.ActionTitle}\"."
-            : $"Removed \"{action.ActionTitle}\" from the queue (schtasks reported: {error}).";
+            : gone
+                ? $"Removed \"{action.ActionTitle}\" from the queue - its scheduled task no longer exists."
+                : $"Couldn't cancel \"{action.ActionTitle}\" - it is still scheduled (schtasks reported: {error}).";
         RefreshDeferred();
     }
 
@@ -201,11 +214,16 @@ public sealed class ChangeJournalViewModel : ObservableObject
             case ChangeKind.ServiceStateChange:
             {
                 if (string.IsNullOrEmpty(entry.ServiceName)) return (false, "No service name recorded.");
-                // The inverse of "this service was stopped/started/restarted" is simply "make sure
-                // it's running again" - mirrors #973's own example. A restart's inverse is the same
-                // call (there's no earlier state to return to beyond "running").
-                var (success, error) = await Task.Run(() => ServiceControlService.Start(entry.ServiceName));
-                return (success, success ? $"{entry.Target} started." : $"Couldn't start {entry.Target}: {error}");
+                // Start/Stop/Restart are all journaled as ServiceStateChange with the pre-action
+                // status in BeforeValue: return the service to that state - stop it if it was
+                // stopped (undoing a Start), otherwise make sure it's running (undoing a Stop; a
+                // restart has no earlier state beyond "running").
+                bool wasStopped = entry.BeforeValue is "Stopped" or "StopPending";
+                var (success, error) = await Task.Run(() => wasStopped
+                    ? ServiceControlService.Stop(entry.ServiceName)
+                    : ServiceControlService.Start(entry.ServiceName));
+                if (success) return (true, wasStopped ? $"{entry.Target} stopped." : $"{entry.Target} started.");
+                return (false, $"Couldn't {(wasStopped ? "stop" : "start")} {entry.Target}: {error}");
             }
 
             case ChangeKind.StartupToggle:
@@ -260,9 +278,13 @@ public sealed class ChangeJournalViewModel : ObservableObject
 
             case ChangeKind.PowerSettingChange:
             {
-                if (string.IsNullOrEmpty(entry.BeforeValue)) return (false, "No prior value recorded.");
+                // BeforeValue is journaled for display as e.g. "100%" - powercfg needs the bare integer.
+                if (string.IsNullOrEmpty(entry.BeforeValue) ||
+                    !int.TryParse(entry.BeforeValue.Trim().TrimEnd('%').Trim(), System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out int beforePercent))
+                    return (false, "No prior value recorded.");
                 var (setOutput, setExit) = await TroubleshootService.RunCapturedAsync(
-                    "powercfg.exe", $"/setacvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMIN {entry.BeforeValue}", timeoutMs: 10_000);
+                    "powercfg.exe", $"/setacvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMIN {beforePercent}", timeoutMs: 10_000);
                 if (setExit != 0) return (false, $"Couldn't restore setting: {setOutput}");
                 var (actOutput, actExit) = await TroubleshootService.RunCapturedAsync("powercfg.exe", "/setactive SCHEME_CURRENT", timeoutMs: 10_000);
                 return (actExit == 0, actExit == 0 ? "Minimum processor state restored." : $"Couldn't apply: {actOutput}");

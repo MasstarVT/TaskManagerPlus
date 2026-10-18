@@ -137,7 +137,7 @@ public sealed class ThemeViewModel : ObservableObject
         get => _themeMode;
         set
         {
-            if (_themeMode == value || !Palettes.ContainsKey(value)) return;
+            if (_themeMode == value || value is null || !Palettes.ContainsKey(value)) return;
             _themeMode = value;
             OnPropertyChanged();
             ApplyPalette(_themeMode, _saturation);
@@ -303,7 +303,8 @@ public sealed class ThemeViewModel : ObservableObject
         Disk = ParseOrDefault(saved.Disk, Presets[3]);
         NetworkReceive = ParseOrDefault(saved.NetworkReceive, Presets[2]);
         NetworkSend = ParseOrDefault(saved.NetworkSend, Presets[5]);
-        _themeMode = Palettes.ContainsKey(saved.ThemeMode) ? saved.ThemeMode : "Dark";
+        // "ThemeMode": null in a hand-edited theme.json would otherwise throw from ContainsKey here.
+        _themeMode = saved.ThemeMode is not null && Palettes.ContainsKey(saved.ThemeMode) ? saved.ThemeMode : "Dark";
         _saturation = Math.Clamp(saved.Saturation, 0.0, 2.0);
         _colorBlindSafeAlerts = saved.ColorBlindSafeAlerts;
         _compactRows = saved.CompactRows;
@@ -378,7 +379,7 @@ public sealed class ThemeViewModel : ObservableObject
             Disk = ParseOrDefault(preset.Disk, Disk);
             NetworkReceive = ParseOrDefault(preset.NetworkReceive, NetworkReceive);
             NetworkSend = ParseOrDefault(preset.NetworkSend, NetworkSend);
-            _themeMode = Palettes.ContainsKey(preset.ThemeMode) ? preset.ThemeMode : _themeMode;
+            _themeMode = preset.ThemeMode is not null && Palettes.ContainsKey(preset.ThemeMode) ? preset.ThemeMode : _themeMode;
             _saturation = Math.Clamp(preset.Saturation, 0.0, 2.0);
             _colorBlindSafeAlerts = preset.ColorBlindSafeAlerts;
             OnPropertyChanged(nameof(ThemeMode));

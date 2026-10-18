@@ -450,11 +450,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ToggleSettingsCommand = new RelayCommand(_ => IsSettingsOpen = !IsSettingsOpen);
         ToggleMiniDashboardCommand = new RelayCommand(_ => ToggleMiniDashboard());
 
-        OpenUpdateUrlCommand = new RelayCommand(_ =>
-        {
-            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(UpdateUrl) { UseShellExecute = true }); }
-            catch { /* best-effort - the banner text still shows the version either way */ }
-        });
+        // UpdateUrl comes from a network response - ExternalLinkService only hands an http/https
+        // URL to ShellExecute, never a path this elevated process would run. Best-effort either
+        // way; the banner text still shows the version.
+        OpenUpdateUrlCommand = new RelayCommand(_ => ExternalLinkService.TryOpen(UpdateUrl));
         _ = CheckForUpdateAsync();
 
         // suggestions.md #997: one plain synchronous file-tracker comparison at startup - cheap
@@ -462,6 +461,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // UiPreferencesService.Load() above, not worth a Task.Run.
         UnattendedScanBannerText = UnattendedScanService.CheckAndMarkSeen();
         DismissUnattendedScanBannerCommand = new RelayCommand(_ => UnattendedScanBannerText = null);
+        // Creating/deleting a SYSTEM scheduled task is a persistent system change - gated by
+        // read-only mode like every other mutating command.
         SetupUnattendedScanCommand = new AsyncRelayCommand(async () =>
         {
             var frequency = UnattendedScanWeekly ? ScheduledTaskFrequency.Weekly : ScheduledTaskFrequency.Daily;
@@ -470,12 +471,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             UnattendedScanStatusText = success
                 ? $"Scheduled: runs {(UnattendedScanWeekly ? "weekly (Sunday)" : "daily")} at {UnattendedScanHour:00}:00, writing results under {UnattendedScanService.UnattendedScansDirectory}."
                 : $"Couldn't set up the scheduled task: {error}";
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
         RemoveUnattendedScanCommand = new AsyncRelayCommand(async () =>
         {
             var (success, error) = await UnattendedScanService.RemoveScheduledScanAsync();
             UnattendedScanStatusText = success ? "Scheduled scan removed." : $"Couldn't remove the scheduled task: {error}";
-        });
+        }, () => !ReadOnlyModeService.IsReadOnly);
 
         AddCurrentMachineCommand = new RelayCommand(_ =>
         {
@@ -745,6 +746,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Stability.Dispose();
         Events.Dispose();
         LeakWatch.Dispose();
+        // Stops the driver-load ETW session if one is running. Cast via object so this compiles
+        // whether or not DevicesDriversViewModel (sealed) implements IDisposable on this branch.
+        ((object)DevicesDrivers as IDisposable)?.Dispose();
         ProcessHistory.Flush();
         // #1082: same clean-exit persist as ProcessHistory above - writes any free-space low-water
         // marks still inside FreeSpaceHistoryService's debounce window.

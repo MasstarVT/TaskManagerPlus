@@ -204,12 +204,35 @@ public static class RemediationActionCatalog
     }
 
     /// <summary>#979: the "/f" repair variant - unlike the read-only scan above, this needs the
-    /// volume offline whenever it's the system/boot drive (chkdsk schedules itself for the next
-    /// boot in that case, same as the classic Task Manager/Disk Management flow) - the review
-    /// dialog's "Queue for next boot" option exists specifically for this action.</summary>
+    /// volume offline whenever it's the system/boot drive. For that drive this marks the volume
+    /// dirty (`fsutil dirty set`), so autochk runs the /f-equivalent repair at the next boot and
+    /// clears the bit itself - one-shot by nature. A scheduled task can't do this: an onstart task
+    /// runs after Windows is up (the volume is locked, chkdsk just prompts to nobody) and re-runs
+    /// on every boot. fsutil also avoids chkdsk's Y/N prompt, whose answer letter is localized.</summary>
     public static RemediationAction ChkdskFix(string driveLetter)
     {
         string drive = NormalizeDrive(driveLetter);
+        string? systemDrive = Path.GetPathRoot(Environment.SystemDirectory)?.TrimEnd('\\');
+        if (string.Equals(drive, systemDrive, StringComparison.OrdinalIgnoreCase))
+        {
+            return new RemediationAction
+            {
+                Id = "storage.chkdsk-fix",
+                Title = $"Fix file system errors on {drive} at next restart",
+                PlainEnglishDescription = $"{drive} is the system drive, so Windows can't lock it for a repair while it's running. This marks {drive} as needing a check (fsutil dirty set), and Windows runs the repair pass (the same as chkdsk /f) automatically during the next restart.",
+                Command = $"fsutil dirty set {drive}",
+                RiskLevel = RemediationRiskLevel.Medium,
+                RequiresReboot = true,
+                IsUndoable = false,
+                NotUndoableReason = "The dirty flag can't be cleared by hand - it clears itself once the check runs at the next restart.",
+                Preconditions = { new RemediationPrecondition { Kind = PreconditionKind.RequiresNtfsVolume, Parameter = drive, Blocking = true } },
+                PreviewCommand = $"fsutil dirty query {drive}",
+                ExecutePreview = _ => RunToolAsync("fsutil.exe", $"dirty query {drive}", timeoutMs: 15_000),
+                SupportsDeferredQueue = false,
+                Execute = _ => RunToolAsync("fsutil.exe", $"dirty set {drive}", timeoutMs: 15_000),
+            };
+        }
+
         return new RemediationAction
         {
             Id = "storage.chkdsk-fix",
@@ -396,10 +419,15 @@ public static class RemediationActionCatalog
 
     private static async Task<RemediationRunResult> RunToolAsync(string exe, string args, int timeoutMs)
     {
+        // A non-zero exit is a failure (e.g. `netsh int ip reset` exits 1 on "Access is denied"),
+        // the same rule RunToolStreamingAsync below applies.
         var (output, exitCode) = await TroubleshootService.RunCapturedAsync(exe, args, timeoutMs);
-        return exitCode is not null
-            ? RemediationRunResult.Ok(output)
-            : RemediationRunResult.Fail(string.IsNullOrWhiteSpace(output) ? "Command timed out or failed to start." : output);
+        if (exitCode == 0) return RemediationRunResult.Ok(output);
+        if (exitCode is null)
+            return RemediationRunResult.Fail(string.IsNullOrWhiteSpace(output) ? "Command timed out or failed to start." : output);
+        return RemediationRunResult.Fail(string.IsNullOrWhiteSpace(output)
+            ? $"{exe} exited with code {exitCode}."
+            : $"{output.TrimEnd()}\n({exe} exited with code {exitCode})");
     }
 
     /// <summary>

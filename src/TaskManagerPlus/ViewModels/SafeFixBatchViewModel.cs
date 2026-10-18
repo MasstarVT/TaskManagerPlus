@@ -41,6 +41,11 @@ public sealed class SafeFixBatchViewModel : ObservableObject
     {
         if (IsRunning) return; // never swap the list out from under an in-progress run
 
+        // This runs every 2s - carry each item's outcome across the rebuild, or a "Failed: ..."
+        // result is wiped before anyone can read it.
+        var previous = new Dictionary<string, (SafeFixItemStatus Status, string ResultText)>();
+        foreach (var old in Items) previous[ItemKey(old.Issue, old.Action)] = (old.Status, old.ResultText);
+
         Items.Clear();
         foreach (var issue in issues)
         {
@@ -53,11 +58,20 @@ public sealed class SafeFixBatchViewModel : ObservableObject
             // One action per finding - the first resolved action is what "Fix this" would have
             // pre-selected too (RemediationReviewViewModel.SelectedAction defaults to
             // actions.FirstOrDefault()).
-            Items.Add(new SafeFixBatchItem(issue, resolved[0]));
+            var item = new SafeFixBatchItem(issue, resolved[0]);
+            if (previous.TryGetValue(ItemKey(issue, resolved[0]), out var kept))
+            {
+                item.Status = kept.Status;
+                item.ResultText = kept.ResultText;
+            }
+            Items.Add(item);
         }
 
         RaiseCanExecuteChanged();
     }
+
+    private static string ItemKey(HealthIssue issue, RemediationAction action) =>
+        $"{(issue.RuleId is { Length: > 0 } id ? id : issue.Message)}|{action.Id}";
 
     private async Task RunAllAsync()
     {

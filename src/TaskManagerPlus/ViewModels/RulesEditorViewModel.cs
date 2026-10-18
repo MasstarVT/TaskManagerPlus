@@ -43,8 +43,13 @@ public sealed class RulesEditorViewModel : ObservableObject, IDisposable
     public RuleRowViewModel? SelectedRow
     {
         get => _selectedRow;
-        set { if (SetProperty(ref _selectedRow, value)) LoadEditBuffer(); }
+        set { if (SetProperty(ref _selectedRow, value) && !_rebuildingRows) LoadEditBuffer(); }
     }
+
+    // Set while RebuildRows swaps in fresh row instances: any engine reload (hot reload, an
+    // override checkbox, a suppression) raises Reloaded, and re-selecting the same rule must not
+    // overwrite unsaved edits in the form.
+    private bool _rebuildingRows;
 
     private string _editTitle = string.Empty;
     public string EditTitle { get => _editTitle; set => SetProperty(ref _editTitle, value); }
@@ -141,14 +146,25 @@ public sealed class RulesEditorViewModel : ObservableObject, IDisposable
     private void RebuildRows()
     {
         string? selectedId = SelectedRow?.Id;
-        Rows.Clear();
-        foreach (var lr in _engine.Rules.OrderBy(r => r.Rule.Category, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Rule.Title, StringComparer.OrdinalIgnoreCase))
-            Rows.Add(new RuleRowViewModel(lr, _engine));
+        _rebuildingRows = true;
+        try
+        {
+            Rows.Clear();
+            foreach (var lr in _engine.Rules.OrderBy(r => r.Rule.Category, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Rule.Title, StringComparer.OrdinalIgnoreCase))
+                Rows.Add(new RuleRowViewModel(lr, _engine));
 
-        PackValidation.Clear();
-        foreach (var v in _engine.ValidationResults) PackValidation.Add(v);
+            PackValidation.Clear();
+            foreach (var v in _engine.ValidationResults) PackValidation.Add(v);
 
-        SelectedRow = selectedId is null ? null : Rows.FirstOrDefault(r => r.Id == selectedId);
+            SelectedRow = selectedId is null ? null : Rows.FirstOrDefault(r => r.Id == selectedId);
+        }
+        finally
+        {
+            _rebuildingRows = false;
+        }
+
+        // The selected rule itself went away - clear the form rather than leave a stale buffer.
+        if (selectedId is not null && SelectedRow is null) LoadEditBuffer();
     }
 
     private void RefreshLivePreview()
