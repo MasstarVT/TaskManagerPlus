@@ -34,11 +34,18 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = _viewModel;
 
-        // The header search popup is a topmost window bound to Search.HasQuery: hide it while the
-        // app is in the background (it otherwise floated over other apps after Alt+Tab), restore it
-        // on return, and nudge it along when the window moves. SetCurrentValue keeps the binding.
-        Deactivated += (_, _) => SearchPopup.SetCurrentValue(System.Windows.Controls.Primitives.Popup.IsOpenProperty, false);
-        Activated += (_, _) => SearchPopup.SetCurrentValue(System.Windows.Controls.Primitives.Popup.IsOpenProperty, _viewModel.Search.HasQuery);
+        // The header search popup is a topmost window shown while Search.HasQuery: only while this
+        // window is active (it otherwise floated over other apps after Alt+Tab, and over the Ctrl+K
+        // palette, which shares the same query), restored on return, and nudged along when the
+        // window moves. Driven from code rather than a binding, because a OneWay binding re-opened
+        // it from the palette's keystrokes.
+        _viewModel.Search.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(GlobalSearchViewModel.HasQuery))
+                SearchPopup.IsOpen = _viewModel.Search.HasQuery && IsActive;
+        };
+        Deactivated += (_, _) => SearchPopup.IsOpen = false;
+        Activated += (_, _) => SearchPopup.IsOpen = _viewModel.Search.HasQuery;
         LocationChanged += (_, _) =>
         {
             double offset = SearchPopup.HorizontalOffset;
@@ -173,6 +180,9 @@ public partial class MainWindow : Window
     {
         if (_commandPalette is { IsVisible: true }) { _commandPalette.Activate(); return; }
         _commandPalette = new Views.CommandPaletteWindow(_viewModel.Search) { Owner = this };
+        // The palette's query is spent once it closes; left in the shared SearchText it would
+        // re-open the header popup over whatever tab the palette just jumped to.
+        _commandPalette.Closed += (_, _) => _viewModel.Search.SearchText = string.Empty;
         _commandPalette.Show();
     }
 

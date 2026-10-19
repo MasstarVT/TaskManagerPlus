@@ -40,7 +40,9 @@
                             </TextBlock.Style>
                         </TextBlock>
                     </Grid>
-                    <TextBlock Text="{Binding ResultText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,6,0,0" MaxHeight="70"
+                    <!-- Tool output can run long: scroll it rather than clipping at a fixed height. -->
+                    <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto">
+                    <TextBlock Text="{Binding ResultText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,6,0,0"
                                Foreground="{DynamicResource TextSecondaryBrush}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
@@ -53,6 +55,7 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                    </ScrollViewer>
                 </StackPanel>
             </Border>
         </DataTemplate>

@@ -16,7 +16,8 @@ public sealed class CoreTopologyInfo
     /// - every RelationProcessorCore entry read from GetLogicalProcessorInformationEx represents
     /// exactly one physical core, and its GroupMask lists the logical processors that are SMT/
     /// Hyper-Threading siblings sharing it. Two logical cores with the same PhysicalCoreGroup are
-    /// siblings on one physical core; -1 when topology couldn't be determined (the Flat fallback).</summary>
+    /// siblings on one physical core. -1 means not set; the Flat fallback (topology couldn't be
+    /// read) gives each logical processor its own group, i.e. no SMT siblings are assumed.</summary>
     public int PhysicalCoreGroup { get; init; } = -1;
 }
 

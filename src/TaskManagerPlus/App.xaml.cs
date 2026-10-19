@@ -35,6 +35,21 @@ public partial class App : Application
 
         TaskManagerPlus.Common.ScrollChaining.Register();
 
+        // WPF bindings format and parse with the element's Language, which defaults to en-US
+        // regardless of the user's regional settings: dates rendered M/d/yyyy and a de-DE user
+        // couldn't type "85,5" into a threshold box. Tool/WMI output is parsed in C# with
+        // InvariantCulture and never goes through a binding, so it is unaffected.
+        try
+        {
+            FrameworkElement.LanguageProperty.OverrideMetadata(typeof(FrameworkElement),
+                new FrameworkPropertyMetadata(System.Windows.Markup.XmlLanguage.GetLanguage(
+                    System.Globalization.CultureInfo.CurrentCulture.IetfLanguageTag)));
+        }
+        catch
+        {
+            // Already overridden or no usable tag - keep WPF's default rather than fail startup.
+        }
+
         // Round 12, #87: must run before any service touches a settings file - AppPaths.Initialize
         // decides once, for the whole process, whether persisted state lives under %AppData% or a
         // "Settings" folder next to the exe (portable mode).

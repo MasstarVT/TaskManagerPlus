@@ -33,6 +33,10 @@ public static class ScrollChaining
             : viewer.VerticalOffset < viewer.ScrollableHeight;
         if (canScroll) return;
 
+        // A dropdown or other popup is its own window: forwarding from its list would route
+        // through the Popup's logical parent and scroll the page sitting behind it.
+        if (IsInPopup(viewer)) return;
+
         if (VisualTreeHelper.GetParent(viewer) is not UIElement parent) return;
         e.Handled = true;
         parent.RaiseEvent(new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
@@ -41,6 +45,10 @@ public static class ScrollChaining
             Source = viewer,
         });
     }
+
+    private static bool IsInPopup(Visual viewer) =>
+        PresentationSource.FromVisual(viewer)?.RootVisual is { } root
+        && root.GetType().Name == "PopupRoot";
 
     private static bool HasScrollViewerBetween(DependencyObject? node, ScrollViewer viewer)
     {

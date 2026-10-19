@@ -37,7 +37,9 @@ public sealed class BytesToReadableConverter : IValueConverter
         }
 
         // Keep the sign: deltas such as the Processes "WS/Priv gap" column are legitimately negative.
-        string sign = bytes < 0 ? "-" : string.Empty;
+        // ...but not on a value that rounds to zero ("-0 B").
+        double shown = Math.Round(abs, unitIndex == 0 ? 0 : 1);
+        string sign = bytes < 0 && shown > 0 ? "-" : string.Empty;
         string formatted = unitIndex == 0
             ? $"{sign}{abs:0} {Units[unitIndex]}"
             : $"{sign}{abs:0.0} {Units[unitIndex]}";

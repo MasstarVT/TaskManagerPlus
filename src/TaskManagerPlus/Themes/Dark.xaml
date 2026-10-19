@@ -377,6 +377,19 @@
         </Setter>
     </Style>
 
+    <!-- DatePicker (Timeline range, queued-fix date): the stock template paints its text box white
+         with near-black text. Setters only - the default template already template-binds these. -->
+    <Style TargetType="{x:Type DatePicker}">
+        <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush2}" />
+    </Style>
+    <Style TargetType="{x:Type DatePickerTextBox}">
+        <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="CaretBrush" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+
     <!-- ============================= ComboBox ============================= -->
     <!-- Custom template for the same reason as TabControl's: the default Windows theme chrome
          hardcodes a light gradient background and ignores Background setters, so every ComboBox

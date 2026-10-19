@@ -139,7 +139,7 @@ public sealed class ThemeViewModel : ObservableObject
         {
             if (_themeMode == value || value is null || !Palettes.ContainsKey(value)) return;
             _themeMode = value;
-            OnPropertyChanged();
+            // ApplyPalette raises ThemeMode's PropertyChanged once the new brushes are in place.
             ApplyPalette(_themeMode, _saturation);
             if (!_isLoading) NotifyThemeModeChangedAndPersist();
         }
@@ -524,6 +524,8 @@ public sealed class ThemeViewModel : ObservableObject
         // Keep the user's chosen accent visually consistent with the new family/saturation.
         if (!_isLoading)
             ApplyAccentToResources(Adj(_accent));
+        else
+            RaisePaletteDependents();
     }
 
     private void ApplyAccentToResources(Color accent)
@@ -536,7 +538,13 @@ public sealed class ThemeViewModel : ObservableObject
         _appResources["AccentHoverBrush"] = Frozen(hover);
         _appResources["AccentMutedBrush"] = Frozen(muted);
         _appResources["AccentForegroundBrush"] = Frozen(foreground);
+        RaisePaletteDependents();
     }
+
+    // The brushes above are replaced, not mutated, so DynamicResource consumers update but a
+    // converter that looked a brush up (the theme-mode picker's highlight) holds the old one until
+    // its binding re-runs. Re-raising ThemeMode after the swap makes that binding re-read.
+    private void RaisePaletteDependents() => OnPropertyChanged(nameof(ThemeMode));
 
     private static SolidColorBrush Frozen(Color color)
     {
