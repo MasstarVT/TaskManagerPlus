@@ -76,7 +76,7 @@
                 <!-- The saved filters and both tool expanders scroll inside a capped height: this
                      card sits in an Auto row, so expanding "More tools" / "Anomaly detection" used
                      to grow it until the three panes below were squeezed to nothing. -->
-                <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,10,0,0">
+                <ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,10,0,0">
                 <StackPanel>
 
                 <!-- #108: saved filter presets, including the built-in ones (Crash triage / Storage

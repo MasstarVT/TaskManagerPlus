@@ -195,7 +195,7 @@ public static class WmiHealthService
                     }
                     else
                     {
-                        name = $"Unknown (PID reused - the current {procName} started after these errors)";
+                        name = $"Unknown (PID reused - the current {procName} started after the oldest of these errors)";
                     }
                 }
                 return new WmiActivityErrorGroup
