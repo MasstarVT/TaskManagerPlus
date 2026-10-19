@@ -383,7 +383,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
 
     // #248: dropped+missed composition frames/sec, glow+core LineSeries pair over the shared
     // HistoryLength window - the same pattern as DpcLatencyHistory above.
-    public ObservableCollection<double> CompositionDropHistory { get; } = NewHistory(0);
+    public ObservableCollection<double> CompositionDropHistory { get; } = new();
     private readonly LineSeries<double> _compDropGlow;
     private readonly LineSeries<double> _compDropCore;
     public ISeries[] CompositionDropSeries { get; }
@@ -469,7 +469,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
 
     // #260: run-queue pressure - rides the cheap _lightTimer (a single perf-counter read already
     // collected by PerformanceViewModel, see SampleLight).
-    public ObservableCollection<double> RunQueuePressureHistory { get; } = NewHistory(0);
+    public ObservableCollection<double> RunQueuePressureHistory { get; } = new();
     private readonly LineSeries<double> _runQueueGlow;
     private readonly LineSeries<double> _runQueueCore;
     public ISeries[] RunQueuePressureSeries { get; }
@@ -539,9 +539,9 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private SynchronizationCountersInfo _synchronizationCounters = new();
     public SynchronizationCountersInfo SynchronizationCounters { get => _synchronizationCounters; private set => SetProperty(ref _synchronizationCounters, value); }
 
-    public ObservableCollection<double> SpinlockAcquiresHistory { get; } = NewHistory(0);
-    public ObservableCollection<double> SpinlockContentionsHistory { get; } = NewHistory(0);
-    public ObservableCollection<double> ExecResourceContentionsHistory { get; } = NewHistory(0);
+    public ObservableCollection<double> SpinlockAcquiresHistory { get; } = new();
+    public ObservableCollection<double> SpinlockContentionsHistory { get; } = new();
+    public ObservableCollection<double> ExecResourceContentionsHistory { get; } = new();
     private readonly LineSeries<double> _spinAcqGlow, _spinAcqCore, _spinContGlow, _spinContCore, _execResGlow, _execResCore;
     public ISeries[] SynchronizationSeries { get; }
     public Axis[] SynchronizationYAxes { get; }
@@ -569,7 +569,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private HardFaultRateInfo _hardFaultRate = new() { StatusText = "Loading..." };
     public HardFaultRateInfo HardFaultRate { get => _hardFaultRate; private set => SetProperty(ref _hardFaultRate, value); }
 
-    public ObservableCollection<double> HardFaultHistory { get; } = NewHistory(0);
+    public ObservableCollection<double> HardFaultHistory { get; } = new();
     private readonly LineSeries<double> _hardFaultGlow;
     private readonly LineSeries<double> _hardFaultCore;
     public ISeries[] HardFaultSeries { get; }
@@ -1573,8 +1573,12 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
 
         // #247/#248: DWM composition timing - a cheap dwmapi.dll call, fine on this tick.
         DwmComposition = _dwm.Sample();
-        CompositionDropHistory.Add(DwmComposition.IsAvailable ? DwmComposition.DroppedMissedPerSec : 0);
-        if (CompositionDropHistory.Count > HistoryLength) CompositionDropHistory.RemoveAt(0);
+        // Unavailable is no reading, not a 0 drops/sec point.
+        if (DwmComposition.IsAvailable)
+        {
+            CompositionDropHistory.Add(DwmComposition.DroppedMissedPerSec);
+            if (CompositionDropHistory.Count > HistoryLength) CompositionDropHistory.RemoveAt(0);
+        }
 
         // #249: vblank jitter snapshot - cheap (bounded-list percentile math), safe every tick
         // regardless of whether the probe is currently running. The probe's own background thread
@@ -2666,7 +2670,9 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         LatencyYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
-    private static ObservableCollection<double> NewHistory(double fill = 0)
+    // Only the threshold reference line is pre-filled; measurement histories start empty so a
+    // chart never draws a 0 line for samples that were never taken.
+    private static ObservableCollection<double> NewHistory(double fill)
     {
         var col = new ObservableCollection<double>();
         for (int i = 0; i < HistoryLength; i++) col.Add(fill);

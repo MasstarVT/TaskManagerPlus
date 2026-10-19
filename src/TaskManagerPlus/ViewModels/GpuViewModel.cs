@@ -804,12 +804,9 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
     private static readonly SKColor AxisTextColor = new(0x9A, 0x9A, 0xA2);
     private static readonly SKColor AxisSeparatorColor = new(0x33, 0x33, 0x3A, 160);
 
-    private static ObservableCollection<double> NewHistory()
-    {
-        var col = new ObservableCollection<double>();
-        for (int i = 0; i < HistoryLength; i++) col.Add(0);
-        return col;
-    }
+    // Starts empty rather than zero-filled, so the charts don't open on a minute of 0 readings
+    // that were never sampled. Only PushHistory and the chart series read these.
+    private static ObservableCollection<double> NewHistory() => new();
 
     private static void PushHistory(ObservableCollection<double> history, double value)
     {
