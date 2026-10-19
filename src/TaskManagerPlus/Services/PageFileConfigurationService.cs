@@ -82,11 +82,11 @@ public static class PageFileConfigurationService
 
             return new PageFileConfigSnapshot { Files = files, IsAutomaticallyManaged = autoManaged };
         }
-        catch
+        catch (Exception ex)
         {
-            // WMI namespace/class unavailable - degrade to "nothing found" rather than throwing,
-            // same contract as every other WMI read in this app.
-            return new PageFileConfigSnapshot();
+            // WMI namespace/class unavailable - degrade rather than throw, but say so: an empty
+            // list here would otherwise read as "no page file is configured".
+            return new PageFileConfigSnapshot { ErrorMessage = ex.Message };
         }
     }
 }

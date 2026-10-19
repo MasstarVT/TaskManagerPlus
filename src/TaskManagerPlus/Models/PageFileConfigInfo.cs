@@ -32,4 +32,8 @@ public sealed class PageFileConfigSnapshot
     /// managing page file placement/sizing itself rather than following any per-file settings
     /// above (the common default). Null when the read itself failed.</summary>
     public bool? IsAutomaticallyManaged { get; init; }
+
+    /// <summary>Set when the page-file query itself failed - Files is then empty because nothing
+    /// could be read, not because no page file exists.</summary>
+    public string? ErrorMessage { get; init; }
 }

@@ -905,7 +905,10 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
             PageFileAutomaticallyManaged = snapshot.IsAutomaticallyManaged;
             OnPropertyChanged(nameof(PageFileManagementText));
 
-            PageFileConfigStatusText = PageFileConfigs.Count == 0
+            _pageFileReadOk = snapshot.ErrorMessage is null;
+            PageFileConfigStatusText = snapshot.ErrorMessage is { } err
+                ? $"Couldn't read the page-file configuration: {err}"
+                : PageFileConfigs.Count == 0
                 ? "No page file is currently configured on this system."
                 : $"{PageFileConfigs.Count:N0} page file(s) configured.";
 
@@ -923,6 +926,9 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
     /// memory this session already exceeded installed RAM (the commit limit is capped at physical
     /// RAM without one). Recomputed whenever either input changes - PageFileConfigs (on load) or
     /// PeakCommittedGb (on every new high-water mark).</summary>
+    // False until a page-file read succeeds: an empty list from a failed read isn't "no page file".
+    private bool _pageFileReadOk;
+
     private void RefreshPageFileAdvisories()
     {
         var advisories = new List<string>();
@@ -932,7 +938,7 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
             advisories.Add($"{f.Volume} page file: fixed maximum ({f.MaximumSizeMb:N0} MB) is smaller than its recorded peak usage ({f.PeakUsageMb:N0} MB) - the commit limit couldn't grow past that cap when it mattered most.");
         }
 
-        if (PageFileConfigs.Count == 0 && PeakCommittedGb > 0 && Performance.RamTotalGb > 0 && PeakCommittedGb > Performance.RamTotalGb)
+        if (_pageFileReadOk && PageFileConfigs.Count == 0 && PeakCommittedGb > 0 && Performance.RamTotalGb > 0 && PeakCommittedGb > Performance.RamTotalGb)
         {
             advisories.Add($"No page file is configured, and this session's peak committed memory ({PeakCommittedGb:0.0} GB) already exceeded installed RAM ({Performance.RamTotalGb:0.0} GB) - without a page file, the commit limit can't exceed physical RAM.");
         }
