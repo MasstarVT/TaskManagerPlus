@@ -1205,6 +1205,12 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 {
                     string source = MemoryDump.FilePath;
                     string destination = dlg.FileName;
+                    // An elevated overwrite: refuse a settings-folder target reached through a junction.
+                    if (AppPaths.FindRedirectedOutput(destination) is { } redirected)
+                    {
+                        MemoryDumpStatusText = $"Couldn't copy: {redirected}.";
+                        return;
+                    }
                     MemoryDumpStatusText = $"Copying to {destination}...";
                     await Task.Run(() => System.IO.File.Copy(source, destination, overwrite: true));
                     MemoryDumpStatusText = $"Copied to {destination}.";
@@ -2208,7 +2214,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         BuildSupportBundleCommand = new AsyncRelayCommand(async () =>
         {
             string bundleDir = AppPaths.GetPath("SupportBundles");
-            try { System.IO.Directory.CreateDirectory(bundleDir); } catch { /* SaveFileDialog still works without a pre-created folder */ }
+            // Created elevated, so only when no folder on the way is a junction (BuildAsync checks the chosen path too).
+            if (AppPaths.FindRedirectedOutput(bundleDir) is null)
+            {
+                try { System.IO.Directory.CreateDirectory(bundleDir); } catch { /* SaveFileDialog still works without a pre-created folder */ }
+            }
 
             var dialog = new Microsoft.Win32.SaveFileDialog
             {
