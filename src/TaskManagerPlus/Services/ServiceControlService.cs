@@ -1426,26 +1426,57 @@ public sealed class ServiceControlService
     /// fix each Disabled entry individually. `sc config &lt;name&gt; start= &lt;type&gt;` is the same
     /// documented way SetFailureActionsAsync (#758) already writes service config, since
     /// ServiceController itself exposes no start-type setter.</summary>
+    // UsoSvc, DoSvc and BITS are Automatic (Delayed Start) on current Windows 10/11 (Start=2 plus
+    // DelayedAutostart=1 - checked on Windows 11); plain "auto" would change them.
     private static readonly (string ServiceName, string ScStartArg)[] UpdateStackDefaultStartTypes =
     {
-        ("wuauserv", "demand"), ("BITS", "demand"), ("CryptSvc", "auto"), ("msiserver", "demand"),
-        ("TrustedInstaller", "demand"), ("UsoSvc", "auto"), ("WaaSMedicSvc", "demand"), ("DoSvc", "auto"),
+        ("wuauserv", "demand"), ("BITS", "delayed-auto"), ("CryptSvc", "auto"), ("msiserver", "demand"),
+        ("TrustedInstaller", "demand"), ("UsoSvc", "delayed-auto"), ("WaaSMedicSvc", "demand"), ("DoSvc", "delayed-auto"),
     };
 
-    /// <summary>#777: runs `sc config` for every update-stack service in turn, continuing past an
-    /// individual failure (one missing/protected service shouldn't block restoring the rest) and
-    /// reporting every failure's own message. Confirmed by the caller (WindowsHealthViewModel)
-    /// before this runs, matching CLAUDE.md's "mutating actions require confirmation with the exact
-    /// effect shown" rule.</summary>
+    /// <summary>#777: runs `sc config` for each update-stack service that is currently Disabled,
+    /// continuing past an individual failure (one missing/protected service shouldn't block
+    /// restoring the rest) and reporting every failure's own message. A service that isn't
+    /// Disabled is left exactly as it is (its default can differ by Windows build, and a working
+    /// one needs no change); a missing one is skipped; one whose start type can't be read is left
+    /// alone and reported. Confirmed by the caller (WindowsHealthViewModel) before this runs,
+    /// matching CLAUDE.md's "mutating actions require confirmation with the exact effect shown"
+    /// rule.</summary>
     public static async Task<(bool Success, string? Error)> RestoreUpdateServiceStackDefaultsAsync()
     {
         var errors = new List<string>();
         foreach (var (name, startArg) in UpdateStackDefaultStartTypes)
         {
+            bool? disabled = await Task.Run(() => ReadIsDisabled(name));
+            if (disabled == false) continue;
+            if (disabled is null)
+            {
+                errors.Add($"{name}: its start type couldn't be read, so it was left unchanged");
+                continue;
+            }
             var (success, output, _) = await RunScAsync($"config \"{name}\" start= {startArg}");
             if (!success) errors.Add($"{name}: {(output.Trim().Length > 0 ? output.Trim() : "sc.exe reported an error")}");
         }
         return errors.Count == 0 ? (true, null) : (false, string.Join("; ", errors));
+    }
+
+    /// <summary>True when the service is Disabled, false when it has another start type or doesn't
+    /// exist (nothing to restore), null when its start type can't be read.</summary>
+    private static bool? ReadIsDisabled(string name)
+    {
+        try
+        {
+            using var sc = new ServiceController(name);
+            return sc.StartType == ServiceStartMode.Disabled;
+        }
+        catch (InvalidOperationException ex) when (ex.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 1060 })
+        {
+            return false;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     #endregion

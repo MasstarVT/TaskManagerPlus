@@ -237,7 +237,7 @@ public static class RemediationActionCatalog
         {
             Id = "storage.chkdsk-fix",
             Title = $"Fix file system errors on {drive}",
-            PlainEnglishDescription = $"Runs chkdsk {drive} /f, which actually repairs file system errors rather than just reporting them. If {drive} is in use (the system drive almost always is), Windows can't lock it live - queue this for next boot instead of running it now.",
+            PlainEnglishDescription = $"Runs chkdsk {drive} /f, which actually repairs file system errors rather than just reporting them. If {drive} is in use (the system drive almost always is), Windows can't lock it live - queue this for next boot instead of running it now. On a large drive the repair can take hours; it is never stopped automatically, and cancelling it interrupts a repair in progress, which can leave the drive only partly repaired.",
             Command = $"chkdsk {drive} /f",
             RiskLevel = RemediationRiskLevel.Medium,
             RequiresReboot = false,
@@ -246,8 +246,11 @@ public static class RemediationActionCatalog
             Preconditions = { new RemediationPrecondition { Kind = PreconditionKind.RequiresNtfsVolume, Parameter = drive, Blocking = true } },
             PreviewCommand = null,
             SupportsDeferredQueue = true,
-            Execute = _ => RunToolAsync("chkdsk.exe", $"{drive} /f", timeoutMs: 300_000),
-            ExecuteStreaming = (ct, onLine) => RunToolStreamingAsync("chkdsk.exe", $"{drive} /f", onLine, ct, timeoutMs: 300_000),
+            // No time limit: killing chkdsk /f mid-repair is what Microsoft advises against, and a
+            // big volume routinely needs far longer than any fixed ceiling. Only the user's Cancel
+            // stops it, so the non-streaming twin runs the same cancellable path.
+            Execute = ct => RunToolStreamingAsync("chkdsk.exe", $"{drive} /f", _ => { }, ct, timeoutMs: Timeout.Infinite),
+            ExecuteStreaming = (ct, onLine) => RunToolStreamingAsync("chkdsk.exe", $"{drive} /f", onLine, ct, timeoutMs: Timeout.Infinite),
             ParseProgressPercent = ParseChkdskProgressPercent,
         };
     }
@@ -441,12 +444,16 @@ public static class RemediationActionCatalog
     /// cancel token (RemediationReviewViewModel's Cancel button) - cancelling it kills the process
     /// and returns RemediationRunResult.Cancel rather than .Fail, so the review dialog and the
     /// journal entry it writes can say "cancelled" honestly. A separate internal timeout applies
-    /// regardless of user cancellation, same ceiling every other catalog action already uses.
+    /// regardless of user cancellation, same ceiling every other catalog action already uses -
+    /// except chkdsk /f, which passes Timeout.Infinite so a repair is never killed part-way.
     /// </summary>
     private static async Task<RemediationRunResult> RunToolStreamingAsync(string exe, string args, Action<string> onLine, CancellationToken ct, int timeoutMs)
     {
         var psi = new ProcessStartInfo(exe, args)
         {
+            // No tool here should wait on input: a Y/N prompt (chkdsk on a volume in use) reads
+            // end-of-input instead of blocking forever on the hidden console.
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -480,6 +487,7 @@ public static class RemediationActionCatalog
             return RemediationRunResult.Fail($"Couldn't start {exe}: {ex.Message}");
         }
 
+        try { process.StandardInput.Close(); } catch { /* already exited */ }
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 

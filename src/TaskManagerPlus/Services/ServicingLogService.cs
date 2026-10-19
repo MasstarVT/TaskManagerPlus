@@ -129,7 +129,7 @@ public static class ServicingLogService
     /// count (sfc.exe prints its live progress to the console, not to the log), so this is never
     /// guessed. If the live CBS.log has no `[SR]` activity at all (it rolls over at ~128 MB, so an
     /// older sfc run may have already scrolled out of it), this falls back to scanning
-    /// CbsPersist_*.log archives newest-first - #176's "these are CAB-compressed .log files, expand
+    /// CbsPersist archives (CbsPersist_*.cab, or a still plain-text .log) newest-first - #176's "expand
     /// via expand.exe rather than writing a CAB decoder" - stopping at the first archive that
     /// actually has `[SR]` activity, bounded to the 10 most recent archives so a machine with years
     /// of history doesn't expand every archive it has.</summary>
@@ -152,7 +152,7 @@ public static class ServicingLogService
         if (archives.Count == 0)
         {
             summary.Found = false;
-            summary.ErrorMessage = "No [SR] (System File Checker) activity found in CBS.log, and no CbsPersist_*.log archives exist to fall back to.";
+            summary.ErrorMessage = "No [SR] (System File Checker) activity found in CBS.log, and no CbsPersist archives exist to fall back to.";
             return summary;
         }
 
@@ -163,37 +163,44 @@ public static class ServicingLogService
         if (expandDir is null)
         {
             summary.Found = false;
-            summary.ErrorMessage = $"No [SR] (System File Checker) activity found in CBS.log, and the CbsPersist_*.log archives couldn't be checked: {dirError}";
+            summary.ErrorMessage = $"No [SR] (System File Checker) activity found in CBS.log, and the CbsPersist archives couldn't be checked: {dirError}";
             return summary;
         }
 
         try
         {
-            int checkedCount = 0, expandedCount = 0;
+            int checkedCount = 0, readCount = 0;
             foreach (var archive in archives.Take(10))
             {
                 ct.ThrowIfCancellationRequested();
                 checkedCount++;
                 progress?.Invoke($"No [SR] activity in the live log - checking archive {checkedCount}/{Math.Min(archives.Count, 10)}: {Path.GetFileName(archive)}...");
 
-                string? expandedPath = await ExpandCbsPersistArchiveAsync(archive, expandDir.FullName, ct);
-                if (expandedPath is null) continue;
-                expandedCount++;
+                // Older archives are CAB-compressed (CbsPersist_*.cab); the newest is often still a
+                // plain-text CbsPersist_*.log, which is scanned where it is.
+                bool isCab = IsCabFile(archive);
+                string? scanPath = isCab ? await ExpandCbsPersistArchiveAsync(archive, expandDir.FullName, ct) : archive;
+                if (scanPath is null) continue;
 
-                var stats = await Task.Run(() => ScanForSfcStats(expandedPath, ct), ct);
+                SfcScanStats stats;
+                try { stats = await Task.Run(() => ScanForSfcStats(scanPath, ct), ct); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
+                finally
+                {
+                    if (isCab) { try { File.Delete(scanPath); } catch { /* best-effort cleanup */ } }
+                }
+                readCount++;
                 if (stats.HasSrActivity)
                 {
                     ApplyStats(summary, stats, archive);
                     return summary;
                 }
-
-                try { File.Delete(expandedPath); } catch { /* best-effort cleanup */ }
             }
 
             summary.Found = false;
-            summary.ErrorMessage = expandedCount == checkedCount
-                ? $"No [SR] activity found in CBS.log or in the {checkedCount} most recent CbsPersist_*.log archive(s) checked."
-                : $"No [SR] activity found in CBS.log or in {expandedCount} of the {checkedCount} most recent CbsPersist_*.log archive(s); the other {checkedCount - expandedCount} couldn't be expanded.";
+            summary.ErrorMessage = readCount == checkedCount
+                ? $"No [SR] activity found in CBS.log or in the {checkedCount} most recent CbsPersist archive(s) checked."
+                : $"No [SR] activity found in CBS.log or in {readCount} of the {checkedCount} most recent CbsPersist archive(s); the other {checkedCount - readCount} couldn't be expanded or read.";
             return summary;
         }
         finally
@@ -287,7 +294,9 @@ public static class ServicingLogService
         try
         {
             if (!Directory.Exists(CbsLogFolder)) return new List<string>();
-            return Directory.GetFiles(CbsLogFolder, "CbsPersist_*.log")
+            return Directory.GetFiles(CbsLogFolder, "CbsPersist_*.*")
+                .Where(f => Path.GetExtension(f).Equals(".log", StringComparison.OrdinalIgnoreCase)
+                         || Path.GetExtension(f).Equals(".cab", StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(f => { try { return File.GetLastWriteTimeUtc(f); } catch { return DateTime.MinValue; } })
                 .ToList();
         }
@@ -297,7 +306,25 @@ public static class ServicingLogService
         }
     }
 
-    /// <summary>CbsPersist_*.log files are renamed single-file CAB archives, not plain text -
+    /// <summary>True when the file starts with the CAB signature "MSCF" - decided by content, not
+    /// extension, since older builds wrote CAB data under a .log name.</summary>
+    private static bool IsCabFile(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            Span<byte> header = stackalloc byte[4];
+            return stream.ReadAtLeast(header, 4, throwOnEndOfStream: false) == 4
+                && header[0] == (byte)'M' && header[1] == (byte)'S' && header[2] == (byte)'C' && header[3] == (byte)'F';
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>CbsPersist archives are single-file CAB archives (named .cab, or .log on older
+    /// builds), not plain text -
     /// expand.exe (a built-in Windows tool) decompresses them without this app needing to write a
     /// CAB decoder, per #176's own instructions. Returns null (never throws) on any failure -
     /// missing expand.exe, a corrupt archive, access denied - so the caller's archive-scanning loop

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -289,6 +290,9 @@ public static class SfcIntegrityService
             {
                 var json = File.ReadAllText(HistoryPath);
                 var entries = JsonSerializer.Deserialize<List<IntegrityHistoryEntry?>>(json);
+                // A file that can't be read back in full is kept as a .bak before the next save
+                // (AppendAndSave) replaces it, rather than silently restarting the history.
+                if (entries is null || entries.Any(e => e is null)) AppPaths.MarkUnreadable(HistoryPath);
                 if (entries is not null)
                 {
                     return entries
@@ -306,7 +310,11 @@ public static class SfcIntegrityService
                 }
             }
         }
-        catch { /* corrupt/unreadable file - start a fresh history rather than blocking the tab */ }
+        catch
+        {
+            // Corrupt/unreadable file - start a fresh history rather than blocking the tab.
+            try { if (File.Exists(HistoryPath)) AppPaths.MarkUnreadable(HistoryPath); } catch { /* best-effort */ }
+        }
         return new List<IntegrityHistoryEntry>();
     }
 
@@ -322,7 +330,10 @@ public static class SfcIntegrityService
         {
             string dir = Path.GetDirectoryName(HistoryPath)!;
             Directory.CreateDirectory(dir);
-            File.WriteAllText(HistoryPath, JsonSerializer.Serialize(history));
+            // Skipped when an unreadable file couldn't be kept aside first - the earlier runs
+            // CompareToPreviousRun and the repair-install trigger rely on stay recoverable.
+            if (AppPaths.PreserveUnreadable(HistoryPath))
+                AppPaths.WriteAllTextAtomic(HistoryPath, JsonSerializer.Serialize(history));
         }
         catch { /* best-effort persistence, same as boot-history.json */ }
         return history;
@@ -425,7 +436,18 @@ public static class SfcIntegrityService
         catch { /* degrade to Unknown, never fabricated */ }
 
         string architecture = "Unknown";
-        try { architecture = Environment.Is64BitOperatingSystem ? "64-bit (x64)" : "32-bit (x86)"; }
+        // The OS's own architecture (an ARM64 PC needs an ARM64 ISO; Is64BitOperatingSystem alone
+        // would call it x64).
+        try
+        {
+            architecture = RuntimeInformation.OSArchitecture switch
+            {
+                Architecture.X64 => "64-bit (x64)",
+                Architecture.Arm64 => "64-bit ARM (ARM64)",
+                Architecture.X86 => "32-bit (x86)",
+                _ => "Unknown",
+            };
+        }
         catch { /* leave Unknown */ }
 
         string language = "Unknown";

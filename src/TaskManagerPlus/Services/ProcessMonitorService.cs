@@ -38,6 +38,10 @@ public sealed class ProcessMonitorService : IDisposable
     private readonly Dictionary<int, string?> _commandLineCache = new();
     // Parent process ID never changes after launch, same caching shape as command line (#52).
     private readonly Dictionary<int, int> _parentPidCache = new();
+    // Start time each pid's cached entries belong to: a pid freed and reused between two ticks
+    // stays in seenPids, so without this a new process would inherit the old one's owner, command
+    // line and parent (and its CPU/memory history).
+    private readonly Dictionary<int, DateTime?> _cachedStartTimes = new();
     private readonly int _logicalProcessors = Environment.ProcessorCount;
     private DateTime _lastGlobalSampleUtc = DateTime.UtcNow;
 
@@ -352,6 +356,7 @@ public sealed class ProcessMonitorService : IDisposable
         PruneStaleEntries(_ownerCache, seenPids);
         PruneStaleEntries(_commandLineCache, seenPids);
         PruneStaleEntries(_parentPidCache, seenPids);
+        PruneStaleEntries(_cachedStartTimes, seenPids);
         PruneStaleEntries(_memoryHistory, seenPids);
         PruneStaleEntries(_cpuHistory, seenPids);
         PruneStaleEntries(_notRespondingSince, seenPids);
@@ -643,6 +648,7 @@ public sealed class ProcessMonitorService : IDisposable
             int pid;
             try { pid = proc.Id; }
             catch { continue; }
+            ForgetIfReused(proc, pid);
             if (!_ownerCache.ContainsKey(pid) || !_commandLineCache.ContainsKey(pid) || !_parentPidCache.ContainsKey(pid))
                 missing.Add(pid);
         }
@@ -691,6 +697,26 @@ public sealed class ProcessMonitorService : IDisposable
             // WMI unavailable/denied for this pass - the per-pid fallbacks below still run and the
             // caches just fill in more slowly, same degrade-never-fail rule as everywhere else.
         }
+    }
+
+    /// <summary>Drops every per-pid entry when <paramref name="pid"/> now belongs to a process with
+    /// a different start time than the one they were cached for. An unreadable start time on both
+    /// sides can't tell processes apart, so those entries are kept.</summary>
+    private void ForgetIfReused(Process proc, int pid)
+    {
+        DateTime? startTime = null;
+        try { startTime = proc.StartTime; } catch { /* protected process */ }
+        if (_cachedStartTimes.TryGetValue(pid, out var cachedStart) && cachedStart != startTime)
+        {
+            _ownerCache.Remove(pid);
+            _commandLineCache.Remove(pid);
+            _parentPidCache.Remove(pid);
+            _lastSamples.Remove(pid);
+            _memoryHistory.Remove(pid);
+            _cpuHistory.Remove(pid);
+            _notRespondingSince.Remove(pid);
+        }
+        _cachedStartTimes[pid] = startTime;
     }
 
     private string GetOwnerCached(int pid)

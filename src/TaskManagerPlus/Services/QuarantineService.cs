@@ -23,12 +23,21 @@ namespace TaskManagerPlus.Services;
 /// move that sit in user-writable folders are held open and checked to resolve to the path the
 /// user saw. Files an earlier version quarantined under the settings folder are never moved back
 /// automatically.
+///
+/// A same-volume move keeps the file's own permissions, which usually let the user (and so the
+/// program being quarantined) rewrite or delete it. So the quarantined file is re-owned by
+/// Administrators and made to inherit the folder's admin-only permissions; its original owner and
+/// permissions go in the origin record and are put back on Restore. Restore refuses a file whose
+/// permissions aren't admin-only, since it may no longer be what was quarantined.
 /// </summary>
 public static class QuarantineService
 {
     private const string OriginRecordName = "quarantine-origin.txt";
     private const string AreaName = "Quarantine";
+    private const AccessControlSections OwnerAndAccess = AccessControlSections.Owner | AccessControlSections.Access;
 
+    /// <summary>On success Error may still carry a note for the user (the permissions couldn't be
+    /// locked down, or a file has appeared at the original path since the move).</summary>
     public static (bool Success, string? QuarantinePath, string? Error) Quarantine(string filePath)
     {
         try
@@ -65,18 +74,44 @@ public static class QuarantineService
             string name = Path.GetFileName(fullSource);
             if (name.Equals(OriginRecordName, StringComparison.OrdinalIgnoreCase)) name = "_" + name;
             string finalDestination = Path.Combine(folder, name);
-            File.WriteAllText(Path.Combine(folder, OriginRecordName), $"{name}\n{fullSource}\n");
+            // Read through the open handle, so it's this file's owner and permissions.
+            string originalSecurity = string.Empty;
+            try { originalSecurity = source.GetAccessControl().GetSecurityDescriptorSddlForm(OwnerAndAccess); }
+            catch { /* Restore then leaves the permissions as they are */ }
+            string recordPath = Path.Combine(folder, OriginRecordName);
+            File.WriteAllText(recordPath, $"{name}\n{fullSource}\n{originalSecurity}\n");
 
-            File.Move(fullSource, finalDestination);
-
-            // Across volumes File.Move is copy-then-delete, and Windows reports success even when
-            // the delete fails (a running or locked binary) - the original would still be in place.
-            if (File.Exists(fullSource))
+            try { File.Move(fullSource, finalDestination); }
+            catch
             {
-                try { File.Delete(finalDestination); } catch { /* best-effort - leave the copy rather than fail differently */ }
+                try { File.Delete(recordPath); } catch { /* best-effort */ }
+                throw;
+            }
+
+            // A same-volume move is a rename: the open handle follows the file into the folder.
+            // Across volumes File.Move is copy-then-delete, and Windows reports success even when
+            // the delete fails (a running or locked binary) - the handle then still names the
+            // original, in place and not being deleted, and the quarantined file is only a copy.
+            // Anything else at the original path afterwards is a new file, never a reason to
+            // delete the quarantined original.
+            bool renamed = CheckResolvesTo(source.SafeFileHandle, finalDestination) is null;
+            if (!renamed && IsStillInPlace(source.SafeFileHandle, fullSource))
+            {
+                try { File.Delete(finalDestination); File.Delete(recordPath); } catch { /* best-effort - leave the copy rather than fail differently */ }
                 return (false, null, "The file was copied but the original couldn't be removed (it may be running or locked), so nothing was quarantined.");
             }
-            return (true, finalDestination, null);
+            // Closed before the check below: a deleted original keeps its name until then on some
+            // file systems.
+            source.Dispose();
+
+            var notes = new List<string>();
+            if (LockDown(finalDestination) is { } lockProblem)
+                notes.Add($"Its permissions couldn't be locked down ({lockProblem}), so programs running as you may still be able to change or remove it - it won't be moved back automatically.");
+            if (File.Exists(fullSource))
+                notes.Add(renamed
+                    ? "A new file has appeared at the original path since the move (something re-created it); it was left alone."
+                    : "A file is still at the original path after the move (something may have re-created it, or the original couldn't be fully removed); it was left alone.");
+            return (true, finalDestination, notes.Count > 0 ? string.Join(" ", notes) : null);
         }
         catch (Exception ex)
         {
@@ -121,6 +156,10 @@ public static class QuarantineService
             if ((FindReparseAttribute(fullQuarantine) ?? FindReparseAttribute(recordPath) ?? FindReparseAttribute(folder)
                  ?? CheckAdminOnly(new DirectoryInfo(folder))) is { } problem)
                 return (false, $"Not restoring: {problem}. " + byHand);
+            // A file whose permissions let other programs change it (quarantined by an earlier
+            // version, or the lock-down failed) may not be what was quarantined.
+            if (CheckAdminOnly(new FileInfo(fullQuarantine)) is { } fileProblem)
+                return (false, $"Not restoring: {fileProblem}, so it may have been changed since it was quarantined. " + byHand);
 
             using var reader = new StreamReader(record, leaveOpen: true);
             string[] lines = reader.ReadToEnd().Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
@@ -142,7 +181,17 @@ public static class QuarantineService
             using var destination = PinDirectory(originalDir, out string? pinError);
             if (destination is null) return (false, $"Not restoring: {pinError}. " + byHand);
 
-            File.Move(fullQuarantine, fullOriginal);
+            // Put the original owner and permissions back while the file is still in the
+            // admin-only folder (not by path once it's back in a folder the user can change).
+            // Inherited entries are kept as explicit ones, so the effective access is the original.
+            if (lines.Length > 2) RestoreSecurity(fullQuarantine, lines[2]);
+
+            try { File.Move(fullQuarantine, fullOriginal); }
+            catch
+            {
+                if (File.Exists(fullQuarantine)) LockDown(fullQuarantine);
+                throw;
+            }
             return (true, null);
         }
         catch (Exception ex)
@@ -195,7 +244,10 @@ public static class QuarantineService
     /// that user's own profile. The OWNER RIGHTS entry takes away the implicit WRITE_DAC the user
     /// would otherwise hold on files the elevated app creates inside (they're owned by the user
     /// under Windows' default "object creator" owner policy). Passes CheckAdminOnly.</summary>
-    internal static DirectoryInfo CreateOwnerReadableDirectory(string path)
+    /// <remarks><paramref name="alsoReadableBy"/>: one more account given read access - the
+    /// signed-in user, for a file handed to their (unelevated) shell when an administrator's
+    /// credentials were used to elevate this app.</remarks>
+    internal static DirectoryInfo CreateOwnerReadableDirectory(string path, SecurityIdentifier? alsoReadableBy = null)
     {
         const InheritanceFlags inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
         var security = new DirectorySecurity();
@@ -208,6 +260,8 @@ public static class QuarantineService
         {
             if (identity.User is { } user)
                 security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.ReadAndExecute, inherit, PropagationFlags.None, AccessControlType.Allow));
+            if (alsoReadableBy is not null && alsoReadableBy != identity.User)
+                security.AddAccessRule(new FileSystemAccessRule(alsoReadableBy, FileSystemRights.ReadAndExecute, inherit, PropagationFlags.None, AccessControlType.Allow));
         }
         var dir = new DirectoryInfo(path);
         dir.Create(security);
@@ -217,26 +271,104 @@ public static class QuarantineService
     /// <summary>Null when the folder is owned by, and modifiable only by, SYSTEM/Administrators/
     /// TrustedInstaller - i.e. an unelevated process can't have created it or planted files in it.
     /// Otherwise a short reason. Fails closed on an unreadable ACL.</summary>
-    internal static string? CheckAdminOnly(DirectoryInfo dir)
+    internal static string? CheckAdminOnly(DirectoryInfo dir) => CheckAdminOnly(dir, () => dir.GetAccessControl(OwnerAndAccess));
+
+    /// <summary>The same check for one file (the write rights are the same bits).</summary>
+    private static string? CheckAdminOnly(FileInfo file) => CheckAdminOnly(file, () => file.GetAccessControl(OwnerAndAccess));
+
+    private static string? CheckAdminOnly(FileSystemInfo item, Func<FileSystemSecurity> read)
     {
         try
         {
-            var security = dir.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+            var security = read();
             if (!IsTrustedSid(security.GetOwner(typeof(SecurityIdentifier))))
-                return $"{dir.FullName} isn't owned by Administrators";
+                return $"{item.FullName} isn't owned by Administrators";
             foreach (FileSystemAccessRule rule in security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
             {
                 if (rule.AccessControlType != AccessControlType.Allow) continue;
                 if ((rule.PropagationFlags & PropagationFlags.InheritOnly) != 0) continue;
                 if ((rule.FileSystemRights & DirectoryWriteRights) == 0) continue;
-                if (!IsTrustedSid(rule.IdentityReference)) return $"{dir.FullName} is writable by a non-administrator";
+                if (!IsTrustedSid(rule.IdentityReference)) return $"{item.FullName} is writable by a non-administrator";
             }
             return null;
         }
         catch (Exception ex)
         {
-            return $"the permissions on {dir.FullName} couldn't be read ({ex.Message})";
+            return $"the permissions on {item.FullName} couldn't be read ({ex.Message})";
         }
+    }
+
+    // ---- the quarantined file's own permissions ----
+
+    /// <summary>Drops the permissions <paramref name="path"/> brought with it (an empty, inheriting
+    /// list, so it takes the admin-only folder's), then makes Administrators its owner. Null when
+    /// the result passes CheckAdminOnly; otherwise a short reason.</summary>
+    private static string? LockDown(string path)
+    {
+        var file = new FileInfo(path);
+        try
+        {
+            var inherit = new FileSecurity();
+            inherit.SetSecurityDescriptorSddlForm("D:", AccessControlSections.Access);
+            file.SetAccessControl(inherit);
+            // After the reset Administrators hold full control, so the owner change is allowed.
+            var owner = new FileSecurity();
+            owner.SetOwner(AdministratorsSid);
+            file.SetAccessControl(owner);
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
+        return CheckAdminOnly(file);
+    }
+
+    /// <summary>Best-effort: puts back the owner and permissions recorded at quarantine time.
+    /// Owner first (Administrators still hold full control then); an owner Windows won't let this
+    /// app assign is left as Administrators. Entries the file had inherited become explicit, so
+    /// its effective access matches the original wherever it lands.</summary>
+    private static void RestoreSecurity(string path, string sddl)
+    {
+        if (string.IsNullOrWhiteSpace(sddl)) return;
+        var file = new FileInfo(path);
+        FileSecurity original;
+        try
+        {
+            original = new FileSecurity();
+            original.SetSecurityDescriptorSddlForm(sddl, OwnerAndAccess);
+        }
+        catch
+        {
+            return;
+        }
+        try
+        {
+            if (original.GetOwner(typeof(SecurityIdentifier)) is SecurityIdentifier ownerSid)
+            {
+                var owner = new FileSecurity();
+                owner.SetOwner(ownerSid);
+                file.SetAccessControl(owner);
+            }
+        }
+        catch { /* keep Administrators as owner */ }
+        try
+        {
+            var access = new FileSecurity();
+            access.SetSecurityDescriptorSddlForm(sddl, AccessControlSections.Access);
+            access.SetAccessRuleProtection(isProtected: true, preserveInheritance: true);
+            file.SetAccessControl(access);
+        }
+        catch { /* the file keeps the quarantine folder's permissions */ }
+    }
+
+    /// <summary>True when the open <paramref name="handle"/> still names <paramref name="path"/>
+    /// and the file isn't being deleted - i.e. a cross-volume move left the original in place.
+    /// False whenever that can't be shown.</summary>
+    private static bool IsStillInPlace(SafeFileHandle handle, string path)
+    {
+        if (!GetFileInformationByHandleEx(handle, FileStandardInfoClass, out FileStandardInfo info, (uint)Marshal.SizeOf<FileStandardInfo>()))
+            return false;
+        return info.DeletePending == 0 && info.NumberOfLinks > 0 && CheckResolvesTo(handle, path) is null;
     }
 
     /// <summary>Null when <paramref name="path"/> (a file or folder) itself isn't a junction/symlink.</summary>
@@ -255,18 +387,38 @@ public static class QuarantineService
     {
         error = null;
         string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
-        if (!Directory.Exists(full))
+        if (Directory.Exists(full)) return OpenDirectory(full, out error);
+
+        // Missing folders are created one level at a time inside a pinned, checked parent, and
+        // each new one is pinned and checked before the next is made inside it - a fresh folder
+        // swapped for a junction is caught before anything is created through it.
+        var missing = new Stack<string>();
+        string? existing = full;
+        while (existing is not null && !Directory.Exists(existing))
         {
-            // Pin the nearest existing ancestor first, so the folders created below it can only
-            // land where that ancestor really is.
-            string? existing = Path.GetDirectoryName(full);
-            while (existing is not null && !Directory.Exists(existing)) existing = Path.GetDirectoryName(existing);
-            if (existing is null) { error = $"{full} has no existing parent folder"; return null; }
-            using var ancestor = OpenDirectory(existing, out error);
-            if (ancestor is null) return null;
-            Directory.CreateDirectory(full);
+            missing.Push(existing);
+            existing = Path.GetDirectoryName(existing);
         }
-        return OpenDirectory(full, out error);
+        if (existing is null) { error = $"{full} has no existing parent folder"; return null; }
+
+        var parent = OpenDirectory(existing, out error);
+        if (parent is null) return null;
+        while (missing.Count > 0)
+        {
+            string level = missing.Pop();
+            try { Directory.CreateDirectory(level); }
+            catch (Exception ex)
+            {
+                parent.Dispose();
+                error = $"{level} couldn't be created ({ex.Message})";
+                return null;
+            }
+            var child = OpenDirectory(level, out error);
+            parent.Dispose();
+            if (child is null) return null;
+            parent = child;
+        }
+        return parent;
     }
 
     private static SafeFileHandle? OpenDirectory(string directory, out string? error)
@@ -330,6 +482,22 @@ public static class QuarantineService
 
     private const uint FileReadAttributes = 0x80;
     private const uint FileFlagBackupSemantics = 0x02000000;
+    private const int FileStandardInfoClass = 1;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileStandardInfo
+    {
+        public long AllocationSize;
+        public long EndOfFile;
+        public uint NumberOfLinks;
+        public byte DeletePending;
+        public byte Directory;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(SafeFileHandle hFile, int fileInformationClass,
+        out FileStandardInfo lpFileInformation, uint dwBufferSize);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string lpFileName, uint dwDesiredAccess, FileShare dwShareMode,

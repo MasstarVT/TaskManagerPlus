@@ -738,6 +738,17 @@ public sealed class RulesEngineService : IDisposable
     /// <summary>#927: true when this condition tree references a `finding.&lt;ruleId&gt;.fired`
     /// synthetic metric anywhere - marks a rule as composite (dependent on another rule's outcome),
     /// which PreviewAll evaluates in a second pass.</summary>
+    /// <summary>The rule id in a `finding.&lt;ruleId&gt;.fired` key, or null for any other metric.</summary>
+    private static string? FindingRuleId(string metric)
+    {
+        const string prefix = "finding.", suffix = ".fired";
+        return metric.Length > prefix.Length + suffix.Length
+            && metric.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            && metric.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+            ? metric[prefix.Length..^suffix.Length]
+            : null;
+    }
+
     private static bool ReferencesFinding(RuleCondition cond)
     {
         if (cond.Metric is { Length: > 0 } m && m.StartsWith("finding.", StringComparison.OrdinalIgnoreCase)) return true;
@@ -936,6 +947,19 @@ public sealed class RulesEngineService : IDisposable
         DateTime now = DateTime.UtcNow;
 
         var result = new RuleEvaluationResult();
+
+        // Rules that can't be decided this pass. Their finding.<id>.fired key still reads false
+        // in the bag, so a composite rule reading one is routed to "could not check" below too,
+        // instead of being judged on an input that was never checked.
+        var undecided = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in preview)
+        {
+            if (!p.Rule.Enabled) continue;
+            var r = p.Rule.Rule;
+            if (notEnoughHistoryRuleIds.Contains(r.Id) || AllReferencedMetrics(r.Condition).Any(unavailableMetrics.Contains))
+                undecided.Add(r.Id);
+        }
+
         foreach (var p in preview)
         {
             if (!p.Rule.Enabled) continue;
@@ -963,6 +987,17 @@ public sealed class RulesEngineService : IDisposable
                     Title = rule.Title,
                     UnavailableMetrics = new List<string> { $"{rule.Condition.Metric} history for {rule.SustainedForSeconds}s" },
                 });
+                continue;
+            }
+
+            var undecidedInputs = AllReferencedMetrics(rule.Condition)
+                .Where(m => FindingRuleId(m) is { } id && undecided.Contains(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(m => $"{m} (that rule couldn't be checked)")
+                .ToList();
+            if (undecidedInputs.Count > 0)
+            {
+                result.CouldNotCheck.Add(new CouldNotEvaluateInfo { RuleId = rule.Id, Title = rule.Title, UnavailableMetrics = undecidedInputs });
                 continue;
             }
 
