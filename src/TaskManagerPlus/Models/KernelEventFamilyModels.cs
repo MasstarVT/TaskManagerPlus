@@ -5,8 +5,8 @@ namespace TaskManagerPlus.Models;
 /// specific, named event-ID family (rather than the broad Level=1|2 sweep EventLogService.ReadLog
 /// already does) and present the result as a focused, purpose-built card instead of a handful of
 /// rows buried in the flat "Recent critical / error events" grid. Every type here is built by
-/// KernelEventFamilyService, which reuses EventLogExplorerService.ReadPage for the actual log reads
-/// (see that service's remarks) rather than adding a new event-log reading path.
+/// KernelEventFamilyService, which reuses EventLogExplorerService.ReadPage for most log reads
+/// (see that service's remarks for the two counting passes that don't).
 /// </summary>
 
 /// <summary>#184: one physical disk's worth of the storage-fault event family (disk 7/11/51/153,

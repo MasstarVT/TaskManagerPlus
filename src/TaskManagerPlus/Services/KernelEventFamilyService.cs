@@ -16,7 +16,8 @@ namespace TaskManagerPlus.Services;
 /// one Stability-tab card apiece. Every log read reuses EventLogExplorerService.ReadPage (via the
 /// private ReadFamily helper below) rather than adding a fifth event-log reading path alongside
 /// EventLogService/EventLogExplorerService/EventAnomalyDetectionService/EventTimelineService
-/// (the one exception is ReadWheaErrors' timestamp-only count, see CountFamilyByDay).
+/// (the exceptions are the two message-free counting passes, CountFamilyByDay for WHEA and
+/// ReadStorageRecords for storage errors, which must count past a single page).
 /// Every method here follows the same "degrade to empty/Unknown/hidden, never fabricate, never
 /// throw out of the service" rule as the rest of this app's Services/ layer - a locked-down
 /// channel, an event whose message text doesn't match the expected shape, or a shelled-out tool
