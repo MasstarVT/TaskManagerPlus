@@ -455,7 +455,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // UpdateUrl comes from a network response - ExternalLinkService only hands an http/https
         // URL to ShellExecute, never a path this elevated process would run. Best-effort either
         // way; the banner text still shows the version.
-        OpenUpdateUrlCommand = new RelayCommand(_ => ExternalLinkService.TryOpen(UpdateUrl));
+        OpenUpdateUrlCommand = new RelayCommand(_ =>
+        {
+            // Couldn't open the browser: the link is copied instead and the banner says so.
+            if (ExternalLinkService.OpenUrlOrCopy(UpdateUrl) is { } fallback) UpdateAvailableText = fallback;
+        });
         _ = CheckForUpdateAsync();
 
         // suggestions.md #997: one file-tracker comparison at startup - a directory listing plus

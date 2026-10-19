@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Windows;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
 using TaskManagerPlus.Services;
@@ -218,6 +219,17 @@ public sealed class ChangeJournalViewModel : ObservableObject
     private async Task RestoreFromBackupAsync(ChangeJournalRow? row)
     {
         if (row?.Entry.RegistryBackupPath is not { Length: > 0 }) return;
+
+        // Show exactly what would be imported (key and values) before an elevated reg import.
+        var (description, describeError) = RegistryBackupService.DescribeBackup(row.Entry);
+        if (description is null)
+        {
+            row.ResultText = $"Couldn't restore from backup: {describeError}";
+            return;
+        }
+        if (MessageBox.Show($"Import this registry backup?\n\n{description}", "Restore from backup",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            return;
 
         row.IsBusy = true;
         try

@@ -178,6 +178,12 @@ public static class QuarantineService
         security.AddAccessRule(new FileSystemAccessRule(LocalSystemSid, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
         security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
             FileSystemRights.ReadAndExecute, inherit, PropagationFlags.None, AccessControlType.Allow));
+        // OWNER RIGHTS (S-1-3-4): files the elevated app creates in here are owned by the user
+        // account under the default "object creator" owner policy, and an owner implicitly holds
+        // WRITE_DAC - which would let an unelevated same-user process re-ACL and rewrite them.
+        // An explicit OWNER RIGHTS entry replaces that implicit grant with read-only.
+        security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-3-4"),
+            FileSystemRights.ReadAndExecute, inherit, PropagationFlags.None, AccessControlType.Allow));
         var dir = new DirectoryInfo(path);
         dir.Create(security);
         return dir;

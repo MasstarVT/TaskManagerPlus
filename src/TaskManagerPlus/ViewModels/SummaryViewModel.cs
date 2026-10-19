@@ -896,7 +896,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         try
         {
             ReportPrintService.PrintHtml(BuildReportHtml(), "TaskManagerPlus-Report");
-            PrintReportStatusText = "Sent to your default print handler.";
+            PrintReportStatusText = "Opened in your browser - its print dialog should appear.";
         }
         catch (Exception ex)
         {

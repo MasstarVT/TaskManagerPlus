@@ -36,8 +36,8 @@ public partial class App : Application
         TaskManagerPlus.Common.ScrollChaining.Register();
 
         // Per-operation folders under %ProgramData%\TaskManagerPlus\Temp left behind by a crash
-        // mid-operation (or kept reports) - swept once a week; never creates the folder.
-        _ = System.Threading.Tasks.Task.Run(() => AdminDataPaths.PurgeStaleTemp(TimeSpan.FromDays(7)));
+        // mid-operation, and print reports a browser has finished with - swept after a day; never creates the folder.
+        _ = System.Threading.Tasks.Task.Run(() => AdminDataPaths.PurgeStaleTemp(TimeSpan.FromDays(1)));
 
         // WPF bindings format and parse with the element's Language, which defaults to en-US
         // regardless of the user's regional settings: dates rendered M/d/yyyy and a de-DE user

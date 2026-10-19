@@ -509,6 +509,7 @@ public static class ScheduledTaskService
                     string runAsUser = principal?.Element(ns + "UserId")?.Value
                         ?? principal?.Element(ns + "GroupId")?.Value
                         ?? string.Empty;
+                    string runLevel = principal?.Element(ns + "RunLevel")?.Value ?? string.Empty;
 
                     var actionParts = new List<string>();
                     var actionsEl = taskEl.Element(ns + "Actions");
@@ -532,6 +533,7 @@ public static class ScheduledTaskService
                         FolderPath = folderPath,
                         IsHidden = isHidden,
                         RunAsUser = runAsUser,
+                        RunLevel = runLevel,
                         ActionCommand = string.Join(" ; ", actionParts),
                     });
                 }
