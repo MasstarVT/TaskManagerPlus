@@ -34,11 +34,14 @@ public static class BatteryDrainAttributionService
     public static async Task<(List<BatteryDrainAttributionRow> Rows, string StatusText)> ReadRecentDrainAsync(
         int lookbackDays = DefaultLookbackDays)
     {
-        string tempDir = Path.Combine(Path.GetTempPath(), "TaskManagerPlus");
-        string tempFile = Path.Combine(tempDir, $"srum-{Guid.NewGuid():N}.xml");
+        // A per-call admin-only folder, not %TEMP%: an unelevated process could swap a %TEMP%
+        // folder for a junction and redirect the elevated powercfg write or the delete below.
+        var tempDir = AdminDataPaths.CreatePrivateTempDirectory("srumutil", out string? dirError);
+        if (tempDir is null)
+            return (new List<BatteryDrainAttributionRow>(), $"powercfg /srumutil wasn't run: {dirError ?? "couldn't create a private folder for its output"}.");
+        string tempFile = Path.Combine(tempDir.FullName, "srum.xml");
         try
         {
-            Directory.CreateDirectory(tempDir);
             // /srumutil can take a while on a machine with a large SRUM database - a longer
             // timeout than the other powercfg shell-outs in this app, same reasoning
             // TracerouteService gives its own longer-than-default bound.
@@ -65,7 +68,7 @@ public static class BatteryDrainAttributionService
         }
         finally
         {
-            try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { /* best-effort cleanup */ }
+            AdminDataPaths.TryDelete(tempDir);
         }
     }
 

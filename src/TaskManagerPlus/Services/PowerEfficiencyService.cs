@@ -37,11 +37,15 @@ public static class PowerEfficiencyService
     public static async Task<(List<PowerEfficiencyFinding> Findings, string StatusText, string? ReportPath)> RunScanAsync(
         IProgress<string>? progress = null)
     {
-        string tempDir = Path.Combine(Path.GetTempPath(), "TaskManagerPlus");
-        string reportPath = Path.Combine(tempDir, $"energy-report-{Guid.NewGuid():N}.html");
+        // A per-call admin-only folder, not %TEMP%: an unelevated process could swap a %TEMP%
+        // folder for a junction and redirect the elevated powercfg write. The report stays there
+        // afterwards (readable, not writable, by ordinary users) since the status text points at it.
+        var tempDir = AdminDataPaths.CreatePrivateTempDirectory("energyreport", out string? dirError);
+        if (tempDir is null)
+            return (new List<PowerEfficiencyFinding>(), $"powercfg /energy wasn't run: {dirError ?? "couldn't create a private folder for its report"}.", null);
+        string reportPath = Path.Combine(tempDir.FullName, "energy-report.html");
         try
         {
-            Directory.CreateDirectory(tempDir);
             progress?.Report("Running powercfg /energy - this takes about 60 seconds...");
 
             // 60s trace + generous margin for powercfg's own startup/report-write time, not the
@@ -49,7 +53,10 @@ public static class PowerEfficiencyService
             var (output, exitCode) = await RunProcessAsync("powercfg.exe", $"/energy /output \"{reportPath}\" /duration 60", 100000);
 
             if (!File.Exists(reportPath))
+            {
+                AdminDataPaths.TryDelete(tempDir);
                 return (new List<PowerEfficiencyFinding>(), $"powercfg /energy didn't produce a report: {Truncate(output.Trim(), 300)}", null);
+            }
 
             string html = await File.ReadAllTextAsync(reportPath);
             var findings = ParseReport(html);
@@ -73,6 +80,7 @@ public static class PowerEfficiencyService
         }
         catch (Exception ex)
         {
+            AdminDataPaths.TryDelete(tempDir);
             return (new List<PowerEfficiencyFinding>(), $"Couldn't run powercfg /energy: {ex.Message}", null);
         }
     }

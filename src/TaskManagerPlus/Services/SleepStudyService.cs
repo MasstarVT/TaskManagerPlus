@@ -46,11 +46,15 @@ public static class SleepStudyService
             catch { /* best-effort probe only - falls straight through to /sleepstudy below either way */ }
         }
 
-        string tempDir = Path.Combine(Path.GetTempPath(), "TaskManagerPlus");
-        string tempFile = Path.Combine(tempDir, $"sleepstudy-{Guid.NewGuid():N}.xml");
+        // A per-call admin-only folder, not %TEMP%: an unelevated process could swap a %TEMP%
+        // folder for a junction and redirect the elevated powercfg write or the delete below.
+        var tempDir = AdminDataPaths.CreatePrivateTempDirectory("sleepstudy", out string? dirError);
+        if (tempDir is null)
+            return (new List<SleepStudySession>(), new List<SleepStudyOffender>(),
+                $"powercfg /sleepstudy wasn't run: {dirError ?? "couldn't create a private folder for its report"}.");
+        string tempFile = Path.Combine(tempDir.FullName, "sleepstudy.xml");
         try
         {
-            Directory.CreateDirectory(tempDir);
             var (output, exitCode) = await RunProcessAsync("powercfg.exe", $"/sleepstudy /xml /output \"{tempFile}\"", 30000);
             // Killed at the timeout, a half-written report parses as "no recognizable session data" -
             // say what actually happened instead.
@@ -80,7 +84,7 @@ public static class SleepStudyService
         }
         finally
         {
-            try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { /* best-effort cleanup */ }
+            AdminDataPaths.TryDelete(tempDir);
         }
     }
 

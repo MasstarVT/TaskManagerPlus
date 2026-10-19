@@ -142,6 +142,11 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     /// second time. Null exactly when CpuThermalHeadroomC is null (no reported ceiling, and no
     /// persisted thermal-throttle episode yet to infer one from).</summary>
     private double? _cpuThrottlePointReferenceC;
+
+    // Lowest thermal-episode peak accepted as a throttle-point reference - see the episode
+    // fallback in RefreshCoreAsync.
+    private const double MinPlausibleThrottlePeakC = 75.0;
+
     public double? CpuThrottlePointReferenceC { get => _cpuThrottlePointReferenceC; private set => SetProperty(ref _cpuThrottlePointReferenceC, value); }
 
     private double? _gpuTempC;
@@ -1538,6 +1543,11 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             if (Math.Abs(_timer.Interval.TotalSeconds - clamped) < 0.01) return;
 
             _timer.Interval = TimeSpan.FromSeconds(clamped);
+            // The stress-test supervisor judges staleness by the interval stamped on the last
+            // publish. Widen it now, or the gap before the first tick at a longer interval reads
+            // as a stalled sensor and aborts a running test.
+            lock (_stressSnapshotLock)
+                _stressSnapshot = _stressSnapshot with { PollIntervalSeconds = Math.Max(_stressSnapshot.PollIntervalSeconds, clamped) };
             var settings = PollIntervalSettingsService.Load();
             settings.EnergyThermalsSeconds = clamped;
             PollIntervalSettingsService.Save(settings);
@@ -2003,6 +2013,10 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // RPM is a normal, real reading for a semi-passive fan that's stopped at idle.
         var tempReadings = readings.Where(r => r.Type == SensorType.Temperature && HasNonZeroReading(r)).ToList();
         Replace(Temperatures, tempReadings.Select(WithSessionBaseline));
+        // LibreHardwareMonitor's Intel per-core "Distance to TjMax" sensors are Temperature-typed but
+        // read the margin left below the limit (about 60 at idle, shrinking as the core heats). They
+        // stay in the list above; every "how hot is it" lookup below works without them.
+        tempReadings = tempReadings.Where(r => !IsDistanceToLimit(r)).ToList();
 
         // #450: DIMM temperature sensors - a highlighted subset of Temperatures above (same
         // "still in the full list too" pattern the CPU/motherboard/GPU headline tiles already
@@ -2010,20 +2024,10 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // "RAM" can't collide with this lookup.
         Replace(MemoryTemperatures, tempReadings.Where(r => r.HardwareType == HardwareType.Memory).Select(WithSessionBaseline));
 
-        // #614/#615/#616: session-max/historical-max tracking, per-fan OK/Slow/Stopped/Not-
-        // reporting status, and pump-channel tagging - see EnrichFanReadings' remarks. Computed
-        // from the raw readings (fanReadings) so #615's sibling comparison and #613's hunting
-        // detector below both see the same un-enriched RPM values, then the *enriched* copies
-        // (carrying FanStatus/HistoricalMaxRpm/StepLossDetected/IsPumpChannel) are what the UI
-        // list (Fans) actually binds to.
+        // Raw fan readings - enriched for the Fans list further down, once the headline CPU/GPU
+        // temperatures that gate step-loss judging are known.
         var fanReadings = readings.Where(r => r.Type == SensorType.Fan && r.Value.HasValue).ToList();
-        if (tempReadings.Any(r => (r.HardwareType == HardwareType.Cpu || IsGpu(r.HardwareType)) && r.Value is float hot && hot >= FanStepLossLoadTempC))
-            _fanStepLossHotTicks++;
-        var enrichedFanReadings = EnrichFanReadings(fanReadings);
-        Replace(Fans, enrichedFanReadings);
 
-        // #616: coolant-pump variance card - rebuilt from the same enriched readings.
-        RefreshCoolantPumps(enrichedFanReadings);
         // #96/#620: out-of-spec voltage-rail flagging, deviation percent, and per-hour excursion
         // count - see WithVoltageSpecCheck/TrackVoltageExcursions' remarks.
         var voltageReadingsList = readings.Where(r => r.Type == SensorType.Voltage && HasNonZeroReading(r)).Select(WithVoltageSpecCheck).ToList();
@@ -2067,7 +2071,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // Sensor names aren't standardized across CPU vendors (Intel: "CPU Package"; AMD:
         // "Core (Tctl/Tdie)"; varies further by model), so try a few known hints in order
         // rather than one brittle exact-string lookup.
-        CpuPackageTempC = FindByNameContains(Temperatures, "CPU Package", "Core (Tctl/Tdie)", "CPU");
+        CpuPackageTempC = FindByNameContains(Temperatures.Where(r => !IsDistanceToLimit(r)), "CPU Package", "Core (Tctl/Tdie)", "CPU");
         TotalPackagePowerW = FindByNameContains(Wattages, "CPU Package", "Package", "CPU Cores", "CPU");
 
         // #611: bucket this tick's (load, power) into a decile pair and accumulate it - flushed
@@ -2103,6 +2107,32 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             ? gpuHotspot - gpuEdge : null;
         GpuTempC = gpuEdge;
 
+        // The hottest core/edge reading across every GPU, for the stress-test guard and the
+        // step-loss gate. LibreHardwareMonitor enumerates AMD before NVIDIA, so the first match
+        // above can be an idle Ryzen iGPU while the dGPU carries the load. Hotspot and memory
+        // junction are left out on purpose: they run 10-20°C above the core reading the stress
+        // ceiling is set against.
+        double? gpuHottestCore = gpuTemps
+            .GroupBy(HardwareKeyOf)
+            .Select(g => FindByNameContains(g, "GPU Core", "Edge", "Core"))
+            .Max();
+
+        // #614/#615/#616: session-max/historical-max tracking, per-fan OK/Slow/Stopped/Not-
+        // reporting status, and pump-channel tagging - see EnrichFanReadings' remarks. Computed
+        // from the raw readings (fanReadings) so #615's sibling comparison and #613's hunting
+        // detector both see the same un-enriched RPM values, then the *enriched* copies
+        // (carrying FanStatus/HistoricalMaxRpm/StepLossDetected/IsPumpChannel) are what the UI
+        // list (Fans) actually binds to. The "session ran hot" gate reads the headline CPU package
+        // and GPU core temperatures only - any-sensor-at-80 also caught GDDR6X memory junctions,
+        // which pass 80 under light load.
+        if (CpuPackageTempC >= FanStepLossLoadTempC || gpuHottestCore >= FanStepLossLoadTempC)
+            _fanStepLossHotTicks++;
+        var enrichedFanReadings = EnrichFanReadings(fanReadings);
+        Replace(Fans, enrichedFanReadings);
+
+        // #616: coolant-pump variance card - rebuilt from the same enriched readings.
+        RefreshCoolantPumps(enrichedFanReadings);
+
         // Round 18, #1020: publish the scalar snapshot the stress-test safety supervisor reads
         // from its background thread. The Vcore/fan lookups mirror what StressTestViewModel.
         // BuildTraceSample used to run directly against the Voltages/Fans collections.
@@ -2112,7 +2142,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
                  v.SensorName.Contains("CPU Core", StringComparison.OrdinalIgnoreCase)));
             var stressFan = enrichedFanReadings.FirstOrDefault(f => f.Value.HasValue);
             var stressSnapshot = new StressSensorSnapshot(
-                CpuPackageTempC, GpuTempC, TotalPackagePowerW,
+                CpuPackageTempC, gpuHottestCore, TotalPackagePowerW,
                 (double?)stressRail?.Value, (double?)stressFan?.Value,
                 Environment.TickCount64, _timer.Interval.TotalSeconds);
             lock (_stressSnapshotLock) _stressSnapshot = stressSnapshot;
@@ -2135,8 +2165,9 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
         // #608: thermal headroom - remaining °C before an inferred/reported throttle point, which
         // predicts "will this throttle under more load" better than an absolute reading alone.
-        // Prefer a directly reported ceiling (rare - most LibreHardwareMonitorLib backends don't
-        // expose TjMax), falling back to the lowest peak temperature ever recorded across this
+        // Prefer a directly reported ceiling (rare - LibreHardwareMonitorLib 0.9.6 exposes no TjMax
+        // sensor at all; its Intel "Distance to TjMax" margins are filtered out of tempReadings
+        // above), falling back to the lowest peak temperature ever recorded across this
         // machine's own persisted Thermal episodes (#604) as the closest available proxy for
         // "the temperature this CPU actually starts throttling at". Null (tile hidden) when
         // neither is available yet - never a fabricated ceiling.
@@ -2146,8 +2177,11 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         {
             // PeakTempC is persisted as 0 for an episode that opened (and closed) with no CPU
             // temperature reading at all - that is "unknown", not a 0°C throttle point; letting it
-            // in made this ceiling 0, and the stress-test abort (reference - 5) -5°C.
-            var thermalEpisodes = _persistedEpisodes.Where(e => e.ReasonClass == ThrottleReasonClass.Thermal && e.PeakTempC > 0).ToList();
+            // in made this ceiling 0, and the stress-test abort (reference - 5) -5°C. Peaks below
+            // MinPlausibleThrottlePeakC are left out too: an episode is classed Thermal whenever an
+            // ACPI zone reports passive throttling, whatever the CPU temperature, and laptop _PSV
+            // trips in the 60s would otherwise drag the stress ceiling down to the 50s.
+            var thermalEpisodes = _persistedEpisodes.Where(e => e.ReasonClass == ThrottleReasonClass.Thermal && e.PeakTempC >= MinPlausibleThrottlePeakC).ToList();
             if (thermalEpisodes.Count > 0) cpuCeiling = thermalEpisodes.Min(e => e.PeakTempC);
         }
         CpuThermalHeadroomC = cpuCeiling.HasValue && CpuPackageTempC.HasValue ? cpuCeiling - CpuPackageTempC : null;
@@ -3781,6 +3815,20 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     }
 
     private static bool HasNonZeroReading(SensorReading r) => r.Value is float v && v != 0f;
+
+    /// <summary>A Temperature-typed sensor that reports the margin below a limit, not a
+    /// temperature (LibreHardwareMonitor's Intel "CPU Core #N Distance to TjMax").</summary>
+    private static bool IsDistanceToLimit(SensorReading r) => r.SensorName.Contains("Distance", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Groups readings by device: "/gpu-nvidia/0/temperature/0" -> "/gpu-nvidia/0", so two
+    /// identical cards stay separate. Falls back to the hardware name without an identifier.</summary>
+    private static string HardwareKeyOf(SensorReading r)
+    {
+        string id = r.Identifier;
+        int last = id.LastIndexOf('/');
+        int cut = last > 0 ? id.LastIndexOf('/', last - 1) : -1;
+        return cut > 0 ? id[..cut] : r.HardwareName;
+    }
 
     private static double? FindByNameContains(IEnumerable<SensorReading> sensors, params string[] hints)
     {

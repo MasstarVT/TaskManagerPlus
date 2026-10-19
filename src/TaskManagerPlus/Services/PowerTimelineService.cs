@@ -27,6 +27,12 @@ public static class PowerTimelineService
     private static readonly TimeSpan FailureSignalLeadTolerance = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan FailureSignalWindowAfterBoot = TimeSpan.FromMinutes(5);
 
+    // A resume only counts as failed when the next boot came soon after it. A session that ran for
+    // hours or days after a good resume and then crashed is a crash, not a failed resume. These
+    // events don't say when the session died, so a failed resume left powered off for longer than
+    // this before the next boot is missed rather than guessed at.
+    private static readonly TimeSpan MaxFailedResumeToNextBoot = TimeSpan.FromMinutes(10);
+
     public static List<PowerTimelineEntry> Read()
     {
         var results = new List<PowerTimelineEntry>();
@@ -136,6 +142,7 @@ public static class PowerTimelineService
                 // means the resumed session hasn't ended (or isn't logged), so nothing to flag.
                 DateTime nextBoot = bootTimesAsc.FirstOrDefault(t => t > resume.Time);
                 if (nextBoot == default) continue;
+                if (nextBoot - resume.Time > MaxFailedResumeToNextBoot) continue;
 
                 var failure = failureSignals.FirstOrDefault(f =>
                     f.TimeCreated > resume.Time &&

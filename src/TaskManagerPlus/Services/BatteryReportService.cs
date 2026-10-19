@@ -32,42 +32,51 @@ public static class BatteryReportService
     /// empty) and an empty string when the primary path succeeded or nothing at all is available.</summary>
     public static async Task<(BatteryReportInfo? Report, string StatusText)> GetReportAsync()
     {
-        var fromPowercfg = await RunPowercfgReportAsync();
+        var (fromPowercfg, notRunReason) = await RunPowercfgReportAsync();
         if (fromPowercfg is not null) return (fromPowercfg, string.Empty);
+
+        string powercfgNote = notRunReason is not null
+            ? $"powercfg /batteryreport wasn't run: {notRunReason}."
+            : "powercfg /batteryreport wasn't available (blocked, missing, or an unrecognized report format).";
 
         var fromWmi = await Task.Run(ReadWmiFallback);
         if (fromWmi is not null)
         {
             return (fromWmi,
-                "powercfg /batteryreport wasn't available (blocked, missing, or an unrecognized report format) - " +
-                "showing cycle count/capacity from WMI instead. No capacity-history or recent-usage data from this source.");
+                powercfgNote + " Showing cycle count/capacity from WMI instead. No capacity-history or recent-usage data from this source.");
         }
 
-        return (null, "No battery report available from powercfg or WMI on this system.");
+        return (null, notRunReason is not null
+            ? powercfgNote + " WMI reported no battery on this system either."
+            : "No battery report available from powercfg or WMI on this system.");
     }
 
     // ---- #641: powercfg /batteryreport ----------------------------------------------------
 
-    private static async Task<BatteryReportInfo?> RunPowercfgReportAsync()
+    /// <summary>The report is written into a per-call admin-only folder: the elevated powercfg
+    /// write, the read-back and the delete must not land in %TEMP%, where an unelevated process
+    /// can swap the folder for a junction. NotRunReason is set when no such folder could be made,
+    /// and powercfg is then not run at all.</summary>
+    private static async Task<(BatteryReportInfo? Report, string? NotRunReason)> RunPowercfgReportAsync()
     {
-        string tempDir = Path.Combine(Path.GetTempPath(), "TaskManagerPlus");
-        string tempFile = Path.Combine(tempDir, $"battery-report-{Guid.NewGuid():N}.xml");
+        var tempDir = AdminDataPaths.CreatePrivateTempDirectory("batteryreport", out string? dirError);
+        if (tempDir is null) return (null, dirError ?? "couldn't create a private folder for the report");
+        string tempFile = Path.Combine(tempDir.FullName, "battery-report.xml");
         try
         {
-            Directory.CreateDirectory(tempDir);
             await RunProcessAsync("powercfg.exe", $"/batteryreport /xml /output \"{tempFile}\"", 20000);
-            if (!File.Exists(tempFile)) return null;
+            if (!File.Exists(tempFile)) return (null, null);
 
             string xml = await File.ReadAllTextAsync(tempFile);
-            return ParseBatteryReportXml(xml);
+            return (ParseBatteryReportXml(xml), null);
         }
         catch
         {
-            return null;
+            return (null, null);
         }
         finally
         {
-            try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { /* best-effort cleanup */ }
+            AdminDataPaths.TryDelete(tempDir);
         }
     }
 

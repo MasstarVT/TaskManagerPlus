@@ -27,12 +27,20 @@ public static class StressTestHistoryService
                 var list = JsonSerializer.Deserialize<List<StressTestHistoryEntry>>(json);
                 // Null elements dropped first - one would throw inside OrderByDescending and the
                 // next save would then overwrite the whole history.
-                if (list is not null) return list.Where(e => e is not null).OrderByDescending(e => e.Timestamp).ToList();
+                if (list is not null)
+                {
+                    var kept = list.Where(e => e is not null).OrderByDescending(e => e.Timestamp).ToList();
+                    if (kept.Count != list.Count) AppPaths.MarkUnreadable(SettingsPath);
+                    return kept;
+                }
+                AppPaths.MarkUnreadable(SettingsPath);
             }
         }
         catch
         {
-            // Corrupt or unreadable settings file - fall back to "no history".
+            // Corrupt or unreadable settings file - fall back to "no history", and keep a copy of
+            // it before the next Append writes over it.
+            AppPaths.MarkUnreadable(SettingsPath);
         }
         return new List<StressTestHistoryEntry>();
     }
@@ -47,8 +55,9 @@ public static class StressTestHistoryService
         {
             var dir = Path.GetDirectoryName(SettingsPath)!;
             Directory.CreateDirectory(dir);
+            if (!AppPaths.PreserveUnreadable(SettingsPath)) return entries;
             var json = JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(SettingsPath, json);
+            AppPaths.WriteAllTextAtomic(SettingsPath, json);
         }
         catch
         {
@@ -60,9 +69,10 @@ public static class StressTestHistoryService
     }
 
     /// <summary>The most recent PRIOR entry of the same test type - what a freshly finished run
-    /// should be compared against. Null when this is the first recorded run of that type.</summary>
+    /// should be compared against. Null when this is the first recorded run of that type. Skipped
+    /// runs tested nothing, so they're never the baseline.</summary>
     public static StressTestHistoryEntry? FindMostRecentOfSameType(IEnumerable<StressTestHistoryEntry> entries, StressTestType type, DateTime excludeAtOrAfter)
-        => entries.Where(e => e.TestType == type && e.Timestamp < excludeAtOrAfter)
+        => entries.Where(e => e.TestType == type && !e.Skipped && e.Timestamp < excludeAtOrAfter)
             .OrderByDescending(e => e.Timestamp)
             .FirstOrDefault();
 }

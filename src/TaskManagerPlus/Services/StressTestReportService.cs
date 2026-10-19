@@ -113,7 +113,8 @@ public static class StressTestReportService
             Line();
         }
 
-        if (previous is not null)
+        // A skipped run tested nothing - comparing it would judge it "now FAILING".
+        if (previous is not null && !result.Criteria.Skipped)
         {
             Line("## Compared to the previous run of this test");
             Line(BuildComparisonText(result, previous));
@@ -181,7 +182,8 @@ public static class StressTestReportService
                 : $"<p class=\"{(mem.Mismatches.Count == 0 ? "ok" : "crit")}\">{mem.BytesTested / 1073741824.0:0.##} GB tested — {(mem.Mismatches.Count == 0 ? "no mismatches found." : $"{mem.Mismatches.Count} mismatch(es) found.")}</p>");
         }
 
-        if (previous is not null)
+        // A skipped run tested nothing - comparing it would judge it "now FAILING".
+        if (previous is not null && !result.Criteria.Skipped)
         {
             Line("<h2>Compared to the previous run of this test</h2>");
             Line($"<p>{Esc(BuildComparisonText(result, previous))}</p>");

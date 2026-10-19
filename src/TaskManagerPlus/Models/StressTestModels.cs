@@ -19,8 +19,8 @@ public sealed class StressTestSettings
 {
     /// <summary>The abort-trigger temperature. Zero/negative means "not customized by the user" -
     /// StressTestViewModel then derives the effective ceiling each run from
-    /// EnergyThermalsViewModel.CpuThrottlePointReferenceC (5°C of margin below it), falling back to
-    /// 90°C when no reported/inferred throttle-point reference exists at all. The derived value is
+    /// EnergyThermalsViewModel.CpuThrottlePointReferenceC (5°C of margin below it, kept within
+    /// 70-110°C), falling back to 90°C when no reported/inferred throttle-point reference exists at all. The derived value is
     /// not written back here, so only a user-entered value ever shows as "custom".</summary>
     public double TempCeilingC { get; set; }
 
@@ -206,4 +206,9 @@ public sealed class StressTestHistoryEntry
     public double? PeakPowerW { get; init; }
     public double? PeakFanRpm { get; init; }
     public int ThreadCount { get; init; }
+
+    /// <summary>The workload declined to run (see StressTestCriteria.Skipped) - neither a pass nor
+    /// a failure, and never used as a comparison baseline. False on entries saved before this
+    /// field existed.</summary>
+    public bool Skipped { get; init; }
 }

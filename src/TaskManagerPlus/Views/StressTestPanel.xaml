@@ -58,19 +58,19 @@
                 <UniformGrid Columns="4" Margin="0,0,0,12">
                     <StackPanel Margin="0,0,6,0">
                         <TextBlock Text="Duration (s)" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
-                        <TextBox Text="{Binding DurationSeconds, UpdateSourceTrigger=PropertyChanged}" Padding="6,4" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}" />
+                        <TextBox Text="{Binding DurationSeconds, UpdateSourceTrigger=LostFocus}" Padding="6,4" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}" />
                     </StackPanel>
                     <StackPanel Margin="3,0,3,0">
                         <TextBlock Text="CPU threads" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
-                        <TextBox Text="{Binding CpuThreadCount, UpdateSourceTrigger=PropertyChanged}" Padding="6,4" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}" />
+                        <TextBox Text="{Binding CpuThreadCount, UpdateSourceTrigger=LostFocus}" Padding="6,4" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}" />
                     </StackPanel>
                     <StackPanel Margin="3,0,3,0">
                         <TextBlock Text="Memory share (% free)" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
-                        <TextBox Text="{Binding MemoryTestShareOfFreePercent, UpdateSourceTrigger=PropertyChanged}" Padding="6,4" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}" />
+                        <TextBox Text="{Binding MemoryTestShareOfFreePercent, UpdateSourceTrigger=LostFocus}" Padding="6,4" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}" />
                     </StackPanel>
                     <StackPanel Margin="6,0,0,0">
                         <TextBlock Text="Temp ceiling override (°C, 0=auto)" Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap" />
-                        <TextBox Text="{Binding TempCeilingC, UpdateSourceTrigger=PropertyChanged}" Padding="6,4" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}" />
+                        <TextBox Text="{Binding TempCeilingC, UpdateSourceTrigger=LostFocus}" Padding="6,4" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}" />
                     </StackPanel>
                 </UniformGrid>
 
@@ -245,6 +245,10 @@
                                                 <DataTrigger Binding="{Binding Passed}" Value="True">
                                                     <Setter Property="Text" Value="PASS" />
                                                     <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Skipped}" Value="True">
+                                                    <Setter Property="Text" Value="SKIPPED" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>

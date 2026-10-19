@@ -595,9 +595,9 @@
 
                             <UniformGrid Columns="2" Margin="0,0,0,12">
                                 <views:VfdMeter Title="TDR events" Glow="False" Margin="0,0,6,0"
-                                                ValueText="{Binding TdrEvents.Count}" SubText="Last 30 days" AccentBrush="{DynamicResource WarningBrush}" />
+                                                ValueText="{Binding TdrEventCountText}" SubText="Last 30 days" AccentBrush="{DynamicResource WarningBrush}" />
                                 <views:VfdMeter Title="Unrecovered" Glow="False" Margin="6,0,0,0"
-                                                ValueText="{Binding UnrecoveredResetCount}" SubText="Followed by a 0x116/0x117 bugcheck" AccentBrush="{DynamicResource DangerBrush}" />
+                                                ValueText="{Binding UnrecoveredResetCountText}" SubText="Followed by a 0x116/0x117 bugcheck" AccentBrush="{DynamicResource DangerBrush}" />
                             </UniformGrid>
 
                             <!-- #670: per-event driver module + recovery outcome. -->
@@ -654,9 +654,13 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding TdrEvents.Count}" Value="0">
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding TdrEvents.Count}" Value="0" />
+                                                    <Condition Binding="{Binding GpuEventHistoryLoaded}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -684,9 +688,13 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding DeviceRemovedEvents.Count}" Value="0">
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding DeviceRemovedEvents.Count}" Value="0" />
+                                                    <Condition Binding="{Binding GpuEventHistoryLoaded}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>

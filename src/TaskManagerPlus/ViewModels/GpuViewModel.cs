@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Windows.Media;
 using System.Windows.Threading;
 using LibreHardwareMonitor.Hardware;
@@ -106,6 +107,18 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
 
     private int _unrecoveredResetCount;
     public int UnrecoveredResetCount { get => _unrecoveredResetCount; private set => SetProperty(ref _unrecoveredResetCount, value); }
+
+    // The two count tiles read "–", and the "none found" lines stay hidden, until a scan has
+    // succeeded (and again after one fails), so the startup gap and a failed scan don't show as a
+    // clean "0".
+    private bool _gpuEventHistoryLoaded;
+    public bool GpuEventHistoryLoaded { get => _gpuEventHistoryLoaded; private set => SetProperty(ref _gpuEventHistoryLoaded, value); }
+
+    private string _tdrEventCountText = "–";
+    public string TdrEventCountText { get => _tdrEventCountText; private set => SetProperty(ref _tdrEventCountText, value); }
+
+    private string _unrecoveredResetCountText = "–";
+    public string UnrecoveredResetCountText { get => _unrecoveredResetCountText; private set => SetProperty(ref _unrecoveredResetCountText, value); }
 
     public AsyncRelayCommand LoadGpuEventHistoryCommand { get; }
 
@@ -383,6 +396,9 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
             DeviceRemovedEvents.Clear();
             foreach (var e in summary.DeviceRemovedEvents) DeviceRemovedEvents.Add(e);
             UnrecoveredResetCount = summary.UnrecoveredResetCount;
+            TdrEventCountText = TdrEvents.Count.ToString(CultureInfo.CurrentCulture);
+            UnrecoveredResetCountText = UnrecoveredResetCount.ToString(CultureInfo.CurrentCulture);
+            GpuEventHistoryLoaded = true;
 
             DriverVersionBuckets.Clear();
             foreach (var b in buckets) DriverVersionBuckets.Add(b);
@@ -396,6 +412,9 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             GpuEventHistoryStatusText = $"GPU event scan failed: {ex.Message}";
+            TdrEventCountText = "–";
+            UnrecoveredResetCountText = "–";
+            GpuEventHistoryLoaded = false;
         }
     }
 
