@@ -691,7 +691,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         Line("## Recent stability events");
         Line($"- Last unexpected shutdown: {_stability.LastUnexpectedShutdownText}");
         Line($"- Time since last crash: {_stability.TimeSinceLastCrashText}");
-        Line($"- GPU driver resets (TDR) in the last 30 days: {_stability.TdrEventCount}");
+        Line($"- GPU driver resets (TDR) in the last 30 days: {_stability.TdrEventCountText}");
         if (_stability.RecentEvents.Count > 0)
         {
             Line();
@@ -846,7 +846,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         Line("<h2>Recent stability</h2><table>");
         Line($"<tr><td>Last unexpected shutdown</td><td>{Esc(_stability.LastUnexpectedShutdownText)}</td></tr>");
         Line($"<tr><td>Time since last crash</td><td>{Esc(_stability.TimeSinceLastCrashText)}</td></tr>");
-        Line($"<tr><td>GPU driver resets (30d)</td><td>{_stability.TdrEventCount}</td></tr>");
+        Line($"<tr><td>GPU driver resets (30d)</td><td>{_stability.TdrEventCountText}</td></tr>");
         Line("</table>");
 
         Line("<h2>Top CPU processes</h2><table><tr><th>Process</th><th>PID</th><th>CPU %</th><th>Memory</th></tr>");
