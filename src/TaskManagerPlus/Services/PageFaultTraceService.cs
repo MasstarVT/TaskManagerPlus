@@ -59,9 +59,10 @@ public static class PageFaultTraceService
         if (File.Exists(MarkerPath)) await RunLogmanAsync($"stop \"{SessionName}\" -ets");
 
         // Keyword names are logman's own (`logman query providers "Windows Kernel Trace"`), not
-        // xperf's flag names. -max (MB) bounds the file if the session outlives this app.
+        // xperf's flag names. `create trace ... -ets` (DpcLatencyService's form) starts it at once
+        // and documents -p/-o/-max; -max (MB) bounds the file if the session outlives this app.
         var (success, _, error) = await RunLogmanAsync(
-            $"start \"{SessionName}\" -p \"Windows Kernel Trace\" (process,thread,pf,hf) -o \"{filePath}\" -max 512 -ets");
+            $"create trace \"{SessionName}\" -p \"Windows Kernel Trace\" \"(process,thread,pf,hf)\" -o \"{filePath}\" -max 512 -ets");
 
         if (!success)
         {

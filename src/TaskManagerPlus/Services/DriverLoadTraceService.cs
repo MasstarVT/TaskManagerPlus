@@ -43,7 +43,7 @@ public static class DriverLoadTraceService
         await RunLogmanAsync($"stop {SessionName} -ets");
 
         var (success, _, error) = await RunLogmanAsync(
-            $"start {SessionName} -p \"{Provider}\" {Keywords} 5 -o \"{filePath}\" -ets");
+            $"create trace {SessionName} -p \"{Provider}\" {Keywords} 5 -o \"{filePath}\" -ets");
 
         return success
             ? (true, filePath, "Image-load trace capture started - driver/module loads and unloads are being recorded to the .etl file until you stop the capture.")
