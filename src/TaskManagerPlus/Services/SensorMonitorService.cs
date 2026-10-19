@@ -25,8 +25,11 @@ public sealed class SensorMonitorService : IDisposable
     // Thermals tab's long-lived instance for the rest of the session: every Update() threw,
     // Sample() returned nothing, and the stress test lost its temperature ceiling. Instances are
     // now ref-counted handles: the first one opens the shared Computer, the last Dispose closes
-    // it, and Sample() is serialized because Update() is not safe to run concurrently.
-    private static readonly object SharedLock = new();
+    // it, and Sample() is serialized because Update() is not safe to run concurrently. Two locks
+    // (always taken lifetime -> sample) so a constructor on the UI thread never waits behind
+    // another caller's multi-second Sample() - only behind the one-time Open().
+    private static readonly object LifetimeLock = new();
+    private static readonly object SampleLock = new();
     private static Computer? _shared;
     private static bool _sharedAvailable;
     private static int _refCount;
@@ -38,28 +41,31 @@ public sealed class SensorMonitorService : IDisposable
 
     public SensorMonitorService()
     {
-        lock (SharedLock)
+        lock (LifetimeLock)
         {
             if (_refCount == 0)
             {
-                _shared = new Computer
+                lock (SampleLock)
                 {
-                    IsCpuEnabled = true,
-                    IsGpuEnabled = true,
-                    IsMotherboardEnabled = true,
-                    IsMemoryEnabled = true,
-                    IsStorageEnabled = true,
-                    IsBatteryEnabled = true,
-                };
+                    _shared = new Computer
+                    {
+                        IsCpuEnabled = true,
+                        IsGpuEnabled = true,
+                        IsMotherboardEnabled = true,
+                        IsMemoryEnabled = true,
+                        IsStorageEnabled = true,
+                        IsBatteryEnabled = true,
+                    };
 
-                try
-                {
-                    _shared.Open();
-                    _sharedAvailable = true;
-                }
-                catch
-                {
-                    _sharedAvailable = false;
+                    try
+                    {
+                        _shared.Open();
+                        _sharedAvailable = true;
+                    }
+                    catch
+                    {
+                        _sharedAvailable = false;
+                    }
                 }
             }
 
@@ -79,7 +85,7 @@ public sealed class SensorMonitorService : IDisposable
         var readings = new List<SensorReading>();
         if (!_isAvailable) return readings;
 
-        lock (SharedLock)
+        lock (SampleLock)
         {
             if (_disposed || _shared == null) return readings;
             try
@@ -120,18 +126,21 @@ public sealed class SensorMonitorService : IDisposable
 
     public void Dispose()
     {
-        lock (SharedLock)
+        lock (LifetimeLock)
         {
             if (_disposed) return;
             _disposed = true;
             if (--_refCount > 0) return;
 
-            if (_sharedAvailable)
+            lock (SampleLock)
             {
-                try { _shared?.Close(); } catch { /* best-effort */ }
+                if (_sharedAvailable)
+                {
+                    try { _shared?.Close(); } catch { /* best-effort */ }
+                }
+                _shared = null;
+                _sharedAvailable = false;
             }
-            _shared = null;
-            _sharedAvailable = false;
         }
     }
 }
