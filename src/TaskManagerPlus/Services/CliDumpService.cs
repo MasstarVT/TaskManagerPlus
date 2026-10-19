@@ -1,4 +1,6 @@
 using System.IO;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 using TaskManagerPlus.Models;
 using TaskManagerPlus.ViewModels;
@@ -127,8 +129,12 @@ public static class CliDumpService
     /// <summary>The unattended scan runs as SYSTEM (UnattendedScanService) but writes under the
     /// registering user's own, user-writable %AppData% folder, so a standard user could replace a
     /// folder on that path with a junction and have SYSTEM create directories and files wherever
-    /// it points. Under SYSTEM, refuse to write through any reparse point on the path. (A swap
-    /// between this check and the write is still conceivable; this closes the plain redirect.)</summary>
+    /// it points. Under SYSTEM, refuse to write through any reparse point on the path that a
+    /// non-admin could have planted or could re-point: one owned by anyone but SYSTEM/
+    /// Administrators/TrustedInstaller, or whose own or parent ACL lets anyone else delete,
+    /// replace or re-permission it. An admin-made junction (e.g. C:\Users moved to another drive)
+    /// passes; an unreadable ACL fails closed. (A swap between this check and the write is still
+    /// conceivable; this closes the plain redirect.)</summary>
     internal static void ThrowIfRedirectedWhileSystem(string path)
     {
         using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
@@ -137,10 +143,70 @@ public static class CliDumpService
         while (!string.IsNullOrEmpty(current))
         {
             if ((File.Exists(current) || Directory.Exists(current))
-                && File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
-                throw new IOException($"Refusing to write through a junction or symbolic link ({current}) while running as SYSTEM.");
+                && File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint)
+                && FindNonAdminControl(current) is { } reason)
+                throw new IOException($"Refusing to write through a junction or symbolic link ({current}) while running as SYSTEM - {reason}.");
             current = Path.GetDirectoryName(current);
         }
+    }
+
+    // Same trust model as UnattendedScanService.FindNonAdminWriteAccess (SYSTEM, Administrators,
+    // TrustedInstaller), applied to a reparse point and the folder holding it.
+    private static readonly HashSet<string> TrustedSids = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "S-1-5-18",
+        "S-1-5-32-544",
+        "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
+    };
+
+    // Re-pointing a reparse point needs write access to it; replacing it needs delete on it or
+    // delete-child on its parent; ACL/owner rights allow granting either.
+    private const FileSystemRights ReparsePointRights =
+        FileSystemRights.WriteData | FileSystemRights.AppendData |
+        FileSystemRights.WriteAttributes | FileSystemRights.WriteExtendedAttributes |
+        FileSystemRights.Delete | FileSystemRights.ChangePermissions |
+        FileSystemRights.TakeOwnership;
+    private const FileSystemRights ParentRights =
+        FileSystemRights.DeleteSubdirectoriesAndFiles |
+        FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+
+    /// <summary>Null when only trusted principals can change or replace the reparse point at
+    /// `path`; otherwise why not.</summary>
+    private static string? FindNonAdminControl(string path)
+    {
+        try
+        {
+            var sections = AccessControlSections.Access | AccessControlSections.Owner;
+            FileSystemSecurity own = Directory.Exists(path)
+                ? new DirectoryInfo(path).GetAccessControl(sections)
+                : new FileInfo(path).GetAccessControl(sections);
+            if (CheckAcl(own, path, ReparsePointRights) is { } problem) return problem;
+
+            if (Path.GetDirectoryName(path) is { Length: > 0 } parent)
+                return CheckAcl(new DirectoryInfo(parent).GetAccessControl(sections), parent, ParentRights);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"its permissions couldn't be read ({ex.Message})";
+        }
+    }
+
+    private static string? CheckAcl(FileSystemSecurity security, string path, FileSystemRights dangerous)
+    {
+        if (security.GetOwner(typeof(SecurityIdentifier)) is SecurityIdentifier owner
+            && !TrustedSids.Contains(owner.Value))
+            return $"{path} is owned by {owner.Value}";
+        foreach (FileSystemAccessRule rule in
+                 security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
+        {
+            if (rule.AccessControlType != AccessControlType.Allow) continue;
+            if ((rule.PropagationFlags & PropagationFlags.InheritOnly) != 0) continue;
+            if ((rule.FileSystemRights & dangerous) == 0) continue;
+            if (rule.IdentityReference is SecurityIdentifier sid && TrustedSids.Contains(sid.Value)) continue;
+            return $"{path} is writable by {rule.IdentityReference.Value}";
+        }
+        return null;
     }
 
     private static string ResolveScanOutputPath(string outputPath) =>

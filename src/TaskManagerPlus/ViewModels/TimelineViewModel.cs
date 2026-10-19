@@ -55,7 +55,13 @@ public sealed class TimelineViewModel : ObservableObject
     public ObservableCollection<string> CorrelationFindings { get; } = new();
 
     private bool _isLoading;
-    public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
+    // Add-note/Mark-now are disabled while loading (see their CanExecute); the constructor's load
+    // ends with no input event, so re-query explicitly or they'd stay greyed until the next click.
+    public bool IsLoading
+    {
+        get => _isLoading;
+        private set { if (SetProperty(ref _isLoading, value)) System.Windows.Input.CommandManager.InvalidateRequerySuggested(); }
+    }
 
     private string? _statusText;
     public string? StatusText { get => _statusText; private set => SetProperty(ref _statusText, value); }
@@ -177,8 +183,10 @@ public sealed class TimelineViewModel : ObservableObject
         AddLane(TimelineLane.Notes, "Notes", _settings.ShowNotes);
 
         LoadCommand = new AsyncRelayCommand(LoadAsync, () => !IsLoading);
-        MarkNowCommand = new RelayCommand(_ => AddNote(DateTime.Now, "Marked now"));
-        AddNoteCommand = new RelayCommand(_ => AddNote(NewNoteDate, NewNoteText), _ => !string.IsNullOrWhiteSpace(NewNoteText));
+        // Not while loading: LoadAsync replaces _allEvents with the notes it read before this one
+        // was saved, so a note added mid-load would vanish from the view until the next load.
+        MarkNowCommand = new RelayCommand(_ => AddNote(DateTime.Now, "Marked now"), _ => !IsLoading);
+        AddNoteCommand = new RelayCommand(_ => AddNote(NewNoteDate, NewNoteText), _ => !IsLoading && !string.IsNullOrWhiteSpace(NewNoteText));
         ShowMarkerDetailCommand = new RelayCommand(param =>
         {
             if (param is not TimelineEvent ev) return;
@@ -264,7 +272,6 @@ public sealed class TimelineViewModel : ObservableObject
                 events.AddRange(TimelineService.DetectPerfSpikes(replay));
 
             _allEvents = events;
-            RebuildLaneEvents();
             RebuildFilteredView();
             RebuildCorrelations();
             RebuildMarkerDetail();
@@ -283,12 +290,15 @@ public sealed class TimelineViewModel : ObservableObject
         }
     }
 
-    private void RebuildLaneEvents()
+    /// <summary>Lane markers for the resolved window only - the marker-position converter clamps an
+    /// out-of-window timestamp to the nearest edge, so feeding it every event ever loaded piled
+    /// years of installs up at the left edge of a 7-day view.</summary>
+    private void RebuildLaneEvents(DateTime start, DateTime end)
     {
         foreach (var lane in Lanes)
         {
             lane.Events.Clear();
-            foreach (var e in _allEvents.Where(e => e.Lane == lane.Lane).OrderBy(e => e.Timestamp))
+            foreach (var e in _allEvents.Where(e => e.Lane == lane.Lane && e.Timestamp >= start && e.Timestamp <= end).OrderBy(e => e.Timestamp))
                 lane.Events.Add(e);
         }
     }
@@ -313,6 +323,7 @@ public sealed class TimelineViewModel : ObservableObject
         WindowStartLocal = start;
         WindowEndLocal = end;
         OnPropertyChanged(nameof(WindowRangeText));
+        RebuildLaneEvents(start, end);
 
         var visibleLanes = Lanes.Where(l => l.IsVisible).Select(l => l.Lane).ToHashSet();
         FilteredEvents.Clear();
@@ -366,12 +377,8 @@ public sealed class TimelineViewModel : ObservableObject
         };
         _allEvents.Add(noteEvent);
 
-        var noteLane = _laneByKey[TimelineLane.Notes];
-        var ordered = noteLane.Events.Append(noteEvent).OrderBy(e => e.Timestamp).ToList();
-        noteLane.Events.Clear();
-        foreach (var e in ordered) noteLane.Events.Add(e);
+        RebuildFilteredView(); // also rebuilds the lanes, Notes included
 
-        RebuildFilteredView();
         RebuildMarkerDetail();
     }
 

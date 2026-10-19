@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Windows.Input;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
@@ -230,10 +231,11 @@ public sealed class RemediationReviewViewModel : ObservableObject
     /// selects a date, so the time-of-day half is <see cref="DeferredTimeText"/> below.</summary>
     public DateTime DeferredDate { get => _deferredDate; set => SetProperty(ref _deferredDate, value); }
 
-    private string _deferredTimeText = DateTime.Now.AddHours(1).ToString("HH:mm");
-    /// <summary>24-hour "HH:mm" text - defaults to an hour from now. Combined with
-    /// <see cref="DeferredDate"/> in QueueAsync; an unparseable value falls back to that same
-    /// default rather than failing the whole queue attempt.</summary>
+    // A literal ':' - a bare "HH:mm" uses the culture's time separator ("14.30" on some locales).
+    private string _deferredTimeText = DateTime.Now.AddHours(1).ToString("HH':'mm", CultureInfo.InvariantCulture);
+    /// <summary>24-hour "HH:mm" text (or a bare hour) - defaults to an hour from now. Combined
+    /// with <see cref="DeferredDate"/> in QueueAsync, which refuses an unparseable or already-past
+    /// time rather than scheduling something other than what was typed.</summary>
     public string DeferredTimeText { get => _deferredTimeText; set => SetProperty(ref _deferredTimeText, value); }
 
     private string _deferredQueueStatusText = string.Empty;
@@ -440,12 +442,28 @@ public sealed class RemediationReviewViewModel : ObservableObject
         var action = SelectedAction;
         if (action is null || !action.SupportsDeferredQueue) return;
 
+        DateTime whenLocal = default;
+        if (atSpecificTime)
+        {
+            if (TryCombineDeferredDateTime() is not { } parsed)
+            {
+                DeferredQueueStatusText = $"Couldn't read \"{DeferredTimeText}\" as a time of day - use 24-hour HH:mm, e.g. 22:30.";
+                return;
+            }
+            // schtasks accepts a past one-time trigger without complaint, and it then never runs.
+            if (parsed <= DateTime.Now)
+            {
+                DeferredQueueStatusText = $"{parsed:g} has already passed - pick a later date or time.";
+                return;
+            }
+            whenLocal = parsed;
+        }
+
         IsBusy = true;
         DeferredQueueStatusText = "Queuing...";
         try
         {
             string taskName = $"TaskManagerPlus-Deferred-{action.Id}-{Guid.NewGuid():N}";
-            DateTime whenLocal = CombineDeferredDateTime();
             // An onstart trigger fires on every boot, not once - the queued command deletes its
             // own task after running so "next boot" means exactly one run.
             string command = atSpecificTime
@@ -480,9 +498,22 @@ public sealed class RemediationReviewViewModel : ObservableObject
         }
     }
 
-    private DateTime CombineDeferredDateTime()
+    /// <summary>DeferredDate plus the typed time, or null when the text isn't a time of day.
+    /// TimeSpan.TryParse would read "2" as two days and accept "25:00", silently moving the run.</summary>
+    private DateTime? TryCombineDeferredDateTime()
     {
-        TimeSpan time = TimeSpan.TryParse(DeferredTimeText, out var parsed) ? parsed : DateTime.Now.AddHours(1).TimeOfDay;
+        string text = (DeferredTimeText ?? string.Empty).Trim();
+        TimeSpan time;
+        if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int hour))
+        {
+            if (hour is < 0 or > 23) return null;
+            time = TimeSpan.FromHours(hour);
+        }
+        else if (!TimeSpan.TryParseExact(text, new[] { @"h\:mm", @"hh\:mm" }, CultureInfo.InvariantCulture, out time)
+                 || time < TimeSpan.Zero || time >= TimeSpan.FromDays(1))
+        {
+            return null;
+        }
         return DeferredDate.Date + time;
     }
 

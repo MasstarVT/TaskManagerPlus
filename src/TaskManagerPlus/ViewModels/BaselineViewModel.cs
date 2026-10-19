@@ -203,10 +203,15 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
     /// SnapshotDiff.HasChanges also counts driver inventory/driver-store differences, which that
     /// section doesn't show - driving "No differences found" off it left an empty section whenever
     /// only drivers differed.</summary>
-    public bool ReferenceDiffHasListedChanges => ReferenceDiff is { } d &&
-        (d.SoftwareAdded.Count > 0 || d.SoftwareRemoved.Count > 0 ||
-         d.ServicesAdded.Count > 0 || d.ServicesRemoved.Count > 0 ||
-         d.StartupAdded.Count > 0 || d.StartupRemoved.Count > 0);
+    public bool ReferenceDiffHasListedChanges => ReferenceDiff is { } d && HasListedChanges(d);
+
+    /// <summary>Whether `d` differs in the three categories the reference section, the change
+    /// summary and the change reports list - see ReferenceDiffHasListedChanges for why
+    /// SnapshotDiff.HasChanges (which also counts drivers) can't gate those.</summary>
+    private static bool HasListedChanges(SnapshotDiff d) =>
+        d.SoftwareAdded.Count > 0 || d.SoftwareRemoved.Count > 0 ||
+        d.ServicesAdded.Count > 0 || d.ServicesRemoved.Count > 0 ||
+        d.StartupAdded.Count > 0 || d.StartupRemoved.Count > 0;
 
     private string _referenceStatusText = "No reference profile imported yet. Import an exported baseline (Baselines panel \"Capture a baseline\" on a known-good machine, then bring that file here) to compare it against this machine.";
     public string ReferenceStatusText { get => _referenceStatusText; private set => SetProperty(ref _referenceStatusText, value); }
@@ -555,7 +560,7 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
         sb.Append($"Change: {ActiveChangeLabel}\n");
         sb.Append($"{_changeBeforeBaseline.CapturedAt:g} → {_changeAfterBaseline.CapturedAt:g}\n");
 
-        if (ChangeDiff is { HasChanges: true } diff)
+        if (ChangeDiff is { } diff && HasListedChanges(diff))
         {
             sb.Append($"Software: +{diff.SoftwareAdded.Count} / -{diff.SoftwareRemoved.Count}, ");
             sb.Append($"Services: +{diff.ServicesAdded.Count} / -{diff.ServicesRemoved.Count}, ");
@@ -623,7 +628,7 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
         }
 
         Line("## What changed (installed software / services / startup)");
-        if (ChangeDiff is { HasChanges: true } diff)
+        if (ChangeDiff is { } diff && HasListedChanges(diff))
         {
             void ListSection(string title, List<string> items)
             {
@@ -683,7 +688,7 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
             Line("<p class=\"crit\">Warning: hardware changed between the before and after capture (CPU, RAM, disk, or GPU differ) - the numbers below may not be a fair comparison.</p>");
 
         Line("<h2>What changed</h2>");
-        if (ChangeDiff is { HasChanges: true } diff)
+        if (ChangeDiff is { } diff && HasListedChanges(diff))
         {
             void ListSection(string title, List<string> items)
             {

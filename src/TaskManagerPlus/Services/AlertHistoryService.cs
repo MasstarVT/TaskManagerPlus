@@ -14,6 +14,10 @@ namespace TaskManagerPlus.Services;
 /// reusing findings-history.jsonl: that file tracks finding state *transitions* for the Health
 /// Check card's own UI, this one is specifically the alert/notification record #963-#965's digest
 /// and escalation counting need. Best-effort like every other log file in this app.
+///
+/// Pruned on append once it passes <see cref="PruneThresholdBytes"/>: every read (the escalation
+/// count on each delivered alert, the Background Health digest) parses the whole file, and an
+/// unpruned file grew without bound.
 /// </summary>
 public static class AlertHistoryService
 {
@@ -21,16 +25,83 @@ public static class AlertHistoryService
 
     private static string LogPath => AppPaths.GetPath("alerts-history.jsonl");
 
+    // Lines are ~250 bytes, so 1 MB is roughly 4,000 alerts; a prune keeps at most MaxKeptLines
+    // from the last MaxAge, which covers the 7-day digest and any realistic escalation window.
+    private const long PruneThresholdBytes = 1024 * 1024;
+    private const int MaxKeptLines = 2000;
+    private static readonly TimeSpan MaxAge = TimeSpan.FromDays(30);
+
+    // Append and prune both rewrite the file; the digest reads off the UI thread.
+    private static readonly object WriteLock = new();
+
     public static void Append(AlertHistoryEntry entry)
     {
+        lock (WriteLock)
+        {
+            try
+            {
+                Directory.CreateDirectory(AppPaths.SettingsDirectory);
+                File.AppendAllText(LogPath, JsonSerializer.Serialize(entry, JsonOpts) + Environment.NewLine);
+            }
+            catch
+            {
+                // Best-effort - a failed history append never blocks alert delivery.
+                return;
+            }
+
+            try { PruneIfLarge(); }
+            catch { /* best-effort - an oversized file is still readable, just slower */ }
+        }
+    }
+
+    private static void PruneIfLarge()
+    {
+        var info = new FileInfo(LogPath);
+        if (!info.Exists || info.Length < PruneThresholdBytes) return;
+
+        var cutoff = DateTime.UtcNow - MaxAge;
+        var kept = new List<string>();
+        foreach (var line in ReadSharedLines(LogPath))
+        {
+            if (TryParse(line) is { } e && e.TimestampUtc >= cutoff) kept.Add(line);
+        }
+        if (kept.Count > MaxKeptLines) kept = kept.GetRange(kept.Count - MaxKeptLines, MaxKeptLines);
+
+        // Temp file + rename: an interrupted prune leaves the old file, never a truncated one.
+        string tmp = LogPath + ".tmp";
+        File.WriteAllLines(tmp, kept);
+        File.Move(tmp, LogPath, overwrite: true);
+    }
+
+    /// <summary>Doesn't lock an append out (File.ReadLines shares Read only, so a concurrent
+    /// AppendAllText would fail and silently drop the alert's line).</summary>
+    private static IEnumerable<string> ReadSharedLines(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+            yield return line;
+    }
+
+    /// <summary>One line, or null for a blank/malformed one. Explicit JSON nulls overwrite the
+    /// model's initializers, so the string fields are re-blanked for the digest's grouping and
+    /// the panel's bindings.</summary>
+    private static AlertHistoryEntry? TryParse(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return null;
         try
         {
-            Directory.CreateDirectory(AppPaths.SettingsDirectory);
-            File.AppendAllText(LogPath, JsonSerializer.Serialize(entry, JsonOpts) + Environment.NewLine);
+            var entry = JsonSerializer.Deserialize<AlertHistoryEntry>(line, JsonOpts);
+            if (entry is null) return null;
+            entry.RuleId ??= string.Empty;
+            entry.Title ??= string.Empty;
+            entry.Message ??= string.Empty;
+            return entry;
         }
         catch
         {
-            // Best-effort - a failed history append never blocks alert delivery.
+            return null; // skip one malformed line rather than losing the rest of the history
         }
     }
 
@@ -44,18 +115,9 @@ public static class AlertHistoryService
         try
         {
             if (!File.Exists(LogPath)) return result;
-            foreach (var line in File.ReadLines(LogPath))
+            foreach (var line in ReadSharedLines(LogPath))
             {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                try
-                {
-                    var entry = JsonSerializer.Deserialize<AlertHistoryEntry>(line, JsonOpts);
-                    if (entry is not null && entry.TimestampUtc >= cutoff) result.Add(entry);
-                }
-                catch
-                {
-                    // Skip one malformed line rather than losing the rest of the history.
-                }
+                if (TryParse(line) is { } entry && entry.TimestampUtc >= cutoff) result.Add(entry);
             }
         }
         catch
@@ -76,20 +138,11 @@ public static class AlertHistoryService
         try
         {
             if (!File.Exists(LogPath)) return 0;
-            foreach (var line in File.ReadLines(LogPath))
+            foreach (var line in ReadSharedLines(LogPath))
             {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                try
-                {
-                    var entry = JsonSerializer.Deserialize<AlertHistoryEntry>(line, JsonOpts);
-                    if (entry is not null && entry.TimestampUtc >= cutoff &&
-                        string.Equals(entry.RuleId, ruleId, StringComparison.OrdinalIgnoreCase))
-                        count++;
-                }
-                catch
-                {
-                    // Skip one malformed line.
-                }
+                if (TryParse(line) is { } entry && entry.TimestampUtc >= cutoff &&
+                    string.Equals(entry.RuleId, ruleId, StringComparison.OrdinalIgnoreCase))
+                    count++;
             }
         }
         catch

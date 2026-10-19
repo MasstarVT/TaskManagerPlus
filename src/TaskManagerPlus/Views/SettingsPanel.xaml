@@ -730,8 +730,10 @@
                 <ItemsControl ItemsSource="{Binding DataContext.RulesEditor.TestResults, RelativeSource={RelativeSource AncestorType=Window}}" Margin="0,0,0,8">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
-                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,0,6,0" VerticalAlignment="Center">
+                            <!-- DockPanel rather than a horizontal StackPanel so a long Error line
+                                 gets the remaining width and wraps. -->
+                            <DockPanel Margin="0,0,0,3" LastChildFill="True">
+                                <Border Width="8" Height="8" CornerRadius="4" Margin="0,5,6,0" VerticalAlignment="Top" DockPanel.Dock="Left">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="Background" Value="{DynamicResource BorderBrush2}" />
@@ -739,12 +741,30 @@
                                                 <DataTrigger Binding="{Binding WouldFire}" Value="True">
                                                     <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
                                                 </DataTrigger>
+                                                <!-- Couldn't be evaluated against this snapshot: amber, not the "won't fire" grey. -->
+                                                <DataTrigger Binding="{Binding HasError}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
                                 </Border>
-                                <TextBlock Text="{Binding Title}" FontSize="{StaticResource FontBody}" />
-                            </StackPanel>
+                                <TextBlock Text="{Binding Title}" FontSize="{StaticResource FontBody}" DockPanel.Dock="Left" />
+                                <TextBlock Text="{Binding Error, StringFormat={} - {0}}" FontSize="{StaticResource FontCaption}"
+                                           Margin="6,1,0,0" VerticalAlignment="Top" TextWrapping="Wrap">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasError}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DockPanel>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>

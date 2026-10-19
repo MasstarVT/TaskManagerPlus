@@ -93,6 +93,19 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     /// clean".</summary>
     public ObservableCollection<CouldNotEvaluateInfo> CouldNotCheckFindings { get; } = new();
 
+    // The reports' empty-findings line: with rules that couldn't be evaluated, "no issues" isn't clean.
+    private string NoIssuesText => CouldNotCheckFindings.Count == 0
+        ? "No issues detected."
+        : $"No issues found, but {CouldNotCheckFindings.Count} check(s) couldn't run, so this isn't a clean result.";
+
+    /// <summary>"42 s" / "2 min" - how much time a real-sample history covers, for labels that
+    /// used to assume 60 samples at the default 1 s poll ("the last minute").</summary>
+    private static string DescribeHistoryWindow(int samples, double pollIntervalSeconds)
+    {
+        double seconds = samples * pollIntervalSeconds;
+        return seconds < 90 ? $"{seconds:0} s" : $"{seconds / 60:0.#} min";
+    }
+
     /// <summary>#936: rules that were firing in a recent RefreshHealthIssues pass but aren't in
     /// the current one - seeded from findings-history.jsonl at construction (FindingsHistoryService.
     /// LoadRecentResolved) so "it cleared up" survives an app restart, then appended to live as
@@ -156,7 +169,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         Line("## Health Check");
         if (HealthIssues.Count == 0)
         {
-            Line("No issues detected.");
+            Line(NoIssuesText);
         }
         else
         {
@@ -663,7 +676,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         Line("## Health Check");
         if (HealthIssues.Count == 0)
         {
-            Line("No issues detected.");
+            Line(NoIssuesText);
         }
         else
         {
@@ -802,7 +815,9 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         // Real samples only - the chart buffers' zero pre-fill isn't a reading.
         var history = Performance.History;
-        Line("<h2>Current load (last minute)</h2>");
+        Line(history.Cpu.Length > 0
+            ? $"<h2>Current load (last {DescribeHistoryWindow(history.Cpu.Length, history.PollIntervalSeconds)})</h2>"
+            : "<h2>Current load</h2>");
         Line($"<p>CPU: {Performance.CpuCurrentPercent:0.0}% @ {Performance.CpuCurrentClockGhz:0.00} GHz</p>");
         Line(Sparkline(history.Cpu, "#3C9EE8"));
         Line($"<p>Memory: {Performance.RamUsedGb:0.0} / {Performance.RamTotalGb:0.0} GB ({Performance.RamPercent:0.0}%)</p>");
@@ -815,7 +830,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         Line("<h2>Health Check</h2>");
         if (HealthIssues.Count == 0)
         {
-            Line("<p class=\"ok\">No issues detected.</p>");
+            Line(CouldNotCheckFindings.Count == 0 ? "<p class=\"ok\">No issues detected.</p>" : $"<p>{Esc(NoIssuesText)}</p>");
         }
         else
         {
@@ -1402,13 +1417,13 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         }
 
         // #67: anomaly highlighting - flags CPU/RAM/Disk usage that's a statistical outlier vs.
-        // its own last-minute history, even without a fixed threshold. Requires both a meaningful
+        // its own recent history (up to 60 samples), even without a fixed threshold. Requires both a meaningful
         // raw jump (>=20 points) AND a real statistical deviation (>=3 std dev past a small floor)
         // so a metric that's merely a little above its own noisy baseline isn't flagged.
         var history = Performance.History;
-        CheckAnomaly(issues, "CPU", history.Cpu, Performance.CpuCurrentPercent);
-        CheckAnomaly(issues, "Memory", history.Ram, Performance.RamPercent);
-        CheckAnomaly(issues, "Disk activity", history.Disk, Performance.DiskPercent);
+        CheckAnomaly(issues, "CPU", history.Cpu, Performance.CpuCurrentPercent, history.PollIntervalSeconds);
+        CheckAnomaly(issues, "Memory", history.Ram, Performance.RamPercent, history.PollIntervalSeconds);
+        CheckAnomaly(issues, "Disk activity", history.Disk, Performance.DiskPercent, history.PollIntervalSeconds);
 
         // #933: sort by the selected criterion before anything below renders/diffs the list.
         issues = SortIssues(issues, FindingSortMode);
@@ -1433,7 +1448,8 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         // #936: diff this pass's fired rule ids against the previous pass's to detect first-seen/
         // resolved transitions - edge-triggered only (see FindingsHistoryEntry's remarks on why
         // "still-firing" is never logged on every 2s tick a chronic finding keeps firing).
-        RecordFindingsHistory(issues);
+        RecordFindingsHistory(issues,
+            ruleResult.Suppressed.Select(s => s.RuleId).Concat(ruleResult.CouldNotCheck.Select(c => c.RuleId)));
 
         // #976: keep the "Run safe fixes" batch in sync with what's currently firing.
         SafeFixes.Refresh(issues);
@@ -1559,12 +1575,17 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     /// <summary>#936: diffs `issues`' RuleId-bearing findings against the previous pass's set,
     /// appending an edge-triggered "first-seen"/"resolved" line to findings-history.jsonl for
-    /// each transition and updating RecentlyResolvedFindings live for the latter.</summary>
-    private void RecordFindingsHistory(List<HealthIssue> issues)
+    /// each transition and updating RecentlyResolvedFindings live for the latter.
+    ///
+    /// `heldRuleIds` are rules hidden this pass without being cleared - snoozed/ignored (still
+    /// firing underneath) or couldn't be evaluated (state unknown). A previously-firing one of
+    /// those is neither "resolved" now nor "first-seen" (with a fresh alert) when it reappears.</summary>
+    private void RecordFindingsHistory(List<HealthIssue> issues, IEnumerable<string?> heldRuleIds)
     {
         var currentFiredIds = new HashSet<string>(
             issues.Where(i => i.RuleId is { Length: > 0 }).Select(i => i.RuleId!),
             StringComparer.OrdinalIgnoreCase);
+        var held = new HashSet<string>(heldRuleIds.Where(id => id is { Length: > 0 })!, StringComparer.OrdinalIgnoreCase);
 
         foreach (var id in currentFiredIds)
         {
@@ -1588,9 +1609,11 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             }
         }
 
+        var stillHeld = new List<string>();
         foreach (var id in _previousFiredRuleIds)
         {
             if (currentFiredIds.Contains(id)) continue;
+            if (held.Contains(id)) { stillHeld.Add(id); continue; }
 
             string title = _lastKnownRuleTitles.TryGetValue(id, out var t) ? t : id;
             var resolvedAt = DateTime.UtcNow;
@@ -1601,6 +1624,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         _previousFiredRuleIds.Clear();
         foreach (var id in currentFiredIds) _previousFiredRuleIds.Add(id);
+        foreach (var id in stillHeld) _previousFiredRuleIds.Add(id);
     }
 
     /// <summary>Round 14, #328: recomputes the compact Summary-tab mirror of the Storage tab's
@@ -1641,7 +1665,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     /// (PerformanceViewModel.History) - the charts' zero pre-fill would otherwise read as a 0%
     /// baseline and flag every metric right after launch. A minimum stddev floor keeps a
     /// near-flat history from making every tiny blip look like a 3-sigma event.</summary>
-    private static void CheckAnomaly(List<HealthIssue> issues, string label, IReadOnlyList<double> history, double current)
+    private static void CheckAnomaly(List<HealthIssue> issues, string label, IReadOnlyList<double> history, double current, double pollIntervalSeconds)
     {
         if (history.Count < 30) return; // not enough history yet for a meaningful baseline
 
@@ -1656,7 +1680,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         {
             issues.Add(new HealthIssue
             {
-                Message = $"{label} usage is unusually high vs. the last minute (now {current:0}%, typically {mean:0}%)",
+                Message = $"{label} usage is unusually high vs. the last {DescribeHistoryWindow(baseline.Length, pollIntervalSeconds)} (now {current:0}%, typically {mean:0}%)",
                 IsCritical = false,
                 // #928: a real statistical deviation, but "unusual" isn't "a problem" - kept below
                 // the default 100 ("likely") so it renders honestly as "possible".

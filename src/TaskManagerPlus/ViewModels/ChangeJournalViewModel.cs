@@ -135,10 +135,17 @@ public sealed class ChangeJournalViewModel : ObservableObject
                 if (entry.Pid is not { } pid) return (false, "No process id recorded.");
                 try
                 {
-                    var proc = Process.GetProcessById(pid);
+                    using var proc = Process.GetProcessById(pid);
                     if (entry.ProcessName is { Length: > 0 } name &&
                         !string.Equals(proc.ProcessName, Path.GetFileNameWithoutExtension(name), StringComparison.OrdinalIgnoreCase))
                         return (false, "Process no longer running (this PID now belongs to a different process).");
+                    // A same-named process started after the change was journaled can't be the one
+                    // it was applied to (PID reuse, e.g. a browser's helper processes). StartTime
+                    // can be denied for protected processes - then the name check above stands.
+                    DateTime? startedUtc = null;
+                    try { startedUtc = proc.StartTime.ToUniversalTime(); } catch { /* access denied */ }
+                    if (startedUtc > entry.TimestampUtc)
+                        return (false, "Process no longer running (this PID now belongs to a newer process).");
                 }
                 catch
                 {
@@ -170,6 +177,15 @@ public sealed class ChangeJournalViewModel : ObservableObject
     private async Task UndoAsync(ChangeJournalRow? row)
     {
         if (row is null || !row.CanUndoNow) return;
+
+        // CanUndoNow was evaluated when the panel opened - the process may have exited (and its
+        // PID been reused) since, so check again right before acting on it.
+        var (canUndo, reason) = Evaluate(row.Entry);
+        if (!canUndo)
+        {
+            row.ResultText = reason;
+            return;
+        }
 
         row.IsBusy = true;
         try
@@ -219,6 +235,19 @@ public sealed class ChangeJournalViewModel : ObservableObject
                 // stopped (undoing a Start), otherwise make sure it's running (undoing a Stop; a
                 // restart has no earlier state beyond "running").
                 bool wasStopped = entry.BeforeValue is "Stopped" or "StopPending";
+                // Already back in that state (a Restart, or a Stop someone has since reversed):
+                // Start/Stop would throw on it, so report a no-op instead of a permanent failure.
+                var current = await Task.Run(() =>
+                {
+                    try
+                    {
+                        using var sc = new System.ServiceProcess.ServiceController(entry.ServiceName);
+                        return (System.ServiceProcess.ServiceControllerStatus?)sc.Status;
+                    }
+                    catch { return null; }
+                });
+                if (current == (wasStopped ? System.ServiceProcess.ServiceControllerStatus.Stopped : System.ServiceProcess.ServiceControllerStatus.Running))
+                    return (true, $"{entry.Target} is already {(wasStopped ? "stopped" : "running")} - nothing to undo.");
                 var (success, error) = await Task.Run(() => wasStopped
                     ? ServiceControlService.Stop(entry.ServiceName)
                     : ServiceControlService.Start(entry.ServiceName));

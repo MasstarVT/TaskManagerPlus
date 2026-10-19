@@ -55,7 +55,14 @@ public static class TroubleshootService
     /// this Windows build) rather than throwing.
     /// </summary>
     internal static List<RawEvent> ReadProviderEvents(string logName, string? providerName, IReadOnlyList<int> eventIds, int lookbackDays, int maxEvents = 100)
+        => ReadProviderEvents(logName, providerName, eventIds, lookbackDays, out _, maxEvents);
+
+    /// <summary>Same read, but `readFailed` tells "the log couldn't be read" apart from "nothing
+    /// logged" - for a check whose empty result would otherwise be shown as a clean Pass.</summary>
+    internal static List<RawEvent> ReadProviderEvents(string logName, string? providerName, IReadOnlyList<int> eventIds, int lookbackDays,
+        out bool readFailed, int maxEvents = 100)
     {
+        readFailed = false;
         var results = new List<RawEvent>();
         try
         {
@@ -86,6 +93,7 @@ public static class TroubleshootService
         {
             // Log/provider unavailable (channel disabled, access denied, doesn't exist on this
             // Windows build) - degrade to "nothing found", same as every EventLogService read.
+            readFailed = true;
         }
         return results;
     }
@@ -153,12 +161,13 @@ public static class TroubleshootService
         {
             int samples = Math.Min(10, Math.Min(cpuHistory.Count, Math.Min(ramHistory.Count, diskHistory.Count)));
             if (samples < minSamples)
-                return DiagnosticStepResult.Skip($"Only {samples} performance sample(s) recorded so far - wait a few seconds after launch and run this again.");
+                return DiagnosticStepResult.Skip($"Only {samples} performance sample(s) recorded so far - wait a few seconds after launch (or after changing the poll interval) and run this again.");
 
             double cpuAvg = AverageLast(cpuHistory, samples);
             double ramAvg = AverageLast(ramHistory, samples);
             double diskAvg = AverageLast(diskHistory, samples);
 
+            // Exact: PerformanceViewModel.History only holds samples taken at the current interval.
             double windowSeconds = samples * pollIntervalSeconds;
             var evidence = new List<string>
             {
@@ -324,9 +333,21 @@ public static class TroubleshootService
         public StabilitySnapshot? Snapshot { get; set; }
     }
 
-    /// <summary>BugCheck 1001 (WER's own "a blue screen just happened" summary) and Kernel-Power 41
-    /// (unclean shutdown), via EventLogService's existing System/Application scan - reused rather
-    /// than re-querying, since it already reads exactly these event IDs.
+    // The System-log providers behind each crash-like event ID. The bugcheck 1001 is the manifest
+    // provider on current builds ("BugCheck" is its event source name, and the legacy provider name).
+    private static readonly (string Provider, int EventId)[] CrashEventSources =
+    {
+        ("Microsoft-Windows-Kernel-Power", 41),
+        ("EventLog", 6008),
+        ("Microsoft-Windows-WER-SystemErrorReporting", 1001),
+        ("BugCheck", 1001),
+    };
+    private const int MaxCrashEventsPerSource = 500;
+
+    /// <summary>BugCheck 1001 (WER's own "a blue screen just happened" summary), Kernel-Power 41
+    /// and EventLog 6008 (unclean shutdown), read per provider over the full 30 days - EventLogService's
+    /// RecentEvents is only the newest 60 errors per log, which a busy log fills within days. Its
+    /// snapshot is still taken for the minidump step and for the bugcheck codes it decodes.
     ///
     /// `ct` is the step's own token, which the step runner cancels once the step's timeout race is
     /// decided: a scan that finishes after its step already reported "Timed out" must not hand the
@@ -337,9 +358,19 @@ public static class TroubleshootService
         {
             var snapshot = new EventLogService().Query();
 
-            var crashLikeIds = new HashSet<int> { 41, 6008, 1001 };
-            var crashes = snapshot.RecentEvents
-                .Where(e => crashLikeIds.Contains(e.EventId))
+            var crashes = new List<RawEvent>();
+            bool anyFailed = false, capped = false;
+            foreach (var (provider, id) in CrashEventSources)
+            {
+                var found = ReadProviderEvents("System", provider, new[] { id }, CrashLookbackDays, out bool failed, MaxCrashEventsPerSource);
+                // The legacy "BugCheck" name doesn't exist on current builds - only the manifest
+                // provider's failure counts.
+                if (failed && provider != "BugCheck") anyFailed = true;
+                if (found.Count >= MaxCrashEventsPerSource) capped = true;
+                crashes.AddRange(found);
+            }
+            crashes = crashes
+                .GroupBy(e => (e.TimeCreated, e.EventId, e.ProviderName)).Select(g => g.First())
                 .OrderByDescending(e => e.TimeCreated)
                 .ToList();
             if (!ct.IsCancellationRequested)
@@ -349,12 +380,22 @@ public static class TroubleshootService
             }
 
             if (crashes.Count == 0)
-                return DiagnosticStepResult.Pass("No BugCheck (1001) or Kernel-Power (41) crash events found in the last 30 days.");
+            {
+                return anyFailed
+                    ? DiagnosticStepResult.Skip("Couldn't read the System log's Kernel-Power/EventLog/BugCheck events, so crashes can't be ruled out.")
+                    : DiagnosticStepResult.Pass("No BugCheck (1001) or Kernel-Power (41) crash events found in the last 30 days.");
+            }
 
             var evidence = crashes.Take(10)
-                .Select(c => $"{c.TimeCreated:g} - {c.LogName} event {c.EventId}{(c.BugcheckCode is { } code ? $" ({code})" : "")}")
+                .Select(c =>
+                {
+                    string? code = snapshot.RecentEvents
+                        .FirstOrDefault(s => s.EventId == c.EventId && s.TimeCreated == c.TimeCreated)?.BugcheckCode;
+                    return $"{c.TimeCreated:g} - {c.ProviderName} event {c.EventId}{(code is not null ? $" ({code})" : "")}";
+                })
                 .ToList();
-            return DiagnosticStepResult.Warn($"{crashes.Count} crash-like event(s) found in the last 30 days. Most recent: {crashes[0].TimeCreated:g}.", evidence);
+            string count = capped ? $"{crashes.Count}+" : crashes.Count.ToString();
+            return DiagnosticStepResult.Warn($"{count} crash-like event(s) found in the last 30 days. Most recent: {crashes[0].TimeCreated:g}.", evidence);
         }
         catch (Exception ex)
         {
@@ -764,13 +805,14 @@ public static class TroubleshootService
     }
 
     /// <summary>Layer 3: default gateway ping, via the existing NetworkDiagnosticsService check
-    /// (reused so this branch's later DNS step doesn't have to ping a second time).</summary>
-    public static async Task<DiagnosticStepResult> CheckGatewayAsync(NetworkLayerContext ctx)
+    /// (reused so this branch's later DNS step doesn't have to ping a second time). The result is
+    /// shared only while `ct` is uncancelled - see CheckCrashEvents' remarks.</summary>
+    public static async Task<DiagnosticStepResult> CheckGatewayAsync(NetworkLayerContext ctx, CancellationToken ct = default)
     {
         try
         {
-            ctx.Connectivity ??= await new NetworkDiagnosticsService().CheckAsync();
-            var c = ctx.Connectivity;
+            var c = ctx.Connectivity ?? await new NetworkDiagnosticsService().CheckAsync();
+            if (!ct.IsCancellationRequested) ctx.Connectivity ??= c;
             string? gateway = FindGatewayForDisplay();
             string gatewayLabel = gateway is null ? string.Empty : $" ({gateway})";
 
@@ -788,12 +830,12 @@ public static class TroubleshootService
 
     /// <summary>Layer 4: does an actual hostname resolve? (distinct from the ICMP ping to a
     /// resolver IP the gateway/DNS-reachability check above uses - this exercises real DNS.)</summary>
-    public static async Task<DiagnosticStepResult> CheckDnsAsync(NetworkLayerContext ctx)
+    public static async Task<DiagnosticStepResult> CheckDnsAsync(NetworkLayerContext ctx, CancellationToken ct = default)
     {
         try
         {
-            ctx.Connectivity ??= await new NetworkDiagnosticsService().CheckAsync();
-            var c = ctx.Connectivity;
+            var c = ctx.Connectivity ?? await new NetworkDiagnosticsService().CheckAsync();
+            if (!ct.IsCancellationRequested) ctx.Connectivity ??= c;
             if (c.DnsLookupMs is { } ms)
                 return DiagnosticStepResult.Pass($"DNS resolved www.msftconnecttest.com in {ms} ms.");
             return DiagnosticStepResult.Fail("DNS resolution failed or timed out. Run: nslookup www.msftconnecttest.com");
@@ -832,9 +874,9 @@ public static class TroubleshootService
 
     /// <summary>Correlates fan RPM / temperature sensors against current CPU load - "hot because
     /// busy" (load and heat both up) vs. "hot without load" (heat/fans up while load is low, a
-    /// dust/airflow/fan-curve/pump smell instead). Opens its own SensorMonitorService instance
-    /// (on-demand, disposed immediately after) rather than sharing EnergyThermalsViewModel's -
-    /// TroubleshootViewModel only takes Performance/Processes references per its constructor.</summary>
+    /// dust/airflow/fan-curve/pump smell instead). Takes its own SensorMonitorService handle
+    /// (disposed immediately after) - a ref-counted handle on the one process-wide LHM Computer,
+    /// so disposing it never closes the instance Energy &amp; Thermals keeps sampling.</summary>
     public static DiagnosticStepResult CheckFanTempCorrelation(double cpuLoadPercent)
     {
         SensorMonitorService? sensors = null;
@@ -1347,7 +1389,7 @@ public static class TroubleshootService
     /// `netsh wlan show interfaces` (the same tool the rest of this branch already shells out to) -
     /// its own "There is no wireless interface on the system." text is the simplest reliable
     /// signal, rather than guessing from WMI adapter names/types.</summary>
-    public static async Task<DiagnosticStepResult> CheckWirelessAdapterPresenceAsync(WifiContext ctx)
+    public static async Task<DiagnosticStepResult> CheckWirelessAdapterPresenceAsync(WifiContext ctx, CancellationToken ct = default)
     {
         try
         {
@@ -1355,9 +1397,10 @@ public static class TroubleshootService
             if (exitCode is null) return DiagnosticStepResult.Skip("netsh wlan show interfaces timed out.");
 
             bool none = output.Contains("no wireless interface", StringComparison.OrdinalIgnoreCase);
-            ctx.HasWirelessAdapter = !none && output.Contains("Name", StringComparison.OrdinalIgnoreCase);
+            bool hasAdapter = !none && output.Contains("Name", StringComparison.OrdinalIgnoreCase);
+            if (!ct.IsCancellationRequested) ctx.HasWirelessAdapter = hasAdapter;
 
-            if (!ctx.HasWirelessAdapter)
+            if (!hasAdapter)
                 return DiagnosticStepResult.Skip(NoWirelessAdapterSummary);
             return DiagnosticStepResult.Pass("A wireless adapter was found.", new[] { output.Trim() });
         }
@@ -1410,16 +1453,19 @@ public static class TroubleshootService
         }
     }
 
-    /// <summary>WLAN-AutoConfig event IDs 8000-8003 (association/disconnect/roam) and the
-    /// 11000-series (adapter/radio state changes), last 7 days.</summary>
+    /// <summary>WLAN-AutoConfig failure and disconnect events, last 7 days: 8002 (failed to
+    /// connect), 8003 (disconnected), and the Error-level 11002/11006/11009 (association/security/
+    /// IHV security failed). The routine 8000/8001 connect and 11000-series "started/succeeded"
+    /// events log on every normal connection, so they're not read at all.</summary>
     public static DiagnosticStepResult CheckWlanAutoConfigEvents()
     {
-        var ids = new List<int> { 8000, 8001, 8002, 8003 };
-        ids.AddRange(Enumerable.Range(11000, 15));
-        var events = ReadProviderEvents("Microsoft-Windows-WLAN-AutoConfig/Operational", null, ids, 7, maxEvents: 100);
+        var ids = new[] { 8002, 8003, 11002, 11006, 11009 };
+        var events = ReadProviderEvents("Microsoft-Windows-WLAN-AutoConfig/Operational", null, ids, 7, out bool readFailed, maxEvents: 100);
 
+        if (events.Count == 0 && readFailed)
+            return DiagnosticStepResult.Skip("Couldn't read the WLAN-AutoConfig/Operational log.");
         if (events.Count == 0)
-            return DiagnosticStepResult.Pass("No WLAN-AutoConfig disconnect/roam events (8000-8003/11000-series) found in the last 7 days.");
+            return DiagnosticStepResult.Pass("No WLAN-AutoConfig connection-failure or disconnect events (8002/8003/11002/11006/11009) found in the last 7 days.");
 
         var byId = events.GroupBy(e => e.EventId).OrderByDescending(g => g.Count()).ToList();
         var evidence = events.Take(15).Select(e => $"{e.TimeCreated:g} - event {e.EventId}: {Truncate(e.Message, 140)}").ToList();
@@ -1575,18 +1621,22 @@ public static class TroubleshootService
     /// existing MSFT_Volume associator chain - reused, not re-implemented. Feeds the fragmentation
     /// step's own short-circuit below (an SSD doesn't fragment in any way that matters, so there's
     /// no point running a full-volume analyze pass on one).</summary>
-    public static DiagnosticStepResult CheckSystemDriveMediaType(DiskBottleneckContext ctx)
+    public static DiagnosticStepResult CheckSystemDriveMediaType(DiskBottleneckContext ctx, CancellationToken ct = default)
     {
         try
         {
             string driveLetter = Environment.SystemDirectory[..1];
-            ctx.DriveLetter = driveLetter;
-            ctx.MediaType = DiskFragmentationService.GetMediaType(driveLetter);
+            string mediaType = DiskFragmentationService.GetMediaType(driveLetter);
+            if (!ct.IsCancellationRequested)
+            {
+                ctx.DriveLetter = driveLetter;
+                ctx.MediaType = mediaType;
+            }
 
-            var evidence = new List<string> { $"Drive {driveLetter}: media type {ctx.MediaType}" };
-            if (ctx.MediaType == "HDD")
+            var evidence = new List<string> { $"Drive {driveLetter}: media type {mediaType}" };
+            if (mediaType == "HDD")
                 return DiagnosticStepResult.Warn("System drive is a spinning disk (HDD) - fragmentation is worth checking (manual step below).", evidence);
-            return DiagnosticStepResult.Pass($"System drive media type: {ctx.MediaType}{(ctx.MediaType == "SSD" ? " - fragmentation doesn't apply." : ".")}", evidence);
+            return DiagnosticStepResult.Pass($"System drive media type: {mediaType}{(mediaType == "SSD" ? " - fragmentation doesn't apply." : ".")}", evidence);
         }
         catch (Exception ex)
         {
@@ -1681,15 +1731,15 @@ public static class TroubleshootService
     /// ShouldRun predicate (#914), since running powercfg /batteryreport on a desktop with no
     /// battery at all just produces its own "This machine has no batteries" error text rather than
     /// anything worth showing as a separate failed step.</summary>
-    public static DiagnosticStepResult CheckBatteryPresence(BatteryContext ctx)
+    public static DiagnosticStepResult CheckBatteryPresence(BatteryContext ctx, CancellationToken ct = default)
     {
         try
         {
             using var searcher = new ManagementObjectSearcher("SELECT DeviceID, EstimatedChargeRemaining FROM Win32_Battery");
             var batteries = searcher.Get().Cast<ManagementObject>().ToList();
-            ctx.HasBattery = batteries.Count > 0;
+            if (!ct.IsCancellationRequested) ctx.HasBattery = batteries.Count > 0;
 
-            if (!ctx.HasBattery)
+            if (batteries.Count == 0)
                 return DiagnosticStepResult.Skip(NoBatterySummary);
 
             var evidence = batteries.Select(b => $"{b["DeviceID"]}: {b["EstimatedChargeRemaining"]}% estimated charge remaining").ToList();
@@ -1813,6 +1863,10 @@ public static class TroubleshootService
     {
         public string? WorstDeviceName { get; set; }
         public int WorstErrorCode { get; set; }
+
+        /// <summary>Win32_PnPEntity.PNPDeviceID - what Kernel-PnP's event text names the device by
+        /// (its %1 is the instance id, not the friendly name).</summary>
+        public string? WorstDeviceInstanceId { get; set; }
     }
 
     /// <summary>Common ConfigManagerErrorCode values translated to plain English - not exhaustive
@@ -1858,19 +1912,19 @@ public static class TroubleshootService
     /// <summary>Win32_PnPEntity entries with a nonzero ConfigManagerErrorCode - Device Manager's own
     /// "yellow bang / missing driver / disabled" state, queried directly via WMI rather than
     /// shelling out to a tool, since Win32_PnPEntity already exposes this cleanly.</summary>
-    public static DiagnosticStepResult CheckPnpProblemDevices(PnpProblemContext ctx)
+    public static DiagnosticStepResult CheckPnpProblemDevices(PnpProblemContext ctx, CancellationToken ct = default)
     {
         try
         {
-            var problems = new List<(string Name, int Code)>();
+            var problems = new List<(string Name, int Code, string? InstanceId)>();
             using var searcher = new ManagementObjectSearcher(
-                "SELECT Name, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE ConfigManagerErrorCode <> 0");
+                "SELECT Name, PNPDeviceID, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE ConfigManagerErrorCode <> 0");
             foreach (ManagementObject mo in searcher.Get())
             {
                 string name = (mo["Name"] as string ?? "(unnamed device)").Trim();
                 int code = mo["ConfigManagerErrorCode"] is { } raw ? Convert.ToInt32(raw) : 0;
                 if (code == 0) continue;
-                problems.Add((name, code));
+                problems.Add((name, code, (mo["PNPDeviceID"] as string)?.Trim()));
             }
 
             if (problems.Count == 0)
@@ -1881,8 +1935,12 @@ public static class TroubleshootService
             // one is present - the code that most directly matches this symptom's wording - and
             // otherwise just take the first problem device found.
             var worst = problems.OrderByDescending(p => p.Code == 45 ? 1 : 0).First();
-            ctx.WorstDeviceName = worst.Name;
-            ctx.WorstErrorCode = worst.Code;
+            if (!ct.IsCancellationRequested)
+            {
+                ctx.WorstDeviceName = worst.Name;
+                ctx.WorstErrorCode = worst.Code;
+                ctx.WorstDeviceInstanceId = string.IsNullOrEmpty(worst.InstanceId) ? null : worst.InstanceId;
+            }
 
             return DiagnosticStepResult.Warn($"{problems.Count} device(s) currently report a problem. Most relevant: {worst.Name} - {DescribeConfigManagerErrorCode(worst.Code)}.", evidence);
         }
@@ -1893,28 +1951,49 @@ public static class TroubleshootService
     }
 
     /// <summary>Kernel-PnP and USBHUB3 event-log entries from the last 7 days, joined to the
-    /// problem device found above by a name substring match (the same correlate-by-name join
-    /// #907's boot-culprit step already uses) - counts how many times that device (or "a device",
-    /// if none matched by name) shows up in that window.</summary>
+    /// problem device found above by its instance id or name (the same correlate-by-name join
+    /// #907's boot-culprit step already uses). Kernel-PnP's 400/410/411/420 live in its
+    /// Configuration channel, not System. 400/410 ("configured"/"started") log for every device
+    /// on every boot or plug-in, so on their own they only count when they name the problem
+    /// device (repeated configure/start = reconnect cycles); otherwise only 411 ("had a problem
+    /// starting") and USBHUB3 events are a finding.</summary>
     public static DiagnosticStepResult CheckDeviceDisconnectEvents(PnpProblemContext ctx)
     {
-        var kernelPnp = ReadProviderEvents("System", "Microsoft-Windows-Kernel-PnP", new[] { 400, 410, 411, 420 }, 7, maxEvents: 100);
+        var kernelPnp = ReadProviderEvents("Microsoft-Windows-Kernel-PnP/Configuration", "Microsoft-Windows-Kernel-PnP",
+            new[] { 400, 410, 411, 420 }, 7, out bool pnpFailed, maxEvents: 500);
         var usbEvents = ReadAllProviderEvents("Microsoft-Windows-USB-USBHUB3-Diagnostic/Operational", 7, maxEvents: 100);
 
         var all = kernelPnp.Concat(usbEvents).OrderByDescending(e => e.TimeCreated).ToList();
         if (all.Count == 0)
-            return DiagnosticStepResult.Pass("No Kernel-PnP or USBHUB3 disconnect-related events found in the last 7 days.");
-
-        List<RawEvent> matching = all;
-        if (!string.IsNullOrEmpty(ctx.WorstDeviceName))
         {
-            var m = all.Where(e => e.Message.Contains(ctx.WorstDeviceName, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (m.Count > 0) matching = m;
+            return pnpFailed
+                ? DiagnosticStepResult.Skip("Couldn't read the Microsoft-Windows-Kernel-PnP/Configuration log.")
+                : DiagnosticStepResult.Pass("No Kernel-PnP or USBHUB3 disconnect-related events found in the last 7 days.");
         }
 
-        var evidence = matching.Take(15).Select(e => $"{e.TimeCreated:g} - {e.ProviderName} event {e.EventId}: {Truncate(e.Message, 140)}").ToList();
-        string deviceLabel = ctx.WorstDeviceName ?? "a device";
-        return DiagnosticStepResult.Warn($"{matching.Count} disconnect-related event(s) found for {deviceLabel} in the last 7 days ({all.Count} total Kernel-PnP/USBHUB3 events).", evidence);
+        bool NamesDevice(RawEvent e) =>
+            (!string.IsNullOrEmpty(ctx.WorstDeviceInstanceId) && e.Message.Contains(ctx.WorstDeviceInstanceId, StringComparison.OrdinalIgnoreCase)) ||
+            (!string.IsNullOrEmpty(ctx.WorstDeviceName) && e.Message.Contains(ctx.WorstDeviceName, StringComparison.OrdinalIgnoreCase));
+
+        var forDevice = all.Where(NamesDevice).ToList();
+        string Evidence(RawEvent e) => $"{e.TimeCreated:g} - {e.ProviderName} event {e.EventId}: {Truncate(e.Message, 140)}";
+        if (forDevice.Count > 0)
+        {
+            return DiagnosticStepResult.Warn(
+                $"{forDevice.Count} Kernel-PnP/USBHUB3 event(s) found for {ctx.WorstDeviceName ?? "the problem device"} in the last 7 days ({all.Count} total).",
+                forDevice.Take(15).Select(Evidence).ToList());
+        }
+
+        var problems = kernelPnp.Where(e => e.EventId == 411).Concat(usbEvents).OrderByDescending(e => e.TimeCreated).ToList();
+        if (problems.Count > 0)
+        {
+            return DiagnosticStepResult.Warn(
+                $"{problems.Count} device problem-starting (Kernel-PnP 411) or USBHUB3 event(s) found in the last 7 days.",
+                problems.Take(15).Select(Evidence).ToList());
+        }
+
+        return DiagnosticStepResult.Pass(
+            $"No device problem-starting (Kernel-PnP 411) or USBHUB3 events in the last 7 days - only {kernelPnp.Count} routine configure/start/delete event(s).");
     }
 
     /// <summary>Whether any USB root hub has "allow the computer to turn off this device to save

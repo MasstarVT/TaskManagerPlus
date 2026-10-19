@@ -51,7 +51,7 @@
                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
                     <TextBlock Text="{Binding DisplayName}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" />
                     <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}">
-                        <Run Text="{Binding Events.Count, Mode=OneWay}" /><Run Text=" total" />
+                        <Run Text="{Binding Events.Count, Mode=OneWay}" /><Run Text=" in range" />
                     </TextBlock>
                 </StackPanel>
                 <Border Grid.Column="1" Background="{DynamicResource BgElevatedBrush}" CornerRadius="4" Height="26" ClipToBounds="True">

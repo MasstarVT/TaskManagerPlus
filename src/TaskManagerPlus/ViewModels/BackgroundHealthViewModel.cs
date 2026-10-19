@@ -163,10 +163,12 @@ public sealed class BackgroundHealthViewModel : ObservableObject, IDisposable
         get => _alertingSettings.QuietHoursStart.ToString(@"hh\:mm");
         set
         {
-            if (!TimeSpan.TryParse(value, out var parsed)) return;
-            _alertingSettings.QuietHoursStart = parsed;
-            AlertingSettingsService.Save(_alertingSettings);
-            OnPropertyChanged();
+            if (TryParseTimeOfDay(value, out var parsed))
+            {
+                _alertingSettings.QuietHoursStart = parsed;
+                AlertingSettingsService.Save(_alertingSettings);
+            }
+            OnPropertyChanged(); // a rejected entry snaps the box back to the saved time
         }
     }
 
@@ -175,11 +177,31 @@ public sealed class BackgroundHealthViewModel : ObservableObject, IDisposable
         get => _alertingSettings.QuietHoursEnd.ToString(@"hh\:mm");
         set
         {
-            if (!TimeSpan.TryParse(value, out var parsed)) return;
-            _alertingSettings.QuietHoursEnd = parsed;
-            AlertingSettingsService.Save(_alertingSettings);
+            if (TryParseTimeOfDay(value, out var parsed))
+            {
+                _alertingSettings.QuietHoursEnd = parsed;
+                AlertingSettingsService.Save(_alertingSettings);
+            }
             OnPropertyChanged();
         }
+    }
+
+    /// <summary>"22:00" / "7:30", or a bare hour ("22"). TimeSpan.TryParse would read "22" as 22
+    /// days (whose hh:mm is 00:00) and accept "25:00" as a day and an hour, so only a real
+    /// time of day in [00:00, 24:00) is taken.</summary>
+    private static bool TryParseTimeOfDay(string? text, out TimeSpan time)
+    {
+        time = default;
+        text = text?.Trim();
+        if (string.IsNullOrEmpty(text)) return false;
+        if (int.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int hour))
+        {
+            if (hour is < 0 or > 23) return false;
+            time = TimeSpan.FromHours(hour);
+            return true;
+        }
+        return TimeSpan.TryParseExact(text, new[] { @"h\:mm", @"hh\:mm" }, System.Globalization.CultureInfo.InvariantCulture, out time)
+            && time >= TimeSpan.Zero && time < TimeSpan.FromDays(1);
     }
 
     public static Array AvailableChannels { get; } = Enum.GetValues(typeof(AlertChannel));
@@ -286,38 +308,62 @@ public sealed class BackgroundHealthViewModel : ObservableObject, IDisposable
         _ => DateTime.MinValue,
     };
 
-    private void RefreshChartAndWorstMoments()
+    // Bumped per chart refresh; a parse that finishes after a newer one started is dropped.
+    private int _chartGeneration;
+
+    /// <summary>The history parse (gunzip + JSON of up to tens of thousands of rows) runs under
+    /// Task.Run - it used to block the UI thread at startup and on every metric/range change.
+    /// Fire-and-forget from setters and the constructor, so it never throws.</summary>
+    private async void RefreshChartAndWorstMoments()
     {
-        var rows = BackgroundHealthStoreService.ReadRows(RangeStartUtc());
-        string metricKey = SelectedMetric.Key;
+        int generation = ++_chartGeneration;
+        DateTime sinceUtc = RangeStartUtc();
+        var metric = SelectedMetric;
 
-        // #962: downsample for the chart (a 7/30-day range at a 60s collector interval is
-        // thousands of points - a bucketed average keeps the chart responsive while still showing
-        // the real trend) but never for the worst-moments table below, which needs the exact
-        // extreme rows, not a bucket average.
-        const int maxChartPoints = 300;
-        var buckets = Downsample(rows, metricKey, maxChartPoints);
+        List<(string Label, double Value)> buckets;
+        List<WorstMomentRow> worst;
+        try
+        {
+            (buckets, worst) = await Task.Run(() =>
+            {
+                var rows = BackgroundHealthStoreService.ReadRows(sinceUtc);
 
-        var (glow, core) = LineOf(buckets.Select(b => b.Value).ToArray(), SKColors.DeepSkyBlue, SelectedMetric.Label);
+                // #962: downsample for the chart (a 7/30-day range at a 60s collector interval is
+                // thousands of points - a bucketed average keeps the chart responsive while still
+                // showing the real trend) but never for the worst-moments table below, which needs
+                // the exact extreme rows, not a bucket average.
+                const int maxChartPoints = 300;
+                var b = Downsample(rows, metric.Key, maxChartPoints);
+                var w = rows
+                    .Select(r => (Row: r, Value: BackgroundHealthStoreService.GetMetricValue(r, metric.Key)))
+                    .Where(t => t.Value.HasValue)
+                    .OrderByDescending(t => t.Value!.Value)
+                    .Take(10)
+                    .Select(t => new WorstMomentRow
+                    {
+                        TimestampLocal = t.Row.TimestampUtc.ToLocalTime(),
+                        Value = t.Value!.Value,
+                        MetricLabel = metric.Label,
+                        TopProcessName = t.Row.TopProcessName,
+                    })
+                    .ToList();
+                return (b, w);
+            });
+        }
+        catch
+        {
+            return; // best-effort, same as the store's own reads
+        }
+        if (generation != _chartGeneration) return;
+
+        // LiveCharts series are built here, on the dispatcher.
+        var (glow, core) = LineOf(buckets.Select(b => b.Value).ToArray(), SKColors.DeepSkyBlue, metric.Label);
         ChartSeries = new ISeries[] { glow, core };
         ChartXAxes[0].Labels = buckets.Select(b => b.Label).ToArray();
         OnPropertyChanged(nameof(ChartSeries));
 
         WorstMoments.Clear();
-        foreach (var row in rows
-            .Select(r => (Row: r, Value: BackgroundHealthStoreService.GetMetricValue(r, metricKey)))
-            .Where(t => t.Value.HasValue)
-            .OrderByDescending(t => t.Value!.Value)
-            .Take(10))
-        {
-            WorstMoments.Add(new WorstMomentRow
-            {
-                TimestampLocal = row.Row.TimestampUtc.ToLocalTime(),
-                Value = row.Value!.Value,
-                MetricLabel = SelectedMetric.Label,
-                TopProcessName = row.Row.TopProcessName,
-            });
-        }
+        foreach (var row in worst) WorstMoments.Add(row);
     }
 
     private static List<(string Label, double Value)> Downsample(List<HealthHistoryRow> rows, string metricKey, int maxPoints)
@@ -384,9 +430,16 @@ public sealed class BackgroundHealthViewModel : ObservableObject, IDisposable
 
     // ----- #963 ---------------------------------------------------------------------------------
 
-    private void RefreshAlertDigest()
+    private int _alertGeneration;
+
+    // A whole-file read of alerts-history.jsonl - off the UI thread like the chart's parse.
+    private async void RefreshAlertDigest()
     {
-        var recent = AlertHistoryService.LoadRecent(TimeSpan.FromDays(7));
+        int generation = ++_alertGeneration;
+        List<AlertHistoryEntry> recent;
+        try { recent = await Task.Run(() => AlertHistoryService.LoadRecent(TimeSpan.FromDays(7))); }
+        catch { return; }
+        if (generation != _alertGeneration) return;
 
         RecentAlerts.Clear();
         foreach (var a in recent.Take(50)) RecentAlerts.Add(a);

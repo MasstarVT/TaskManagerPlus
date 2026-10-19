@@ -262,13 +262,26 @@ public sealed class RulesEditorViewModel : ObservableObject, IDisposable
             Confidence = 70,
             Condition = new RuleCondition { Metric = "cpu.percent", Op = "gt", Value = 90 },
         };
-        _engine.SaveUserRule(rule);
-        StatusText = "New rule created - edit it below.";
+        try
+        {
+            _engine.SaveUserRule(rule);
+            StatusText = "New rule created - edit it below.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Couldn't create the rule: {ex.Message}";
+        }
     }
 
     private void ExportUserPack()
     {
-        var pack = _engine.GetUserPack();
+        RulePackFile pack;
+        try { pack = _engine.GetUserPack(); }
+        catch (Exception ex)
+        {
+            StatusText = $"Couldn't export: {ex.Message}";
+            return;
+        }
         var dialog = new SaveFileDialog
         {
             Title = "Export rule pack",
@@ -321,7 +334,16 @@ public sealed class RulesEditorViewModel : ObservableObject, IDisposable
     /// ImportSourceFileName), rendered in the rule list.</summary>
     private void ConfirmImport()
     {
-        _engine.ImportRules(PendingImportRules.ToList(), ImportSourceFileName);
+        try
+        {
+            _engine.ImportRules(PendingImportRules.ToList(), ImportSourceFileName);
+        }
+        catch (Exception ex)
+        {
+            // Pending rules stay listed so the import can be retried.
+            StatusText = $"Couldn't import: {ex.Message}";
+            return;
+        }
         PendingImportRules.Clear();
         IsImportReviewOpen = false;
         StatusText = $"Imported from {ImportSourceFileName} - not verified by this app.";
@@ -371,7 +393,13 @@ public sealed class RulesEditorViewModel : ObservableObject, IDisposable
         {
             var json = File.ReadAllText(dialog.FileName);
             var raw = JsonSerializer.Deserialize<Dictionary<string, object>>(json, RulesEngineService.JsonOpts) ?? new();
-            var preview = _engine.PreviewAll(raw);
+            // A hand-edited snapshot can hold explicit nulls or blank keys - drop them so they read
+            // as an absent metric rather than reaching the condition evaluator.
+            var bag = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in raw)
+                if (!string.IsNullOrWhiteSpace(kv.Key) && kv.Value is not null and not JsonElement { ValueKind: JsonValueKind.Null })
+                    bag[kv.Key] = kv.Value;
+            var preview = _engine.PreviewAllAgainstSnapshot(bag);
 
             TestResults.Clear();
             foreach (var p in preview.OrderByDescending(p => p.WouldFire).ThenBy(p => p.Rule.Rule.Title, StringComparer.OrdinalIgnoreCase))

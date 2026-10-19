@@ -58,11 +58,13 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private readonly List<DateTime> _historyTimestamps = new();
     private List<(DateTime Time, string Level, string Text)> _markerEvents = new();
 
-    /// <summary>Real (sampled) values only, oldest first, for the CPU/RAM/disk histories, plus the
-    /// poll interval they were taken at. The ObservableCollections above stay pre-filled with
-    /// HistoryLength zeros for the charts' fixed X domain, so anything computing a baseline,
-    /// average or dwell time from history must read this instead - otherwise the padding counts
-    /// as a minute of 0% readings right after launch.</summary>
+    /// <summary>Real (sampled) values only, oldest first, for the CPU/RAM/disk histories - and only
+    /// the samples taken since the poll interval last changed, so every sample is exactly
+    /// PollIntervalSeconds apart. The ObservableCollections above stay pre-filled with
+    /// HistoryLength zeros for the charts' fixed X domain (and keep pre-change samples), so
+    /// anything computing a baseline, average or dwell time from history must read this instead -
+    /// otherwise the padding counts as a minute of 0% readings right after launch, and samples
+    /// from an older interval get timed at the new one.</summary>
     public sealed record HistorySnapshot(double[] Cpu, double[] Ram, double[] Disk, double PollIntervalSeconds);
 
     /// <summary>How many samples the history buffers hold at most.</summary>
@@ -72,6 +74,10 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     // so rule evaluation running under Task.Run never enumerates the live collections.
     private volatile HistorySnapshot _historySnapshot = new(Array.Empty<double>(), Array.Empty<double>(), Array.Empty<double>(), 1.0);
     public HistorySnapshot History => _historySnapshot;
+
+    // Ticks pushed since the poll interval last changed (capped at HistoryLength) - how many
+    // trailing samples HistorySnapshot may include.
+    private int _samplesAtCurrentInterval;
 
     private bool _showEventMarkers;
     /// <summary>Toggleable per #141's spec - off by default so a tab nobody has visited Stability
@@ -651,6 +657,9 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
             var settings = PollIntervalSettingsService.Load();
             settings.PerformanceSeconds = clamped;
             PollIntervalSettingsService.Save(settings);
+            // Older samples were taken at the old spacing - drop them from the snapshot rather
+            // than republish them as if taken at the new interval (dwell-time rules, averages).
+            _samplesAtCurrentInterval = 0;
             PublishHistorySnapshot();
             OnPropertyChanged();
         }
@@ -775,7 +784,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     // entries of each history buffer are real samples rather than the initial zero fill.
     private void PublishHistorySnapshot()
     {
-        int real = _historyTimestamps.Count;
+        int real = Math.Min(_historyTimestamps.Count, _samplesAtCurrentInterval);
         _historySnapshot = new HistorySnapshot(
             TrailingSamples(CpuHistory, real), TrailingSamples(RamHistory, real), TrailingSamples(DiskHistory, real), PollIntervalSeconds);
     }
@@ -894,6 +903,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
         PushHistory(NetworkSendHistory, snapshot.NetworkSendBytesPerSec);
         PushHistory(CommittedHistory, snapshot.CommittedBytes);
         PushHistoryTimestamp(DateTime.Now);
+        if (_samplesAtCurrentInterval < HistoryLength) _samplesAtCurrentInterval++;
         PublishHistorySnapshot();
         RecomputeEventMarkerSections();
         PushHistory(HandleCountHistory, snapshot.HandleCount);

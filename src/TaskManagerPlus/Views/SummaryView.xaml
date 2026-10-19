@@ -211,16 +211,57 @@
                         </StackPanel>
                         <!-- #67: "time since last crash" headline stat, pulled from the
                              Stability tab's already-computed figure - no new event-log query. -->
+                        <!-- Both stats below are the Stability tab's field defaults (no crash found,
+                             10.0) until its first event-log read lands, so they show Loading.../
+                             Unknown rather than a healthy-looking value before or without one. The
+                             bindings live in Style setters so the triggers can replace them. -->
                         <StackPanel Margin="0,0,8,0">
                             <TextBlock Text="Since last crash" Style="{StaticResource SubStat}" />
-                            <TextBlock Text="{Binding DataContext.Stability.TimeSinceLastCrashText, RelativeSource={RelativeSource AncestorType=UserControl}}" FontSize="{StaticResource FontTitle}" TextWrapping="Wrap" />
+                            <TextBlock FontSize="{StaticResource FontTitle}" TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                        <Setter Property="Text" Value="{Binding DataContext.Stability.TimeSinceLastCrashText, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DataContext.Stability.HasLoaded, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="False">
+                                                <Setter Property="Text" Value="Unknown" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            </DataTrigger>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding DataContext.Stability.HasLoaded, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="False" />
+                                                    <Condition Binding="{Binding DataContext.Stability.IsLoading, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Text" Value="Loading…" />
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
                         </StackPanel>
                         <!-- #68: single 0-10 stability index - see StabilityViewModel.ComputeStabilityIndex. -->
                         <StackPanel Margin="8,0,0,0">
                             <TextBlock Text="Stability index" Style="{StaticResource SubStat}" />
-                            <TextBlock FontSize="{StaticResource FontTitle}" FontWeight="SemiBold"
-                                       Text="{Binding DataContext.Stability.StabilityIndex, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:0.0} / 10}"
-                                       Foreground="{Binding DataContext.Stability.StabilityIndex, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource StabilityIndexToBrushConverter}}" />
+                            <TextBlock FontSize="{StaticResource FontTitle}" FontWeight="SemiBold">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                        <Setter Property="Text" Value="{Binding DataContext.Stability.StabilityIndex, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0:0.0} / 10}" />
+                                        <Setter Property="Foreground" Value="{Binding DataContext.Stability.StabilityIndex, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource StabilityIndexToBrushConverter}}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DataContext.Stability.HasLoaded, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="False">
+                                                <Setter Property="Text" Value="Unknown" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                            </DataTrigger>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding DataContext.Stability.HasLoaded, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="False" />
+                                                    <Condition Binding="{Binding DataContext.Stability.IsLoading, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Text" Value="Loading…" />
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
                         </StackPanel>
                     </UniformGrid>
                 </StackPanel>
@@ -497,18 +538,42 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
+                    <!-- "All clear" only when nothing fired AND every rule could be evaluated -
+                         otherwise the could-not-check list below means it isn't a clean result. -->
                     <TextBlock Foreground="{DynamicResource SuccessBrush}" Margin="0,8,0,0" FontSize="{StaticResource FontStrong}">
                         <TextBlock.Style>
-                            <Style TargetType="TextBlock">
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding HealthIssues.Count}" Value="0" />
+                                            <Condition Binding="{Binding CouldNotCheckFindings.Count}" Value="0" />
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                        <Run Text="All clear — no issues detected." />
+                    </TextBlock>
+                    <TextBlock Margin="0,8,0,0" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                 <Setter Property="Visibility" Value="Collapsed" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding HealthIssues.Count}" Value="0">
                                         <Setter Property="Visibility" Value="Visible" />
                                     </DataTrigger>
+                                    <!-- Later trigger wins: hidden again when every rule was evaluated. -->
+                                    <DataTrigger Binding="{Binding CouldNotCheckFindings.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </TextBlock.Style>
-                        <Run Text="All clear — no issues detected." />
+                        <Run Text="No issues found, but " /><Run Text="{Binding CouldNotCheckFindings.Count, Mode=OneWay}" /><Run Text=" check(s) couldn't run (listed below), so this isn't a clean result." />
                     </TextBlock>
                     <!-- Round 11, #70: silently writes the same Markdown report to
                          %AppData%\TaskManagerPlus\Reports\ every time the app closes, so there's

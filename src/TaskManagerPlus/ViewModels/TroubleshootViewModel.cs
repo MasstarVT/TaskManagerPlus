@@ -281,7 +281,13 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     /// <summary>True for the Bundle review panel.</summary>
     public bool ShowBundleReview => SelectedRun is null && IsShowingBundleReview;
 
-    public bool IsRunning { get => _isRunning; private set => SetProperty(ref _isRunning, value); }
+    // A run usually ends with no input event, so CommandManager wouldn't re-query on its own and
+    // every !IsRunning button would stay greyed until the next click/keypress.
+    public bool IsRunning
+    {
+        get => _isRunning;
+        private set { if (SetProperty(ref _isRunning, value)) System.Windows.Input.CommandManager.InvalidateRequerySuggested(); }
+    }
 
     public RelayCommand RunSymptomCommand { get; }
     public RelayCommand BackToSymptomsCommand { get; }
@@ -576,6 +582,17 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         $"Couldn't check {what}, so this isn't a clean result - " +
         (step is null || string.IsNullOrWhiteSpace(step.ResultText) ? "the step didn't run." : step.ResultText);
 
+    /// <summary>For a multi-step "nothing stood out" verdict: names the listed automatic steps that
+    /// never produced an answer, so their silence isn't read as part of the all-clear. Null when
+    /// all of them completed. Manual steps must not be passed - they sit Pending until clicked.</summary>
+    private static string? IncompleteNote(params DiagnosticStep?[] steps)
+    {
+        var missing = steps.Where(s => s is not null && DidNotComplete(s)).Select(s => s!).ToList();
+        if (missing.Count == 0) return null;
+        return $" But {missing.Count} check(s) couldn't run, so this isn't a clean result: " +
+            string.Join("; ", missing.Select(s => $"\"{s.Label}\" - {(string.IsNullOrWhiteSpace(s.ResultText) ? "didn't run" : s.ResultText)}"));
+    }
+
     // ==================================================================================
     // Branch definitions - one per symptom, registered in the constructor via RegisterBranch
     // (#914). Each pair below builds the ordered step list plus a verdict function that reads the
@@ -632,6 +649,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
 
     private static string BuildSlowPcVerdict(TroubleshootRun run)
     {
+        var resources = StepById(run, "slow.resources");
         var disk = StepById(run, "slow.disk");
         var paging = StepById(run, "slow.paging");
         var offenders = StepById(run, "slow.offenders");
@@ -643,9 +661,13 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             return "Most likely cause: memory pressure (the system is actively paging). " + paging.ResultText;
         if (offenders?.Status == DiagnosticStepStatus.Warning)
             return "Most likely cause: a single process using most of the CPU. " + offenders.ResultText;
+        // High overall load with no single process dominating (e.g. CPU spread across many).
+        if (resources?.Status == DiagnosticStepStatus.Warning)
+            return "Most likely cause: sustained high overall load, not one dominant process. " + resources.ResultText;
         if (maintenance?.Status == DiagnosticStepStatus.Warning)
             return "Most likely cause: background maintenance work (Defender/servicing/indexing) is currently running. " + maintenance.ResultText;
-        return "Nothing stood out as a clear cause over this sample window - the slowdown may be intermittent or tied to something not covered by this check. Try running this again while the slowness is actually happening.";
+        return "Nothing stood out as a clear cause over this sample window - the slowdown may be intermittent or tied to something not covered by this check. Try running this again while the slowness is actually happening." +
+            IncompleteNote(resources, disk, paging, offenders, maintenance);
     }
 
     // ---------------------------- 903: It crashes or blue-screens ----------------------------
@@ -658,7 +680,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             new DiagnosticStep
             {
                 Id = "crash.events", Label = "BugCheck (1001) & Kernel-Power (41) events",
-                Description = "The System/Application log scan Windows' own Reliability Monitor is based on, last 30 days.",
+                Description = "Kernel-Power 41, EventLog 6008 and BugCheck 1001 in the System log, last 30 days.",
                 Timeout = TimeSpan.FromSeconds(20),
                 Check = ct => Task.Run(() => TroubleshootService.CheckCrashEvents(ctx, ct)),
             },
@@ -708,7 +730,8 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             return drivers.ResultText;
         if (whea?.Status == DiagnosticStepStatus.Warning)
             return "Lead, not a confirmed cause: hardware-error (WHEA) events were logged alongside the crashes - " + whea.ResultText;
-        return "Crashes were found, but no clear recently-installed driver or hardware-error correlation stood out. Review the Reliability Monitor records and minidumps above for more detail.";
+        return "Crashes were found, but no clear recently-installed driver or hardware-error correlation stood out. Review the Reliability Monitor records and minidumps above for more detail." +
+            IncompleteNote(drivers, whea);
     }
 
     // ---------------------------- 904: It won't sleep / wakes on its own ----------------------------
@@ -759,7 +782,10 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             return "The last wake source couldn't be identified by Windows - " + lastwake.ResultText;
         if (study?.Status == DiagnosticStepStatus.Warning)
             return study.ResultText;
-        return "No obvious blocker was found in powercfg's own diagnostics - review the raw output for each step above.";
+        // The sleep study Skips on any non-Modern-Standby PC - only a timeout/error counts there.
+        var studyIfFailed = study?.Status is DiagnosticStepStatus.TimedOut or DiagnosticStepStatus.Failed ? study : null;
+        return "No obvious blocker was found in powercfg's own diagnostics - review the raw output for each step above." +
+            IncompleteNote(requests, waketimers, lastwake, studyIfFailed);
     }
 
     // ---------------------------- 905: No internet (layered) ----------------------------
@@ -787,13 +813,13 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             {
                 Id = "net.gateway", Label = "Default gateway ping",
                 Timeout = TimeSpan.FromSeconds(10), StopOnFailure = true,
-                Check = _ => TroubleshootService.CheckGatewayAsync(ctx),
+                Check = ct => TroubleshootService.CheckGatewayAsync(ctx, ct),
             },
             new DiagnosticStep
             {
                 Id = "net.dns", Label = "DNS resolution",
                 Timeout = TimeSpan.FromSeconds(10), StopOnFailure = true,
-                Check = _ => TroubleshootService.CheckDnsAsync(ctx),
+                Check = ct => TroubleshootService.CheckDnsAsync(ctx, ct),
             },
             new DiagnosticStep
             {
@@ -1007,6 +1033,9 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         var dpc = StepById(run, "games.dpc");
         if (dpc?.Status == DiagnosticStepStatus.Warning)
             return dpc.ResultText + " Run the capture step above for a closer look.";
+        // Only the automatic counter check - the capture step is manual and stays Pending.
+        if (DidNotComplete(dpc))
+            return CouldNotCheck(dpc, "DPC/interrupt time") + " The capture step above can still be run.";
         return "DPC/interrupt time looks normal over this sample window - if it's stuttering right now, try running this again while it's happening, or use the capture step above.";
     }
 
@@ -1021,7 +1050,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             {
                 Id = "wifi.adapter", Label = "Wireless adapter presence",
                 Timeout = TimeSpan.FromSeconds(10),
-                Check = _ => TroubleshootService.CheckWirelessAdapterPresenceAsync(ctx),
+                Check = ct => TroubleshootService.CheckWirelessAdapterPresenceAsync(ctx, ct),
             },
             new DiagnosticStep
             {
@@ -1033,7 +1062,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             },
             new DiagnosticStep
             {
-                Id = "wifi.events", Label = "WLAN-AutoConfig events (8000-8003/11000-series)",
+                Id = "wifi.events", Label = "WLAN-AutoConfig failure/disconnect events (8002/8003/110xx)",
                 Timeout = TimeSpan.FromSeconds(15),
                 ShouldRun = run => StepById(run, "wifi.adapter")?.Status == DiagnosticStepStatus.Passed,
                 Check = _ => Task.Run(TroubleshootService.CheckWlanAutoConfigEvents),
@@ -1071,7 +1100,8 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
 
         return parts.Count > 0
             ? string.Join(" ", parts)
-            : "No disconnect history, WLAN-AutoConfig events, or an aggressive power-saving setting stood out - if it's dropping intermittently, try running this again after it happens.";
+            : "No disconnect history, WLAN-AutoConfig events, or an aggressive power-saving setting stood out - if it's dropping intermittently, try running this again after it happens." +
+              IncompleteNote(report, events, power);
     }
 
     // ---------------------------- 911: My disk sits at 100% ----------------------------
@@ -1099,7 +1129,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             {
                 Id = "disk.mediatype", Label = "System drive media type (HDD/SSD)",
                 Timeout = TimeSpan.FromSeconds(10),
-                Check = _ => Task.Run(() => TroubleshootService.CheckSystemDriveMediaType(ctx)),
+                Check = ct => Task.Run(() => TroubleshootService.CheckSystemDriveMediaType(ctx, ct)),
             },
             new DiagnosticStep
             {
@@ -1113,7 +1143,13 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             {
                 Id = "disk.background", Label = "Background indexing/prefetch (SysMain/Windows Search)",
                 Timeout = TimeSpan.FromSeconds(5),
-                Check = _ => Task.FromResult(TroubleshootService.CheckBackgroundWriter(_processes.Processes.ToList())),
+                // Snapshot the live list here on the dispatcher; the service sample it also takes
+                // is a cold SCM/WMI read, so it runs under Task.Run where the timeout can fire.
+                Check = _ =>
+                {
+                    var processes = _processes.Processes.ToList();
+                    return Task.Run(() => TroubleshootService.CheckBackgroundWriter(processes));
+                },
             },
         };
     }
@@ -1133,7 +1169,9 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             return "Verdict: background indexing/prefetching. " + background.ResultText;
         if (latency?.Status == DiagnosticStepStatus.Warning)
             return latency.ResultText + " Run the fragmentation step above if this is a spinning disk.";
-        return "Disk activity looks normal right now - if it's pegged at 100% currently, try running this again while it's happening.";
+        // Fragmentation is manual (Pending until clicked), so it isn't part of this gate.
+        return "Disk activity looks normal right now - if it's pegged at 100% currently, try running this again while it's happening." +
+            IncompleteNote(latency, process, background);
     }
 
     // ---------------------------- 912: Battery dies too fast ----------------------------
@@ -1147,7 +1185,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             {
                 Id = "battery.presence", Label = "Battery presence",
                 Timeout = TimeSpan.FromSeconds(10),
-                Check = _ => Task.Run(() => TroubleshootService.CheckBatteryPresence(ctx)),
+                Check = ct => Task.Run(() => TroubleshootService.CheckBatteryPresence(ctx, ct)),
             },
             new DiagnosticStep
             {
@@ -1197,9 +1235,11 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         if (srum?.Status == DiagnosticStepStatus.Warning) parts.Add(srum.ResultText);
         if (plan?.Status == DiagnosticStepStatus.Warning) parts.Add(plan.ResultText);
 
+        // srumutil is optional (missing on some builds), so only the report and plan gate this.
+        string? note = IncompleteNote(report, plan);
         return parts.Count > 0
-            ? string.Join(" ", parts)
-            : "Battery health and active power plan both look normal - nothing obvious stood out.";
+            ? string.Join(" ", parts) + note
+            : "Battery health and active power plan both look normal - nothing obvious stood out." + note;
     }
 
     // ---------------------------- 913: A device keeps disconnecting or isn't recognized ----------------------------
@@ -1214,7 +1254,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Id = "device.pnp", Label = "Devices reporting a problem (Device Manager)",
                 Description = "Win32_PnPEntity entries with a nonzero ConfigManagerErrorCode.",
                 Timeout = TimeSpan.FromSeconds(15),
-                Check = _ => Task.Run(() => TroubleshootService.CheckPnpProblemDevices(ctx)),
+                Check = ct => Task.Run(() => TroubleshootService.CheckPnpProblemDevices(ctx, ct)),
             },
             new DiagnosticStep
             {

@@ -750,8 +750,11 @@ public sealed class RulesEngineService : IDisposable
     /// sample so far satisfies the condition but there aren't enough of them to cover the window
     /// (just launched, or a window longer than the buffer can ever hold), the rule genuinely
     /// can't be decided yet: it returns false with `notEnoughHistory` set, which Evaluate reports
-    /// as "could not check" rather than "checked, clean".</summary>
-    private static bool EvaluateWithSustain(LoadedRule lr, IReadOnlyDictionary<string, object> bag, PerformanceViewModel.HistorySnapshot history,
+    /// as "could not check" rather than "checked, clean".
+    ///
+    /// A null `history` means `bag` is a saved snapshot, not the live system: the live history
+    /// says nothing about that moment, so a passing snapshot value can't show the dwell either.</summary>
+    private static bool EvaluateWithSustain(LoadedRule lr, IReadOnlyDictionary<string, object> bag, PerformanceViewModel.HistorySnapshot? history,
         out string? error, out bool notEnoughHistory)
     {
         notEnoughHistory = false;
@@ -766,6 +769,15 @@ public sealed class RulesEngineService : IDisposable
 
         if (isSingleLeaf && HistoryAccessors.TryGetValue(cond.Metric!, out var accessor))
         {
+            if (history is null)
+            {
+                // One instant: a failing value settles it, a passing one can't prove the window.
+                if (!EvaluateCondition(cond, bag, out error)) return false;
+                notEnoughHistory = true;
+                error = $"a saved snapshot has no history to check the {seconds}s window against";
+                return false;
+            }
+
             var samples = accessor(history);
             double pollSeconds = Math.Max(0.1, history.PollIntervalSeconds);
             int samplesNeeded = Math.Max(1, (int)Math.Ceiling(seconds / pollSeconds));
@@ -808,22 +820,31 @@ public sealed class RulesEngineService : IDisposable
     /// pass, which also quietly breaks any cycle instead of recursing forever.</summary>
     public List<RulePreviewResult> PreviewAll(IReadOnlyDictionary<string, object> baseBag) => PreviewAllInternal(baseBag, out _, out _);
 
+    /// <summary>PreviewAll against a saved metric snapshot (the rule editor's "Test pack"): no live
+    /// history is mixed in, so a sustained rule reports why it can't be decided instead of being
+    /// judged on whatever the machine is doing now.</summary>
+    public List<RulePreviewResult> PreviewAllAgainstSnapshot(IReadOnlyDictionary<string, object> snapshotBag) =>
+        PreviewAllInternal(snapshotBag, out _, out _, useLiveHistory: false);
+
     /// <summary>Does the actual work for PreviewAll, additionally handing back the fully augmented
     /// working bag (base bag + every non-composite rule's `finding.&lt;id&gt;.fired` key) so
     /// Evaluate can capture #929's condition-reading trail (and resolve #932's ImpactTemplate)
     /// against the same bag a composite rule actually fired against, not just the caller's base
     /// bag, plus the ids of sustained rules that didn't have enough history to decide.</summary>
     private List<RulePreviewResult> PreviewAllInternal(IReadOnlyDictionary<string, object> baseBag, out Dictionary<string, object> augmentedBag,
-        out HashSet<string> notEnoughHistoryRuleIds)
+        out HashSet<string> notEnoughHistoryRuleIds, bool useLiveHistory = true)
     {
         List<LoadedRule> rules;
         lock (_lock) rules = _loadedRules.ToList();
 
         // One immutable snapshot for the whole pass - callers include Task.Run paths, and the live
         // history collections are only ever safe to touch on the dispatcher.
-        var history = _performance.History;
+        PerformanceViewModel.HistorySnapshot? history = useLiveHistory ? _performance.History : null;
 
-        var bag = new Dictionary<string, object>(baseBag, StringComparer.OrdinalIgnoreCase);
+        // Indexer, not the copy constructor: a hand-edited snapshot can carry keys that differ
+        // only by case, which the OrdinalIgnoreCase copy constructor throws on.
+        var bag = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in baseBag) bag[kv.Key] = kv.Value;
         var results = new List<RulePreviewResult>();
         notEnoughHistoryRuleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -1020,7 +1041,14 @@ public sealed class RulesEngineService : IDisposable
                 var json = File.ReadAllText(OverridesSettingsPath);
                 var loaded = JsonSerializer.Deserialize<Dictionary<string, RuleOverride>>(json, JsonOpts);
                 if (loaded is not null)
-                    return new Dictionary<string, RuleOverride>(loaded.Where(kv => kv.Value is not null), StringComparer.OrdinalIgnoreCase);
+                {
+                    // Keys differing only by case would make the OrdinalIgnoreCase copy constructor
+                    // throw, read as "no overrides", and the next SetOverride would overwrite them all.
+                    var result = new Dictionary<string, RuleOverride>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var kv in loaded)
+                        if (kv.Value is not null && !string.IsNullOrWhiteSpace(kv.Key)) result.TryAdd(kv.Key, kv.Value);
+                    return result;
+                }
             }
         }
         catch { /* corrupt/unreadable - fall back to no overrides */ }
@@ -1087,8 +1115,12 @@ public sealed class RulesEngineService : IDisposable
 
     // ----- user rule edits (#922) / import (#926) -------------------------------------------
 
-    private static RulePackFile ReadPackFileOrEmpty(string path)
+    /// <summary>Reads a pack file; a missing or empty file is an empty pack. `unreadable` is set
+    /// when the file exists but couldn't be read or parsed - its rules are still on disk, so a
+    /// caller about to write must not treat the empty result as the whole file.</summary>
+    private static RulePackFile ReadPackFile(string path, out bool unreadable)
     {
+        unreadable = false;
         try
         {
             if (File.Exists(path))
@@ -1098,23 +1130,40 @@ public sealed class RulesEngineService : IDisposable
                     return WithNonNullRules(JsonSerializer.Deserialize<RulePackFile>(json, JsonOpts) ?? new RulePackFile { PackName = "My rules" });
             }
         }
-        catch { /* corrupt - treat as empty rather than losing the ability to save a new edit */ }
+        catch { unreadable = true; }
         return new RulePackFile { PackName = "My rules" };
     }
 
+    /// <summary>The user-overrides.json read every write path starts from. An unreadable file is
+    /// copied to "user-overrides.json.corrupt-&lt;yyyyMMddHHmmss&gt;.bak" (not *.json, so LoadPacks
+    /// and the watcher ignore it) before the caller overwrites it, so hand-written rules in a file
+    /// with one typo survive. If that copy fails, this throws and nothing is written.</summary>
+    private static RulePackFile ReadUserPackForWrite()
+    {
+        var file = ReadPackFile(UserOverridesPath, out bool unreadable);
+        if (unreadable)
+            File.Copy(UserOverridesPath, $"{UserOverridesPath}.corrupt-{DateTime.Now:yyyyMMddHHmmss}.bak", overwrite: false);
+        return file;
+    }
+
+    // Temp file + rename, so a failed or interrupted write can't leave a truncated pack behind.
+    // The ".tmp" name doesn't match LoadPacks' or the watcher's *.json filter.
     private static void WritePackFile(string path, RulePackFile file)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, JsonSerializer.Serialize(file, JsonOpts));
+        string tmp = path + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(file, JsonOpts));
+        File.Move(tmp, path, overwrite: true);
     }
 
     /// <summary>#922: writes (or updates) one rule into user-overrides.json and reloads. Used both
-    /// by "save edit" and "create new rule".</summary>
+    /// by "save edit" and "create new rule". Throws when the file can't be written (or an
+    /// unreadable existing file can't be backed up first).</summary>
     public void SaveUserRule(Rule rule)
     {
         lock (_lock)
         {
-            var file = ReadPackFileOrEmpty(UserOverridesPath);
+            var file = ReadUserPackForWrite();
             int idx = file.Rules.FindIndex(r => string.Equals(r.Id, rule.Id, StringComparison.OrdinalIgnoreCase));
             if (idx >= 0) file.Rules[idx] = rule; else file.Rules.Add(rule);
             WritePackFile(UserOverridesPath, file);
@@ -1128,7 +1177,7 @@ public sealed class RulesEngineService : IDisposable
     {
         lock (_lock)
         {
-            var file = ReadPackFileOrEmpty(UserOverridesPath);
+            var file = ReadUserPackForWrite();
             foreach (var r in rules)
             {
                 r.ImportedFromFile = true;
@@ -1141,8 +1190,16 @@ public sealed class RulesEngineService : IDisposable
         LoadPacks();
     }
 
-    /// <summary>#926: the user's own pack (never the built-in one) - what Export writes to disk.</summary>
-    public RulePackFile GetUserPack() => ReadPackFileOrEmpty(UserOverridesPath);
+    /// <summary>#926: the user's own pack (never the built-in one) - what Export writes to disk.
+    /// Throws when user-overrides.json exists but can't be parsed, rather than exporting it as an
+    /// empty pack.</summary>
+    public RulePackFile GetUserPack()
+    {
+        var file = ReadPackFile(UserOverridesPath, out bool unreadable);
+        if (unreadable)
+            throw new InvalidDataException($"{UserOverridesFileName} couldn't be read or parsed - fix or remove it, then export again.");
+        return file;
+    }
 
     public static RulePackFile ParsePackFile(string json) =>
         WithNonNullRules(JsonSerializer.Deserialize<RulePackFile>(json, JsonOpts) ?? new RulePackFile());
