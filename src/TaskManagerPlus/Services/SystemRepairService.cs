@@ -57,7 +57,9 @@ public static class SystemRepairService
     /// machine - purely schedules the check for whenever the next restart happens.</summary>
     public static async Task<(bool Ok, string Message)> ScheduleChkdskOnSystemVolumeAsync()
     {
-        string volume = (Environment.GetEnvironmentVariable("SystemDrive") ?? "C:").TrimEnd('\\');
+        // From the system directory, not %SystemDrive% (a user-settable variable) - this schedules an
+        // elevated chkdsk /f on that volume.
+        string volume = (System.IO.Path.GetPathRoot(Environment.SystemDirectory) ?? "C:").TrimEnd('\\');
         var (ok, output) = await RunCapturedAsync("fsutil.exe", $"dirty set {volume}", 10000);
         return ok
             ? (true, $"{volume} marked dirty - a full disk check (chkdsk/autochk) will run automatically the next time this machine restarts, before Windows finishes starting.")

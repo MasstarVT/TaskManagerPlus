@@ -51,6 +51,7 @@ public static class ProcessEnvironmentHardening
         Set("SystemRoot", windows);
         Set("windir", windows);
         Set("ComSpec", Path.Combine(system32, "cmd.exe"));
+        Set("SystemDrive", (Path.GetPathRoot(system32) ?? "C:").TrimEnd('\\'));
         Set("ProgramFiles", programFiles);
         Set("ProgramW6432", programFiles);
         Set("ProgramFiles(x86)", programFilesX86);

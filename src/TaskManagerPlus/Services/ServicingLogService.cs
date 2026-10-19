@@ -159,7 +159,7 @@ public static class ServicingLogService
         // The elevated expand.exe writes the decompressed copies, which are then read back - so
         // into a fresh admin-only folder, never %TEMP%. Without one the archives aren't checked,
         // and the result says so rather than reporting "no [SR] activity" for them.
-        var expandDir = AdminDataPaths.CreatePrivateTempDirectory("CbsPersist", out string? dirError);
+        var expandDir = AdminDataPaths.CreatePrivateTempDirectory("CbsPersist", out string? dirError, ownerReadableOnly: true);
         if (expandDir is null)
         {
             summary.Found = false;
