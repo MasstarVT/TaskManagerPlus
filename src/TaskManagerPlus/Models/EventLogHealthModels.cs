@@ -78,6 +78,9 @@ public sealed class EventLogConfigChangeRecord
     public string PreviousValue { get; set; } = string.Empty;
     public string NewValue { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; }
+    /// <summary>JournalIntegrityService MAC over the fields a revert uses; a record without a
+    /// valid one (forged, edited, or written before signing) can't be reverted.</summary>
+    public string? Mac { get; set; }
 }
 
 /// <summary>event-log-config.json root - same shape as every other settings file in this app (a

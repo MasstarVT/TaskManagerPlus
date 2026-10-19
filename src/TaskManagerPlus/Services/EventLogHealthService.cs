@@ -281,7 +281,7 @@ public sealed class EventLogHealthService
         try
         {
             Directory.CreateDirectory(AppPaths.SettingsDirectory);
-            File.WriteAllText(ConfigPath, JsonSerializer.Serialize(new EventLogConfigSettings { Changes = changes }, JsonOptions));
+            AppPaths.WriteAllTextAtomic(ConfigPath, JsonSerializer.Serialize(new EventLogConfigSettings { Changes = changes }, JsonOptions));
         }
         catch { /* best-effort - worst case only the in-session state survives */ }
     }
@@ -299,7 +299,11 @@ public sealed class EventLogHealthService
         var existing = changes.FirstOrDefault(c => string.Equals(c.ChannelName, channelName, StringComparison.OrdinalIgnoreCase) && c.ChangeType == changeType);
         string baselinePrevious = existing?.PreviousValue ?? previousValue;
         changes.RemoveAll(c => string.Equals(c.ChannelName, channelName, StringComparison.OrdinalIgnoreCase) && c.ChangeType == changeType);
-        changes.Add(new EventLogConfigChangeRecord { ChannelName = channelName, ChangeType = changeType, PreviousValue = baselinePrevious, NewValue = newValue, Timestamp = DateTime.Now });
+        var record = new EventLogConfigChangeRecord { ChannelName = channelName, ChangeType = changeType, PreviousValue = baselinePrevious, NewValue = newValue, Timestamp = DateTime.Now };
+        // The file is user-writable but its PreviousValue feeds an elevated `wevtutil sl` on revert.
+        record.Mac = JournalIntegrityService.Sign(MacDomain, record.ChannelName, record.ChangeType.ToString(),
+            record.PreviousValue, record.NewValue, JournalIntegrityService.Instant(record.Timestamp));
+        changes.Add(record);
         SaveConfigChanges(changes);
     }
 
@@ -313,8 +317,18 @@ public sealed class EventLogHealthService
         SaveConfigChanges(changes);
     }
 
+    private const string MacDomain = "event-log-config";
+
+    /// <summary>True when this app signed the record (see RecordConfigChange).</summary>
+    public static bool IsVerified(EventLogConfigChangeRecord c) =>
+        JournalIntegrityService.Verify(MacDomain, c.Mac, c.ChannelName, c.ChangeType.ToString(),
+            c.PreviousValue, c.NewValue, JournalIntegrityService.Instant(c.Timestamp));
+
+    /// <summary>Only a record this app signed is offered for revert - an unsigned one in the
+    /// user-writable file could steer the elevated wevtutil call.</summary>
     public static EventLogConfigChangeRecord? FindConfigChange(string channelName, EventLogConfigChangeType changeType)
-        => LoadConfigChanges().FirstOrDefault(c => string.Equals(c.ChannelName, channelName, StringComparison.OrdinalIgnoreCase) && c.ChangeType == changeType);
+        => LoadConfigChanges().FirstOrDefault(c => string.Equals(c.ChannelName, channelName, StringComparison.OrdinalIgnoreCase)
+            && c.ChangeType == changeType && IsVerified(c));
 
     // ==================== #199: log-clearing and gap detection ====================
 
