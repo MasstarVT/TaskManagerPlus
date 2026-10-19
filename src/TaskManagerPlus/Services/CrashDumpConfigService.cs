@@ -69,20 +69,28 @@ public static class CrashDumpConfigService
         // flag, not a verdict"). Complete dump: all of physical RAM plus a small header/overhead
         // margin. Kernel/Automatic/Active dump: only kernel-mode pages, commonly well under total
         // RAM, but with no fixed ratio Windows guarantees - a conservative third of RAM (floor
-        // 800 MB) is used as the "probably enough" bar.
+        // 800 MB) is used as the "probably enough" bar. Small dump: Microsoft documents a 1 MB
+        // minimum page file for the 256 KB minidump.
         long completeReq = ramBytes > 0 ? ramBytes + 257L * 1024 * 1024 : 0;
         long kernelReq = ramBytes > 0 ? Math.Max(800L * 1024 * 1024, ramBytes / 3) : 0;
         long requiredForType = rawType switch
         {
             1 => completeReq,
-            2 or 3 or 7 => kernelReq,
+            2 or 7 => kernelReq,
+            3 => 1L * 1024 * 1024,
             _ => 0,
         };
 
         bool pageFileOnSystemVolume = pageFiles.Any(p => p.IsSystemVolume);
         long systemVolumeCapacityMb = pageFiles.Where(p => p.IsSystemVolume)
             .Sum(p => p.IsSystemManaged ? (p.AllocatedSizeMb ?? 0) : Math.Max(p.MaximumSizeMb, p.AllocatedSizeMb ?? 0));
-        bool sysVolSufficient = requiredForType <= 0 || (systemVolumeCapacityMb * 1024L * 1024L) >= requiredForType;
+        // Automatic memory dump with a system-managed system-volume page file is the one case
+        // where Windows itself grows the page file to fit the dump, so its current allocation
+        // isn't a limit (the Windows default on large-RAM machines would otherwise always flag).
+        bool systemManagedOnSystemVolume = autoManaged == true || pageFiles.Any(p => p.IsSystemVolume && p.IsSystemManaged);
+        bool sysVolSufficient = requiredForType <= 0
+            || (rawType == 7 && systemManagedOnSystemVolume)
+            || (systemVolumeCapacityMb * 1024L * 1024L) >= requiredForType;
 
         // Items 74/75: whichever path the next crash would actually try to write to.
         string? targetPath = !string.IsNullOrWhiteSpace(dedicated) ? dedicated : dumpFile;
@@ -346,7 +354,9 @@ public static class CrashDumpConfigService
         else if (cfg.PageFileDisabled)
             pageFileDetail = $"No page file is configured at all - crash dumps can't be written. The configured dump type needs roughly {Formatting.FormatBytes(cfg.RequiredSizeForConfiguredTypeBytes)}.";
         else if (cfg.SystemVolumePageFileSufficient)
-            pageFileDetail = "The system-volume page file is large enough for the configured dump type.";
+            pageFileDetail = cfg.CrashDumpEnabledRaw == 7 && (cfg.PageFiles.Count == 0 || cfg.PageFiles.Any(p => p.IsSystemVolume && p.IsSystemManaged))
+                ? "The system-volume page file is system-managed and the dump type is Automatic, so Windows grows the page file to fit a dump when needed."
+                : "The system-volume page file is large enough for the configured dump type.";
         else if (dedicatedLooksAdequate)
             pageFileDetail = "The system-volume page file is too small, but a dedicated dump file is configured to compensate.";
         else

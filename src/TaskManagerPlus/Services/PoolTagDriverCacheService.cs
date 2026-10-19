@@ -12,6 +12,21 @@ public static class PoolTagDriverCacheService
 {
     private static string CachePath => AppPaths.GetPath("pool-tag-drivers.json");
 
+    /// <summary>Files written before this version could hold "Unknown" entries from a scan the
+    /// deadline/file cap cut short; those were never checked against every driver file, so they're
+    /// dropped on load and rescanned instead of staying unattributed forever.</summary>
+    private const int CurrentSchemaVersion = 2;
+    private const string UnknownDriver = "Unknown";
+
+    /// <summary>On-disk shape: <see cref="PoolTagDriverCache"/> plus a schema marker (absent, so 0,
+    /// in older files).</summary>
+    private sealed class StoredCache
+    {
+        public int SchemaVersion { get; set; }
+        public DateTime LastScanUtc { get; set; }
+        public Dictionary<string, string> TagToDriver { get; set; } = new(StringComparer.Ordinal);
+    }
+
     public static PoolTagDriverCache Load()
     {
         try
@@ -19,8 +34,17 @@ public static class PoolTagDriverCacheService
             if (File.Exists(CachePath))
             {
                 var json = File.ReadAllText(CachePath);
-                var cache = JsonSerializer.Deserialize<PoolTagDriverCache>(json);
-                if (cache is not null) return cache;
+                var stored = JsonSerializer.Deserialize<StoredCache>(json);
+                if (stored is not null)
+                {
+                    var map = new Dictionary<string, string>(stored.TagToDriver ?? new(), StringComparer.Ordinal);
+                    if (stored.SchemaVersion < CurrentSchemaVersion)
+                    {
+                        foreach (var tag in map.Where(kv => kv.Value == UnknownDriver).Select(kv => kv.Key).ToList())
+                            map.Remove(tag);
+                    }
+                    return new PoolTagDriverCache { LastScanUtc = stored.LastScanUtc, TagToDriver = map };
+                }
             }
         }
         catch
@@ -36,7 +60,13 @@ public static class PoolTagDriverCacheService
         {
             var dir = Path.GetDirectoryName(CachePath)!;
             Directory.CreateDirectory(dir);
-            var json = JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true });
+            var stored = new StoredCache
+            {
+                SchemaVersion = CurrentSchemaVersion,
+                LastScanUtc = cache.LastScanUtc,
+                TagToDriver = cache.TagToDriver,
+            };
+            var json = JsonSerializer.Serialize(stored, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(CachePath, json);
         }
         catch

@@ -76,7 +76,9 @@ public sealed class EventLogService
 
         // Display 4101 is Warning-level, so the Level=1|2 `events` list above never contains one -
         // the count and last-seen time come from the dedicated 4101 query instead.
-        var (tdrEvents, tdrTotalCount) = ReadTdrEventDetails();
+        // A capped count is a floor, not the total; StabilitySnapshot has no flag to carry that
+        // to the tile yet, so it is only known here.
+        var (tdrEvents, tdrTotalCount, _) = ReadTdrEventDetails();
 
         var crashLikeIds = new HashSet<int> { KernelPowerEventId, LegacyUncleanShutdownEventId, BlueScreenEventId };
         var lastCrash = events.Where(e => crashLikeIds.Contains(e.EventId)).OrderByDescending(e => e.TimeCreated).FirstOrDefault();
@@ -285,9 +287,11 @@ public sealed class EventLogService
     /// query" shape ReadLowMemoryEvents already uses - and Query() builds the TdrEventCount/
     /// LastTdrEvent tile from this list too, since 4101 never appears in `events`. Only the newest
     /// 100 get detail; TotalCount keeps counting past them (no message formatting) so the tile
-    /// isn't pinned at exactly 100.</summary>
-    private static (List<TdrEventDetail> Details, int TotalCount) ReadTdrEventDetails()
+    /// isn't pinned at exactly 100. Capped is true when more events exist past the counting
+    /// ceiling, i.e. TotalCount is a lower bound.</summary>
+    private static (List<TdrEventDetail> Details, int TotalCount, bool Capped) ReadTdrEventDetails()
     {
+        bool capped = false;
         var result = new List<TdrEventDetail>();
         int count = 0;
         try
@@ -333,13 +337,18 @@ public sealed class EventLogService
                     });
                 }
             }
+            if (count >= maxCountedEvents && reader.ReadEvent() is { } extra)
+            {
+                extra.Dispose();
+                capped = true;
+            }
         }
         catch
         {
             // Provider/log unavailable - degrade to "no TDR events found" (the count/last-seen tile
             // is built from this same read).
         }
-        return (result, count);
+        return (result, count, capped);
     }
 
     /// <summary>Item 34: the three registry values that actually control TDR's timeout behavior -

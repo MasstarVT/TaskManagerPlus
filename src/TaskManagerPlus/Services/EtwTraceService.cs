@@ -1105,8 +1105,9 @@ public static class EtwTraceService
     /// guessing success/failure from an unreliable code alone.
     ///
     /// The recipe file is user-writable but runs elevated, so the tool is limited to the in-box
-    /// trace tools, run from their System32 copies (see <see cref="ResolveRecipeTool"/>); the
-    /// arguments themselves - including any output paths - are still the recipe's own.
+    /// trace tools, run from their System32 copies (see <see cref="ResolveRecipeTool"/>), and the
+    /// arguments to an allow-list of non-persistent switches whose file paths all stay inside the
+    /// app's own Traces folder (see <see cref="ValidateRecipeArguments"/>).
     /// </summary>
     public static async Task<(bool Success, string Message)> RunRecipeAsync(EtwCaptureRecipe recipe, string outputPath, CancellationToken ct = default)
     {
@@ -1116,6 +1117,8 @@ public static class EtwTraceService
         string args = (recipe.Arguments ?? string.Empty).Replace("%OUTPUT%", $"\"{outputPath}\"");
         string? toolPath = ResolveRecipeTool(recipe.Tool, args, out string? refusal);
         if (toolPath is null) return (false, refusal ?? "This recipe's tool isn't allowed.");
+        if (!ValidateRecipeArguments(Path.GetFileName(toolPath), args, AppPaths.GetPath("Traces"), out refusal))
+            return (false, $"Recipe refused: {refusal}");
 
         string output;
         int? exitCode;
@@ -1166,6 +1169,276 @@ public static class EtwTraceService
             return null;
         }
         return fullPath;
+    }
+
+    /// <summary>What the tokens after a recipe switch (up to the next switch) may be.</summary>
+    private enum RecipeArgKind
+    {
+        /// <summary>No values.</summary>
+        Flag,
+        /// <summary>Plain names/values - nothing path-like.</summary>
+        Words,
+        /// <summary>Full paths inside the Traces folder.</summary>
+        Paths,
+        /// <summary>wpr -stop: one path, then free-text problem description words.</summary>
+        StopArgs,
+        /// <summary>wpr -start: built-in profile names, or file.wprp!Profile with the file in the Traces folder.</summary>
+        Profiles,
+    }
+
+    // Allow-lists, not block-lists: anything not named here (wpr -addboot/-boottrace/-shutdown/
+    // -heaptracingconfig/-snapshotconfig/-setprofint/-disablepagingexecutive/-log/-purgecache,
+    // logman -rc/-u/-s/-b/-e/-r/-config/-xml, tracerpt -config, ...) is refused.
+    private static readonly Dictionary<string, RecipeArgKind> WprRecipeSwitches = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["start"] = RecipeArgKind.Profiles, ["filemode"] = RecipeArgKind.Flag, ["recordtempto"] = RecipeArgKind.Paths,
+        ["instancename"] = RecipeArgKind.Words, ["stop"] = RecipeArgKind.StopArgs, ["cancel"] = RecipeArgKind.Flag,
+        ["status"] = RecipeArgKind.Words, ["details"] = RecipeArgKind.Flag, ["profiles"] = RecipeArgKind.Profiles,
+        ["profiledetails"] = RecipeArgKind.Profiles, ["providers"] = RecipeArgKind.Words, ["flush"] = RecipeArgKind.Flag,
+        ["marker"] = RecipeArgKind.Words, ["capturestateondemand"] = RecipeArgKind.Flag, ["skippdbgen"] = RecipeArgKind.Flag,
+        ["compress"] = RecipeArgKind.Flag, ["force"] = RecipeArgKind.Flag, ["supresspii"] = RecipeArgKind.Flag,
+        ["merge"] = RecipeArgKind.Paths, ["mergeonly"] = RecipeArgKind.Flag, ["injectonly"] = RecipeArgKind.Flag,
+    };
+
+    private static readonly Dictionary<string, RecipeArgKind> LogmanRecipeSwitches = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ets"] = RecipeArgKind.Flag, ["p"] = RecipeArgKind.Words, ["pf"] = RecipeArgKind.Paths, ["o"] = RecipeArgKind.Paths,
+        ["f"] = RecipeArgKind.Words, ["mode"] = RecipeArgKind.Words, ["ct"] = RecipeArgKind.Words, ["ln"] = RecipeArgKind.Words,
+        ["ft"] = RecipeArgKind.Words, ["bs"] = RecipeArgKind.Words, ["nb"] = RecipeArgKind.Words, ["max"] = RecipeArgKind.Words,
+        ["rt"] = RecipeArgKind.Flag, ["ul"] = RecipeArgKind.Flag, ["ow"] = RecipeArgKind.Flag, ["a"] = RecipeArgKind.Flag,
+        ["y"] = RecipeArgKind.Flag,
+    };
+
+    private static readonly Dictionary<string, RecipeArgKind> TracerptRecipeSwitches = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["o"] = RecipeArgKind.Paths, ["of"] = RecipeArgKind.Words, ["summary"] = RecipeArgKind.Paths, ["report"] = RecipeArgKind.Paths,
+        ["lr"] = RecipeArgKind.Flag, ["y"] = RecipeArgKind.Flag, ["gmt"] = RecipeArgKind.Flag, ["rts"] = RecipeArgKind.Flag,
+        ["rl"] = RecipeArgKind.Words, ["rt"] = RecipeArgKind.Words, ["i"] = RecipeArgKind.Paths, ["df"] = RecipeArgKind.Paths,
+        ["int"] = RecipeArgKind.Paths, ["tmf"] = RecipeArgKind.Paths, ["tp"] = RecipeArgKind.Paths, ["pdb"] = RecipeArgKind.Paths,
+    };
+
+    private static readonly string[] NetshTraceRecipeVerbs = { "start", "stop", "show", "convert" };
+    private static readonly string[] NetshTracePathKeys = { "tracefile", "input", "output", "file" };
+
+    /// <summary>
+    /// Checks a recipe's (already %OUTPUT%-substituted) arguments before the elevated app runs them:
+    /// only allow-listed, non-persistent switches/verbs, and every file path - anything rooted or
+    /// containing a separator, and every value of a path-taking switch - must be a full path inside
+    /// <paramref name="traceDir"/>. A bare file name is refused too, since the tool would resolve it
+    /// against its own working directory. Built-in recipes (wpr -start ... -filemode, netsh trace
+    /// start ... tracefile=%OUTPUT%) pass unchanged.
+    /// </summary>
+    internal static bool ValidateRecipeArguments(string toolFileName, string args, string traceDir, out string? refusal)
+    {
+        refusal = null;
+        if (args.Any(c => char.IsControl(c)))
+        {
+            refusal = "the arguments contain control characters.";
+            return false;
+        }
+        // No escaped quotes and balanced quotes, so the tokens checked here are the tokens the tool
+        // itself will parse - a \" sequence is read differently by different command-line parsers.
+        if (args.Contains("\\\"") || args.Count(c => c == '"') % 2 != 0)
+        {
+            refusal = "the arguments contain an escaped or unbalanced quote.";
+            return false;
+        }
+
+        string dir;
+        try { dir = Path.GetFullPath(traceDir).TrimEnd('\\'); }
+        catch { refusal = "the Traces folder path couldn't be resolved."; return false; }
+        if (HasReparsePointUnder(dir))
+        {
+            refusal = $"the Traces folder ({dir}) or one of its parent folders is a junction or symbolic link.";
+            return false;
+        }
+
+        var tokens = TokenizeRecipeArguments(args);
+        string tool = toolFileName.ToLowerInvariant();
+        return tool switch
+        {
+            "wpr.exe" => ValidateSwitchTokens(tokens, 0, WprRecipeSwitches, RecipeArgKind.Words, dir, out refusal),
+            "tracerpt.exe" => ValidateSwitchTokens(tokens, 0, TracerptRecipeSwitches, RecipeArgKind.Paths, dir, out refusal),
+            "logman.exe" => ValidateLogmanTokens(tokens, dir, out refusal),
+            "netsh.exe" => ValidateNetshTraceTokens(tokens, dir, out refusal),
+            _ => Refuse($"{toolFileName} isn't an allowed recipe tool.", out refusal),
+        };
+    }
+
+    private static bool Refuse(string reason, out string? refusal)
+    {
+        refusal = reason;
+        return false;
+    }
+
+    private static bool ValidateLogmanTokens(List<string> tokens, string dir, out string? refusal)
+    {
+        if (tokens.Count == 0) return Refuse("logman needs a verb (create trace, start, stop or query).", out refusal);
+        string verb = tokens[0].ToLowerInvariant();
+        int start = 1;
+        switch (verb)
+        {
+            case "create":
+                if (tokens.Count < 2 || !tokens[1].Equals("trace", StringComparison.OrdinalIgnoreCase))
+                    return Refuse("logman recipes can only create trace sessions (logman create trace ...).", out refusal);
+                start = 2;
+                break;
+            case "start":
+            case "stop":
+            case "query":
+                break;
+            default:
+                return Refuse($"logman \"{tokens[0]}\" isn't allowed in a recipe - only create trace, start, stop and query are.", out refusal);
+        }
+        // Without -ets these verbs act on a saved data collector set, which persists (and can be
+        // scheduled) - recipes are limited to in-memory event trace sessions.
+        if (verb != "query" && !tokens.Skip(start).Any(t => IsRecipeSwitch(t, out string name) && name.Equals("ets", StringComparison.OrdinalIgnoreCase)))
+            return Refuse($"logman {verb} recipes must use -ets (an event trace session, not a saved data collector set).", out refusal);
+        return ValidateSwitchTokens(tokens, start, LogmanRecipeSwitches, RecipeArgKind.Words, dir, out refusal);
+    }
+
+    private static bool ValidateNetshTraceTokens(List<string> tokens, string dir, out string? refusal)
+    {
+        if (tokens.Count < 2 || !tokens[0].Equals("trace", StringComparison.OrdinalIgnoreCase))
+            return Refuse("netsh recipes are limited to the \"netsh trace ...\" context.", out refusal);
+        if (!NetshTraceRecipeVerbs.Contains(tokens[1], StringComparer.OrdinalIgnoreCase))
+            return Refuse($"netsh trace \"{tokens[1]}\" isn't allowed in a recipe - only start, stop, show and convert are.", out refusal);
+
+        foreach (string token in tokens.Skip(2))
+        {
+            int eq = token.IndexOf('=');
+            if (eq < 0)
+            {
+                if (!IsPlainRecipeWord(token)) return Refuse($"\"{token}\" looks like a path - use key=path with a path inside {dir}.", out refusal);
+                continue;
+            }
+            string key = token[..eq].Trim();
+            string value = token[(eq + 1)..].Trim();
+            if (key.Equals("persistent", StringComparison.OrdinalIgnoreCase) && !value.Equals("no", StringComparison.OrdinalIgnoreCase))
+                return Refuse("netsh trace persistent=yes keeps tracing across reboots, which recipes don't allow.", out refusal);
+            bool ok = NetshTracePathKeys.Contains(key, StringComparer.OrdinalIgnoreCase)
+                ? IsPathInsideDir(value, dir)
+                : IsPlainRecipeWord(key) && IsPlainRecipeWord(value);
+            if (!ok) return Refuse(PathRefusal(token, dir), out refusal);
+        }
+        refusal = null;
+        return true;
+    }
+
+    /// <summary>Walks switch-led tokens from <paramref name="start"/>: each switch must be in
+    /// <paramref name="allowed"/>, and the tokens after it must match its kind.
+    /// <paramref name="positional"/> is the kind of tokens before the first switch.</summary>
+    private static bool ValidateSwitchTokens(List<string> tokens, int start, Dictionary<string, RecipeArgKind> allowed,
+        RecipeArgKind positional, string dir, out string? refusal)
+    {
+        RecipeArgKind kind = positional;
+        int valueIndex = 0;
+        for (int i = start; i < tokens.Count; i++)
+        {
+            string token = tokens[i];
+            if (IsRecipeSwitch(token, out string name))
+            {
+                if (!allowed.TryGetValue(name, out kind))
+                    return Refuse($"the \"{token}\" option isn't allowed in a recipe.", out refusal);
+                valueIndex = 0;
+                continue;
+            }
+
+            bool ok = kind switch
+            {
+                RecipeArgKind.Flag => false,
+                RecipeArgKind.Words => IsPlainRecipeWord(token),
+                RecipeArgKind.Paths => IsPathInsideDir(token, dir),
+                RecipeArgKind.StopArgs => valueIndex == 0 ? IsPathInsideDir(token, dir) : IsPlainRecipeWord(token),
+                RecipeArgKind.Profiles => IsAllowedProfileToken(token, dir),
+                _ => false,
+            };
+            if (!ok)
+            {
+                return Refuse(kind == RecipeArgKind.Flag
+                    ? $"\"{token}\" isn't expected there."
+                    : PathRefusal(token, dir), out refusal);
+            }
+            valueIndex++;
+        }
+        refusal = null;
+        return true;
+    }
+
+    private static string PathRefusal(string token, string dir)
+        => $"\"{token}\" isn't allowed - file paths in a recipe must be full paths inside {dir} (use %OUTPUT%), and other values can't contain path characters.";
+
+    /// <summary>"-name" or "/name" (logman's "--name" negation too) with a letters-only name.</summary>
+    private static bool IsRecipeSwitch(string token, out string name)
+    {
+        name = string.Empty;
+        if (token.Length < 2 || (token[0] != '-' && token[0] != '/')) return false;
+        string body = token.TrimStart('-', '/');
+        if (body.Length == 0 || !body.All(char.IsAsciiLetter)) return false;
+        name = body;
+        return true;
+    }
+
+    /// <summary>A name/value that can't be read as a file path (IPv6 addresses and hh:mm:ss
+    /// timers are fine; a drive-relative "C:x" isn't).</summary>
+    private static bool IsPlainRecipeWord(string token)
+        => token.IndexOfAny(new[] { '\\', '/' }) < 0 && !Path.IsPathRooted(token);
+
+    private static bool IsAllowedProfileToken(string token, string dir)
+    {
+        int bang = token.IndexOf('!');
+        if (bang < 0) return IsPlainRecipeWord(token);
+        return IsPathInsideDir(token[..bang], dir) && IsPlainRecipeWord(token[(bang + 1)..]);
+    }
+
+    private static bool IsPathInsideDir(string path, string dir)
+    {
+        try
+        {
+            if (path.StartsWith(@"\\", StringComparison.Ordinal) || !Path.IsPathFullyQualified(path)) return false;
+            string full = Path.GetFullPath(path);
+            return full.StartsWith(dir + "\\", StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>True when <paramref name="dir"/> or a parent up to the app's settings folder is a
+    /// reparse point - a junction there would send "inside the Traces folder" somewhere else.</summary>
+    private static bool HasReparsePointUnder(string dir)
+    {
+        try
+        {
+            string root = Path.GetFullPath(AppPaths.SettingsDirectory).TrimEnd('\\');
+            for (var d = new DirectoryInfo(dir); d is not null; d = d.Parent)
+            {
+                if (d.Exists && d.Attributes.HasFlag(FileAttributes.ReparsePoint)) return true;
+                if (d.FullName.TrimEnd('\\').Equals(root, StringComparison.OrdinalIgnoreCase)) return false;
+            }
+            return false;
+        }
+        catch { return true; }
+    }
+
+    /// <summary>Whitespace-separated tokens; double quotes group and are dropped (no escapes -
+    /// <see cref="ValidateRecipeArguments"/> refuses \" before this runs).</summary>
+    private static List<string> TokenizeRecipeArguments(string args)
+    {
+        var tokens = new List<string>();
+        var current = new StringBuilder();
+        bool inQuotes = false, any = false;
+        foreach (char c in args)
+        {
+            if (c == '"') { inQuotes = !inQuotes; any = true; }
+            else if (char.IsWhiteSpace(c) && !inQuotes)
+            {
+                if (any) tokens.Add(current.ToString());
+                current.Clear();
+                any = false;
+            }
+            else { current.Append(c); any = true; }
+        }
+        if (any) tokens.Add(current.ToString());
+        return tokens;
     }
 
     // ==================== #159: stale trace-artifact finder ====================

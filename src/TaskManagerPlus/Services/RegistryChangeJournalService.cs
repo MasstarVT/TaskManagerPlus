@@ -71,9 +71,12 @@ public static class RegistryChangeJournalService
     /// <summary>Convenience for callers that already read the old value themselves - builds the
     /// entry and appends it in one call, swallowing any journal-write failure (a failed journal
     /// write should never make the underlying registry write itself look like it failed - the
-    /// actual write already happened by the time this runs).</summary>
+    /// actual write already happened by the time this runs). <paramref name="kind"/> is the kind
+    /// the new value was written with; pass <paramref name="oldKind"/> when the old value's kind
+    /// may differ, so Undo restores it with its own kind.</summary>
     public static void Record(string source, string description, string hive, string subKeyPath,
-        string valueName, RegistryValueKind kind, string? oldValueText, string? newValueText)
+        string valueName, RegistryValueKind kind, string? oldValueText, string? newValueText,
+        RegistryValueKind? oldKind = null)
     {
         try
         {
@@ -86,6 +89,7 @@ public static class RegistryChangeJournalService
                 SubKeyPath = subKeyPath,
                 ValueName = valueName,
                 ValueKind = kind.ToString(),
+                OldValueKind = oldValueText is null ? null : oldKind?.ToString(),
                 OldValueText = oldValueText,
                 NewValueText = newValueText,
             });
@@ -114,8 +118,9 @@ public static class RegistryChangeJournalService
             }
             else
             {
-                if (!Enum.TryParse<RegistryValueKind>(entry.ValueKind, out var kind))
-                    return (false, $"Unrecognized value kind \"{entry.ValueKind}\" - can't safely undo.");
+                string kindText = entry.OldValueKind ?? entry.ValueKind;
+                if (!Enum.TryParse<RegistryValueKind>(kindText, out var kind))
+                    return (false, $"Unrecognized value kind \"{kindText}\" - can't safely undo.");
 
                 object value = kind switch
                 {

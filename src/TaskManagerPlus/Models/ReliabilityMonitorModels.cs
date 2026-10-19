@@ -73,15 +73,26 @@ public sealed class ReliabilityRecordInfo
 /// exist at all (Windows' own default is collection enabled without needing the key present) - only
 /// an explicit value of 0 means "someone turned this off" (common on tuned/debloated systems, per
 /// #172's own framing); the key/value being entirely absent is deliberately NOT treated as
-/// disabled.</summary>
+/// disabled. The Group Policy "Configure Reliability WMI Providers" writes the same value under
+/// HKLM\SOFTWARE\Policies\Microsoft\Windows\Reliability Analysis\WMI and, when set, wins over it.</summary>
 public sealed class ReliabilityAnalysisStatus
 {
     public bool KeyExists { get; init; }
     public int? WmiEnableValue { get; init; }
 
-    public bool IsCollectionDisabled => WmiEnableValue == 0;
+    /// <summary>The policy's WMIEnable, or null when the policy isn't configured (absent in
+    /// backups written before it was read).</summary>
+    public int? PolicyWmiEnableValue { get; init; }
 
-    public string SummaryText => IsCollectionDisabled
-        ? "Reliability Monitor's data collection is turned off on this PC (WMIEnable=0) - it isn't recording anything new."
-        : "Reliability Monitor's data collection looks enabled on this PC.";
+    public bool IsPolicyManaged => PolicyWmiEnableValue is not null;
+
+    public bool IsCollectionDisabled => PolicyWmiEnableValue is { } policy ? policy == 0 : WmiEnableValue == 0;
+
+    public string SummaryText => (IsCollectionDisabled, IsPolicyManaged) switch
+    {
+        (true, true) => "Reliability Monitor's data collection is turned off by Group Policy on this PC (Configure Reliability WMI Providers) - it isn't recording anything new, and only that policy can turn it back on.",
+        (true, false) => "Reliability Monitor's data collection is turned off on this PC (WMIEnable=0) - it isn't recording anything new.",
+        (false, true) => "Reliability Monitor's data collection is enabled by Group Policy on this PC.",
+        _ => "Reliability Monitor's data collection looks enabled on this PC.",
+    };
 }

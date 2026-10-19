@@ -166,8 +166,7 @@ public static class BloatwareInventoryService
     private static BloatwareEntry Classify(BloatwareEntry entry, string manufacturer)
     {
         string haystack = $"{entry.Name} {entry.Publisher}".ToLowerInvariant();
-        bool mentionsOem = (manufacturer.Length > 0 && haystack.Contains(manufacturer.ToLowerInvariant()))
-            || OemNames.Any(o => haystack.Contains(o.ToLowerInvariant()));
+        bool mentionsOem = MentionsOem($"{entry.Name} {entry.Publisher}", manufacturer);
 
         BloatwareTier tier;
         if (DriverAdjacentKeywords.Any(k => haystack.Contains(k)))
@@ -195,6 +194,51 @@ public static class BloatwareInventoryService
             Source = entry.Source,
             Tier = tier,
         };
+    }
+
+    /// <summary>OEM names match whole words, not substrings ("hp" is inside "php", "msi" inside
+    /// "msiexec", "acer" inside "tracer"). Words split on camel-case humps too, since AppX names run
+    /// together ("AD2F1837.HPSupportAssistant", "DellInc.DellSupportAssist"); a name of four or more
+    /// letters may also start a longer word ("ASUSPCAssistant"). The WMI manufacturer string is
+    /// matched as a whole phrase.</summary>
+    private static bool MentionsOem(string text, string manufacturer)
+    {
+        if (manufacturer.Length > 0 && ContainsWholePhrase(text, manufacturer)) return true;
+        var words = SplitWords(text);
+        return OemNames.Any(o => o.Contains('-')
+            ? ContainsWholePhrase(text, o)
+            : words.Any(w => o.Length >= 4 ? w.StartsWith(o, StringComparison.OrdinalIgnoreCase) : w.Equals(o, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static bool ContainsWholePhrase(string text, string phrase)
+        => System.Text.RegularExpressions.Regex.IsMatch(text,
+            $@"(?<![\p{{L}}\p{{N}}]){System.Text.RegularExpressions.Regex.Escape(phrase)}(?![\p{{L}}\p{{N}}])",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static List<string> SplitWords(string text)
+    {
+        var words = new List<string>();
+        var current = new System.Text.StringBuilder();
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (!char.IsLetterOrDigit(c)) { Flush(); continue; }
+            if (current.Length > 0)
+            {
+                char prev = text[i - 1];
+                bool lowerToUpper = char.IsLower(prev) && char.IsUpper(c);
+                bool acronymEnd = char.IsUpper(prev) && char.IsUpper(c) && i + 1 < text.Length && char.IsLower(text[i + 1]);
+                if (lowerToUpper || acronymEnd) Flush();
+            }
+            current.Append(c);
+        }
+        Flush();
+        return words;
+
+        void Flush()
+        {
+            if (current.Length > 0) { words.Add(current.ToString()); current.Clear(); }
+        }
     }
 
     /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> (run tool, capture

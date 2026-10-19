@@ -31,6 +31,7 @@ public sealed class ReliabilityMonitorService
     // there is no "Reliability Analysis" key under Windows NT\CurrentVersion.
     private const string ReliabilityAnalysisPath = @"SOFTWARE\Microsoft\Reliability Analysis";
     private const string ReliabilityAnalysisWmiPath = ReliabilityAnalysisPath + @"\WMI";
+    private const string ReliabilityAnalysisPolicyWmiPath = @"SOFTWARE\Policies\Microsoft\Windows\Reliability Analysis\WMI";
 
     // ==== #169: Windows' own per-hour stability index ====
 
@@ -285,22 +286,39 @@ public sealed class ReliabilityMonitorService
     /// not "disabled".</summary>
     public ReliabilityAnalysisStatus ReadAnalysisStatus()
     {
+        int? policy = ReadPolicyWmiEnable();
         try
         {
             using var key = Registry.LocalMachine.OpenSubKey(ReliabilityAnalysisWmiPath);
-            if (key is null) return new ReliabilityAnalysisStatus { KeyExists = false };
+            if (key is null) return new ReliabilityAnalysisStatus { KeyExists = false, PolicyWmiEnableValue = policy };
 
             return new ReliabilityAnalysisStatus
             {
                 KeyExists = true,
                 WmiEnableValue = key.GetValue("WMIEnable") as int?,
+                PolicyWmiEnableValue = policy,
             };
         }
         catch
         {
             // Key unreadable (unexpected under an elevated process, but degrade rather than throw) -
             // treat the same as "not configured" (i.e. enabled, Windows' own default).
-            return new ReliabilityAnalysisStatus { KeyExists = false };
+            return new ReliabilityAnalysisStatus { KeyExists = false, PolicyWmiEnableValue = policy };
+        }
+    }
+
+    /// <summary>The "Configure Reliability WMI Providers" policy's WMIEnable (RacWmiProv.admx), or
+    /// null when the policy isn't configured or can't be read.</summary>
+    private static int? ReadPolicyWmiEnable()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(ReliabilityAnalysisPolicyWmiPath);
+            return key?.GetValue("WMIEnable") as int?;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -310,6 +328,9 @@ public sealed class ReliabilityMonitorService
     /// no confirmation of its own, same shape as WerReportService.WriteLocalDumpsSettings.</summary>
     public (bool Success, string? Error) EnableAnalysis()
     {
+        // The policy value overrides the one written below, so writing it would change nothing.
+        if (ReadPolicyWmiEnable() == 0)
+            return (false, "Group Policy turns it off on this PC (Computer Configuration > Administrative Templates > Windows Components > Windows Reliability Analysis > Configure Reliability WMI Providers), and that policy overrides this setting - nothing was changed.");
         try
         {
             using var key = Registry.LocalMachine.CreateSubKey(ReliabilityAnalysisWmiPath, writable: true);

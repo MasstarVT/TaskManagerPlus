@@ -785,6 +785,10 @@ public sealed class WindowsHealthViewModel : ObservableObject
             ResetWuComponentsLog.Clear();
             foreach (var line in log) ResetWuComponentsLog.Add(line);
             StatusMessage = "Windows Update component reset finished - see the log below.";
+            // Every failed step logs a "Couldn't ..." line (WindowsServicingService's own wording).
+            JournalOneShotRun("Windows Update components",
+                "Windows Update component reset (stop services, rename SoftwareDistribution and catroot2 to .bak, restart services)",
+                !log.Any(l => l.Contains("Couldn't", StringComparison.Ordinal)));
         }
         finally
         {
@@ -952,6 +956,9 @@ public sealed class WindowsHealthViewModel : ObservableObject
         {
             var progress = new Progress<int>(p => CleanupProgressPercent = p);
             var (success, output, exitCode) = await DismService.StartComponentCleanupAsync(resetBase, progress, _cleanupCts.Token).ConfigureAwait(true);
+            JournalOneShotRun("Component store",
+                resetBase ? "dism /online /cleanup-image /startcomponentcleanup /resetbase" : "dism /online /cleanup-image /startcomponentcleanup",
+                success);
             string tail = output.Length > 1500 ? output[^1500..] : output;
             CleanupResultText = success
                 ? resetBase ? "/ResetBase cleanup finished." : "Component store cleanup finished."
@@ -1028,6 +1035,8 @@ public sealed class WindowsHealthViewModel : ObservableObject
             var progress = new Progress<int>(p => RestoreHealthProgressPercent = p);
             var result = await DismService.RestoreHealthAsync(sourceArg, progress, _restoreHealthCts.Token).ConfigureAwait(true);
             RestoreHealthResult = result;
+            JournalOneShotRun("Component store",
+                $"dism /online /cleanup-image /restorehealth{(sourceArg is null ? string.Empty : " " + sourceArg)}", result.Success);
             AppendIntegrityHistory("DISM RestoreHealth", result.Summary, result.Success, result.DurationSeconds,
                 result.Success ? new List<string>() : new List<string> { $"RestoreHealth failed{(result.ErrorCode is { } code ? $" ({code})" : string.Empty)}" });
             UpdateRepairInstallGuidance();
@@ -1103,6 +1112,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
             var progress = new Progress<int>(p => SfcProgressPercent = p);
             var result = await SfcIntegrityService.RunScanAsync(progress, _sfcCts.Token).ConfigureAwait(true);
             SfcScanResult = result;
+            JournalOneShotRun("System files", "sfc /scannow", result.Success);
             AppendIntegrityHistory("SFC", result.VerdictText, result.Success, result.DurationSeconds, result.UnrepairableEntries);
             UpdateRepairInstallGuidance();
         }
@@ -1112,6 +1122,23 @@ public sealed class WindowsHealthViewModel : ObservableObject
             _sfcCts = null;
             CancelSfcScanCommand.RaiseCanExecuteChanged();
         }
+    }
+
+    /// <summary>Records a repair-tool run in the change journal, like every other mutating action.
+    /// None of these has a machine-reversible inverse, so the entry is never undoable.</summary>
+    private static void JournalOneShotRun(string target, string commandLine, bool success)
+    {
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.OneShotToolRun,
+            Target = target,
+            ActionDescription = $"Ran {commandLine}",
+            AfterValue = commandLine,
+            TriggeredBy = "Windows Health tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "One-shot tool run - nothing to reverse.",
+        });
     }
 
     /// <summary>#787: appends one scan's result to integrity-history.json (shared by SFC and every
@@ -1233,6 +1260,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
         try
         {
             var (success, output) = await WmiHealthService.SalvageRepositoryAsync().ConfigureAwait(true);
+            JournalOneShotRun("WMI repository", "winmgmt /salvagerepository", success);
             StatusMessage = success ? "WMI repository salvage finished." : $"WMI repository salvage reported a problem: {output}";
             WmiRepositoryHealth = await WmiHealthService.VerifyRepositoryAsync().ConfigureAwait(true);
         }
@@ -1263,6 +1291,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
         try
         {
             var (success, output) = await WmiHealthService.ResetRepositoryAsync().ConfigureAwait(true);
+            JournalOneShotRun("WMI repository", "winmgmt /resetrepository", success);
             StatusMessage = success ? "WMI repository reset finished." : $"WMI repository reset reported a problem: {output}";
             WmiRepositoryHealth = await WmiHealthService.VerifyRepositoryAsync().ConfigureAwait(true);
         }

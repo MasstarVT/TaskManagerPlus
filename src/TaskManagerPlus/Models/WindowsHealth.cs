@@ -471,7 +471,12 @@ public sealed class RegistryChangeEntry
     public string Hive { get; init; } = string.Empty;
     public string SubKeyPath { get; init; } = string.Empty;
     public string ValueName { get; init; } = string.Empty;
+    /// <summary>The kind the NEW value was written with (and the .reg export's encoding).</summary>
     public string ValueKind { get; init; } = string.Empty;
+
+    /// <summary>The kind the OLD value had, when it differed or the writer recorded it; null in
+    /// entries written before this was tracked, where Undo falls back to <see cref="ValueKind"/>.</summary>
+    public string? OldValueKind { get; init; }
     public string? OldValueText { get; init; }
     public string? NewValueText { get; init; }
     public bool Undone { get; set; }
