@@ -56,5 +56,5 @@ public sealed class StorageSpaceInfo : ObservableObject
     public bool ShowThinProvisioningWarning => ThinProvisioningWarningText.Length > 0;
 
     public string SizeText => Formatting.FormatBytes(SizeBytes);
-    public string AllocatedSizeText => Formatting.FormatBytes(AllocatedSizeBytes);
+    public string AllocatedSizeText => Formatting.FormatBytesMeasured(AllocatedSizeBytes);
 }

@@ -39,11 +39,19 @@ public partial class App : Application
         // regardless of the user's regional settings: dates rendered M/d/yyyy and a de-DE user
         // couldn't type "85,5" into a threshold box. Tool/WMI output is parsed in C# with
         // InvariantCulture and never goes through a binding, so it is unaffected.
+        // Run/Span/Hyperlink are FrameworkContentElements with their own Language default (WPF
+        // only inherits a non-default parent value), so they need the same override or the ~1,100
+        // bound Runs keep formatting in en-US next to TextBlocks in the user's locale. Known limit:
+        // XmlLanguage carries the stock culture for the tag, not the user's own Region overrides
+        // (a customized decimal symbol), which C#-side ToString() does honour.
         try
         {
+            var language = System.Windows.Markup.XmlLanguage.GetLanguage(
+                System.Globalization.CultureInfo.CurrentCulture.IetfLanguageTag);
             FrameworkElement.LanguageProperty.OverrideMetadata(typeof(FrameworkElement),
-                new FrameworkPropertyMetadata(System.Windows.Markup.XmlLanguage.GetLanguage(
-                    System.Globalization.CultureInfo.CurrentCulture.IetfLanguageTag)));
+                new FrameworkPropertyMetadata(language));
+            FrameworkContentElement.LanguageProperty.OverrideMetadata(typeof(System.Windows.Documents.TextElement),
+                new FrameworkPropertyMetadata(language));
         }
         catch
         {

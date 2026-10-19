@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 
 namespace TaskManagerPlus.Services;
 
@@ -39,7 +40,7 @@ internal static class ToolRunner
         string timeoutOutput = "(command timed out)", bool includeStderr = true,
         System.Text.Encoding? outputEncoding = null)
     {
-        var psi = new ProcessStartInfo(exe, args)
+        var psi = new ProcessStartInfo(ResolveTool(exe), args)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -82,7 +83,7 @@ internal static class ToolRunner
     public static (string Output, int? ExitCode) RunCaptured(
         string exe, string args, TimeSpan timeout, string timeoutOutput = "")
     {
-        var psi = new ProcessStartInfo(exe, args)
+        var psi = new ProcessStartInfo(ResolveTool(exe), args)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -101,5 +102,25 @@ internal static class ToolRunner
         }
 
         return (outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult(), proc.ExitCode);
+    }
+
+    // CreateProcess looks for a bare "netsh.exe" in this process's current directory before
+    // System32, and an elevated app can be started from a user-writable folder. Windows' own tools
+    // are always run from their absolute System32 (or Windows) path; anything else is left as given.
+    internal static string ResolveTool(string exe)
+    {
+        if (string.IsNullOrEmpty(exe) || Path.IsPathRooted(exe) || exe.IndexOfAny(new[] { '\\', '/' }) >= 0) return exe;
+        string name = Path.HasExtension(exe) ? exe : exe + ".exe";
+        foreach (string dir in new[]
+                 {
+                     Environment.SystemDirectory,
+                     Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0"),
+                     Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                 })
+        {
+            string candidate = Path.Combine(dir, name);
+            if (File.Exists(candidate)) return candidate;
+        }
+        return exe;
     }
 }

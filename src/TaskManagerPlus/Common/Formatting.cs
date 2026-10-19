@@ -23,6 +23,15 @@ public static class Formatting
         return Scale(bytes, CapacityUnits);
     }
 
+    /// <summary>Like <see cref="FormatBytes"/>, but for a value that was actually measured: 0 is a
+    /// real "0 B" (an empty Recycle Bin, a full partition, a chart's zero gridline). Only a negative
+    /// value reads "Unknown" - callers that carry "couldn't read" as null or a separate error use this.</summary>
+    public static string FormatBytesMeasured(double bytes)
+    {
+        if (bytes < 0 || double.IsNaN(bytes)) return "Unknown";
+        return bytes == 0 ? "0 B" : Scale(bytes, CapacityUnits);
+    }
+
     /// <summary>Formats a bytes-per-second rate ("1.5 MB/s"). 0 is a normal value (idle link/disk).</summary>
     public static string FormatByteRate(double bytesPerSec)
         => Scale(Math.Abs(bytesPerSec), RateUnits);

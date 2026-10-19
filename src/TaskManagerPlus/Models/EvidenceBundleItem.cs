@@ -42,7 +42,7 @@ public sealed class EvidenceBundleItem : ObservableObject
     /// the checklist - real collected sizes go in the manifest (#986) after the fact.</summary>
     public required long EstimatedSizeBytes { get; init; }
 
-    public string EstimatedSizeLabel => Formatting.FormatBytes(EstimatedSizeBytes);
+    public string EstimatedSizeLabel => Formatting.FormatBytesMeasured(EstimatedSizeBytes);
 
     /// <summary>True when this collector's output is plain text and safe to run #984's scrubber
     /// over - false for minidumps and the .evtx event-log exports (binary formats; evtx in

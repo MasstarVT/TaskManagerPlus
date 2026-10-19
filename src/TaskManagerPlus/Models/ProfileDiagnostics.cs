@@ -27,7 +27,7 @@ public sealed class ProfileSizeInfo
     public bool TruncatedByBudget { get; init; }
     public string? Error { get; init; }
 
-    public string SizeText => Error is not null ? "Unknown" : Formatting.FormatBytes(TotalBytes) + (TruncatedByBudget ? "+" : "");
+    public string SizeText => Error is not null ? "Unknown" : Formatting.FormatBytesMeasured(TotalBytes) + (TruncatedByBudget ? "+" : "");
     public string SummaryText => Error is not null
         ? $"Couldn't measure this profile: {Error}"
         : $"{SizeText} across {FileCount:N0} file(s){(TruncatedByBudget ? " (stopped early - size walk hit its safety limit; actual total is larger)" : "")}";

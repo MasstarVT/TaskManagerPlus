@@ -40,9 +40,9 @@ public sealed class DiskLayoutInfo
 
     public string MediaTypeText => IsSsd ? "SSD" : "HDD/Unknown";
     public string DiskSizeText => Formatting.FormatBytes(DiskSizeBytes);
-    public string PartitionedText => Formatting.FormatBytes(PartitionedBytes);
+    public string PartitionedText => Formatting.FormatBytesMeasured(PartitionedBytes);
 
-    public string LargestFreeExtentText => LargestFreeExtentBytes is { } b ? Formatting.FormatBytes(b) : "Unknown";
+    public string LargestFreeExtentText => LargestFreeExtentBytes is { } b ? Formatting.FormatBytesMeasured(b) : "Unknown";
 
     /// <summary>Informational summary framing #385's own brief: a real gap between disk size and
     /// partitioned size on an SSD reads as deliberate over-provisioning (a valid, common choice),
@@ -54,7 +54,7 @@ public sealed class DiskLayoutInfo
             if (DiskSizeBytes <= 0) return "Unknown disk size.";
             long unallocated = Math.Max(0, DiskSizeBytes - PartitionedBytes);
             double percent = DiskSizeBytes > 0 ? unallocated / (double)DiskSizeBytes * 100 : 0;
-            string extent = LargestFreeExtentBytes is { } b ? $"; largest free extent {Formatting.FormatBytes(b)}" : string.Empty;
+            string extent = LargestFreeExtentBytes is { } b ? $"; largest free extent {Formatting.FormatBytesMeasured(b)}" : string.Empty;
             string unallocatedText = unallocated == 0 ? "0 B" : Formatting.FormatBytes(unallocated);
             string baseText = $"{unallocatedText} unallocated ({percent:0.#}% of the disk){extent}.";
             return IsSsd && percent >= 3

@@ -105,8 +105,8 @@ public static class UpgradeReadinessService
             advisories.Add("Secure Boot is off. Windows 11 only needs a Secure Boot-capable PC, but turning it on in the firmware settings is recommended.");
         if (firmwareDisk.IsHardBlocker) blockers.Add("The system disk is MBR-partitioned (needs GPT for UEFI/Secure Boot).");
         if (systemDriveFree is { } free && free < RecommendedFreeSpaceBytes)
-            blockers.Add($"Only {Formatting.FormatBytes(free)} free on the system drive (recommended: at least {Formatting.FormatBytes(RecommendedFreeSpaceBytes)}).");
-        if (espNearFull) blockers.Add($"The EFI System Partition is small and nearly full ({Formatting.FormatBytes(espFree ?? 0)} free) - a common cause of feature-update failure 0x800f0922.");
+            blockers.Add($"Only {Formatting.FormatBytesMeasured(free)} free on the system drive (recommended: at least {Formatting.FormatBytes(RecommendedFreeSpaceBytes)}).");
+        if (espNearFull) blockers.Add($"The EFI System Partition is small and nearly full ({Formatting.FormatBytesMeasured(espFree ?? 0)} free) - a common cause of feature-update failure 0x800f0922.");
 
         return new UpgradeReadinessSnapshot
         {

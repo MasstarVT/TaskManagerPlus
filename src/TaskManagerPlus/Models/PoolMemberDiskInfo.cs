@@ -24,5 +24,5 @@ public sealed class PoolMemberDiskInfo
     public long AllocatedSizeBytes { get; init; }
 
     public string SizeText => Formatting.FormatBytes(SizeBytes);
-    public string AllocatedText => Formatting.FormatBytes(AllocatedSizeBytes);
+    public string AllocatedText => Formatting.FormatBytesMeasured(AllocatedSizeBytes);
 }

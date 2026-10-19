@@ -582,7 +582,7 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
             new Axis
             {
                 MinLimit = 0,
-                Labeler = v => Formatting.FormatBytes(v),
+                Labeler = v => Formatting.FormatBytesMeasured(v),
                 LabelsPaint = AxisTextPaint(),
                 SeparatorsPaint = AxisSeparatorPaint(),
             },

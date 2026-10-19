@@ -60,6 +60,10 @@ public partial class MainWindow : Window
         _viewModel.Stability.JumpToServiceRequested += name =>
         {
             SelectTabByName("Services");
+            // The match is a service, so show the services grid rather than whichever sub-view
+            // (drivers, svchost groups) was left open.
+            _viewModel.Services.ShowDrivers = false;
+            _viewModel.Services.ShowSvcHostGroups = false;
             _viewModel.Services.FilterText = name;
         };
 

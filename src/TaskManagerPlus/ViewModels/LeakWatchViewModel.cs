@@ -49,7 +49,7 @@ public sealed class LeakWatchViewModel : ObservableObject, IDisposable
             new Axis
             {
                 MinLimit = 0,
-                Labeler = v => Formatting.FormatBytes(v),
+                Labeler = v => Formatting.FormatBytesMeasured(v),
                 LabelsPaint = new SolidColorPaint(new SKColor(0x9A, 0x9A, 0xA2)),
                 SeparatorsPaint = new SolidColorPaint(new SKColor(0x33, 0x33, 0x3A, 160)) { StrokeThickness = 1 },
             },

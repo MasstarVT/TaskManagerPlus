@@ -38,6 +38,14 @@ dotnet build $project -c Release --nologo -v m `
 # backslash would turn the closing quote into an escaped \")
 if ($LASTEXITCODE -ne 0) { throw "asInvoker build failed (exit $LASTEXITCODE)" }
 
+# The asInvoker manifest is now embedded in the shared obj\ intermediate assembly (and the apphost
+# built from it). The manifest is not part of CoreCompile's input hash, so the next normal
+# "dotnet build -c Release" with unchanged sources would treat that assembly as up to date and ship
+# an asInvoker TaskManagerPlus.exe (which Sign-Release.ps1 would then sign). Remove the
+# intermediates so that build recompiles with the real app.manifest.
+Get-ChildItem -Path (Join-Path $project "obj\Release") -Recurse -Include TaskManagerPlus.dll, apphost.exe -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+
 $exe = Get-ChildItem -Path (Join-Path $WorkDir "bin\Release") -Recurse -Filter TaskManagerPlus.exe |
     Select-Object -First 1
 if ($null -eq $exe) { throw "build succeeded but TaskManagerPlus.exe not found under $WorkDir\bin\Release" }

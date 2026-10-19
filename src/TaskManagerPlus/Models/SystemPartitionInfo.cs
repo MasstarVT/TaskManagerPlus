@@ -80,7 +80,7 @@ public sealed class EspHealthInfo
     public double? PercentFree => Partition is { SizeBytes: > 0 } p && FreeBytes is { } f ? (double)f / p.SizeBytes * 100 : null;
 
     public string FreeText => FreeBytes is { } f
-        ? $"{Formatting.FormatBytes(f)}{(PercentFree is { } p ? $" ({p:0.#}% free)" : string.Empty)}"
+        ? $"{Formatting.FormatBytesMeasured(f)}{(PercentFree is { } p ? $" ({p:0.#}% free)" : string.Empty)}"
         : MeasureError ?? "Not measured yet - click \"Measure free space\".";
 
     // The classic failure pattern this flags: a small (roughly 100-300 MB, the size Windows Setup
