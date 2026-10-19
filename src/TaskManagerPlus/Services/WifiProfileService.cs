@@ -66,13 +66,23 @@ public static class WifiProfileService
     /// if that launch fails rather than swallowing the failure.</summary>
     public static async Task<(bool Success, string Message, string? ReportPath)> RunWlanReportAsync()
     {
-        var (output, _) = await RunNetshAsync("wlan show wlanreport", timeoutMs: 15000);
+        var startedUtc = DateTime.UtcNow;
+        var (output, exitCode) = await RunNetshAsync("wlan show wlanreport", timeoutMs: 15000);
         string reportPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "Microsoft", "Windows", "WlanReport", "wlan-report-latest.html");
 
-        if (!File.Exists(reportPath))
-            return (false, $"netsh didn't produce a report at the expected path.\n{output.Trim()}", null);
+        // The path is fixed, so an earlier run's report is still there after a timeout or failure -
+        // only a successful exit plus a file written by this run counts.
+        if (exitCode is null)
+            return (false, "netsh timed out after 15 s - no new report was generated.", null);
+        if (exitCode != 0)
+        {
+            string text = output.Trim();
+            return (false, text.Length > 0 ? text : $"netsh exited with code {exitCode} - no new report was generated.", null);
+        }
+        if (!File.Exists(reportPath) || File.GetLastWriteTimeUtc(reportPath) < startedUtc.AddSeconds(-2))
+            return (false, $"netsh didn't produce a new report at the expected path.\n{output.Trim()}", null);
 
         return SafeLaunchService.OpenDocument(reportPath)
             ? (true, "Report generated and opened in your default browser.", reportPath)

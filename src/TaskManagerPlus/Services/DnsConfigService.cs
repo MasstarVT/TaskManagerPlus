@@ -23,8 +23,9 @@ public sealed record DohConfigResult(List<DohServerStatus> Parsed, string RawOut
 
 /// <summary>One NRPT rule (#521) - <see cref="Namespaces"/> is the list of suffixes/namespaces this
 /// rule's DNS servers apply to; <see cref="DnsServers"/> is whichever of GenericDNSServers /
-/// DirectAccessDNSServers the rule actually set (comma-separated, as the registry stores it).</summary>
-public sealed record NrptRule(string RuleId, List<string> Namespaces, string DnsServers);
+/// DirectAccessDNSServers the rule actually set (comma-separated, as the registry stores it).
+/// <see cref="Source"/> says which store it came from (Group Policy, or the local NRPT).</summary>
+public sealed record NrptRule(string RuleId, List<string> Namespaces, string DnsServers, string Source = "Group Policy");
 
 /// <summary>One adapter's own DNS suffix (#523) - a plain record (not a value tuple) so it binds
 /// cleanly from XAML, which resolves properties by name and can't see a tuple's compile-time-only
@@ -155,14 +156,23 @@ public static class DnsConfigService
     // resolve on VPN and nothing else does, or vice versa. Each subkey under DnsPolicyConfig is
     // one rule (subkey name is usually a GUID, not meant to be shown to the user directly).
     private const string NrptPolicyKeyPath = @"SOFTWARE\Policies\Microsoft\Windows NT\DNSClient\DnsPolicyConfig";
+    // Local NRPT (Add-DnsClientNrptRule, many VPN clients) - same per-rule subkey layout.
+    private const string NrptLocalKeyPath = @"SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig";
 
     public static List<NrptRule> ReadNrptRules()
     {
         var rules = new List<NrptRule>();
+        ReadNrptStore(NrptPolicyKeyPath, "Group Policy", rules);
+        ReadNrptStore(NrptLocalKeyPath, "Local", rules);
+        return rules;
+    }
+
+    private static void ReadNrptStore(string keyPath, string source, List<NrptRule> rules)
+    {
         try
         {
-            using var policyKey = Registry.LocalMachine.OpenSubKey(NrptPolicyKeyPath);
-            if (policyKey is null) return rules;
+            using var policyKey = Registry.LocalMachine.OpenSubKey(keyPath);
+            if (policyKey is null) return;
 
             foreach (var ruleId in policyKey.GetSubKeyNames())
             {
@@ -183,7 +193,7 @@ public static class DnsConfigService
                     if (servers.Length == 0)
                         servers = (rule.GetValue("DirectAccessDNSServers") as string)?.Trim() ?? string.Empty;
 
-                    rules.Add(new NrptRule(ruleId, namespaces, servers.Length > 0 ? servers : "(no server override - rule has other effects, e.g. proxy or DirectAccess settings)"));
+                    rules.Add(new NrptRule(ruleId, namespaces, servers.Length > 0 ? servers : "(no server override - rule has other effects, e.g. proxy or DirectAccess settings)", source));
                 }
                 catch
                 {
@@ -196,7 +206,6 @@ public static class DnsConfigService
             // Denied/absent key - most machines have no NRPT policy at all, and the view hides
             // this expander entirely on an empty list, so this is the common case, not an error.
         }
-        return rules;
     }
 
     // #523: suffix/search list.

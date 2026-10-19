@@ -73,15 +73,20 @@ public static class DhcpAddressingService
 
         try
         {
+            // SettingID is the adapter GUID, the same value as NetworkInterface.Id - a unique join.
+            // A MAC can be shared (Hyper-V external-switch vNIC + physical NIC, teams, bridges), so
+            // it's only the fallback; release/renew target this name.
+            var nameById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var physicalByMac = new Dictionary<string, string>();
             foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
             {
+                if (!string.IsNullOrEmpty(ni.Id)) nameById[ni.Id] = ni.Name;
                 string mac = NormalizeMac(ni.GetPhysicalAddress().ToString());
                 if (mac.Length > 0) physicalByMac[mac] = ni.Name;
             }
 
             using var searcher = new ManagementObjectSearcher(
-                "SELECT Description, MACAddress, DHCPEnabled, DHCPServer, DHCPLeaseObtained, DHCPLeaseExpires, IPAddress, IPSubnet, DefaultIPGateway " +
+                "SELECT SettingID, Description, MACAddress, DHCPEnabled, DHCPServer, DHCPLeaseObtained, DHCPLeaseExpires, IPAddress, IPSubnet, DefaultIPGateway " +
                 "FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE");
 
             foreach (ManagementObject mo in searcher.Get())
@@ -91,7 +96,10 @@ public static class DhcpAddressingService
 
                 string mac = (mo["MACAddress"] as string ?? string.Empty).Trim();
                 string normalizedMac = NormalizeMac(mac);
-                string adapterName = normalizedMac.Length > 0 && physicalByMac.TryGetValue(normalizedMac, out var name) ? name : description;
+                string settingId = (mo["SettingID"] as string ?? string.Empty).Trim();
+                string adapterName = settingId.Length > 0 && nameById.TryGetValue(settingId, out var byId) ? byId
+                    : normalizedMac.Length > 0 && physicalByMac.TryGetValue(normalizedMac, out var byMac) ? byMac
+                    : description;
 
                 var ipAddresses = (mo["IPAddress"] as string[]) ?? Array.Empty<string>();
                 var subnetMasks = (mo["IPSubnet"] as string[]) ?? Array.Empty<string>();

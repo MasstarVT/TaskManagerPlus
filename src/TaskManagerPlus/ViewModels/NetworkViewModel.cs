@@ -103,9 +103,13 @@ public sealed class NetworkTroubleshootReport
     /// <summary>Non-null when the rule set couldn't be read - the view then says so instead of
     /// "No matching firewall rules found".</summary>
     public string? FirewallRulesError { get; init; }
-    public string FirewallRulesEmptyText => FirewallRulesError is null
-        ? "No matching firewall rules found."
-        : $"Couldn't read the firewall rules: {FirewallRulesError}";
+    /// <summary>Non-null when only the Local store could be read - policy-deployed rules may be missing.</summary>
+    public string? FirewallRulesNote { get; init; }
+    public string FirewallRulesEmptyText => FirewallRulesError is not null
+        ? $"Couldn't read the firewall rules: {FirewallRulesError}"
+        : FirewallRulesNote is null
+            ? "No matching firewall rules found."
+            : $"No matching local firewall rules found. {FirewallRulesNote}";
     public List<WfpDropEvent> MatchingWfpDrops { get; init; } = new();
     public bool WfpChannelAvailable { get; init; }
     public string ProxyApplicability { get; init; } = string.Empty;
@@ -420,6 +424,8 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     // #516: traceroute baseline save/diff - built on top of the existing #49 traceroute card's
     // output, parsed into hops via TracerouteService.ParseHops.
     private List<TracerouteHop> _lastTracerouteHops = new();
+    // The last run hit TracerouteService's timeout - its hops stop short, so Save/Compare are off.
+    private bool _lastTracerouteIsPartial;
 
     private string _tracerouteBaselineName = string.Empty;
     public string TracerouteBaselineName { get => _tracerouteBaselineName; set => SetProperty(ref _tracerouteBaselineName, value); }
@@ -1493,9 +1499,9 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         RefreshRoutingCommand = new AsyncRelayCommand(RefreshRoutingAsync, () => !IsRefreshingRoutes);
         ToggleMtrCommand = new RelayCommand(_ => ToggleMtr());
         SaveTracerouteBaselineCommand = new RelayCommand(SaveTracerouteBaseline,
-            () => _lastTracerouteHops.Count > 0 && !string.IsNullOrWhiteSpace(TracerouteBaselineName));
+            () => _lastTracerouteHops.Count > 0 && !_lastTracerouteIsPartial && !string.IsNullOrWhiteSpace(TracerouteBaselineName));
         CompareTracerouteBaselineCommand = new RelayCommand(CompareTracerouteBaseline,
-            () => _lastTracerouteHops.Count > 0 && !string.IsNullOrWhiteSpace(SelectedTracerouteBaseline));
+            () => _lastTracerouteHops.Count > 0 && !_lastTracerouteIsPartial && !string.IsNullOrWhiteSpace(SelectedTracerouteBaseline));
 
         _mtr.CycleCompleted += OnMtrCycleCompleted;
 
@@ -2239,8 +2245,12 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             // #516: parse this run's hops so Save/Compare-to-baseline have something to work
             // with - a fresh run always replaces whatever the buttons were pointed at before.
             _lastTracerouteHops = TracerouteService.ParseHops(TracerouteOutput);
+            _lastTracerouteIsPartial = TracerouteService.IsPartialOutput(TracerouteOutput);
             TracerouteDiff.Clear();
-            TracerouteDiffSummaryText = null;
+            // A partial run would overwrite a full baseline, or list every unreached hop as "Removed".
+            TracerouteDiffSummaryText = _lastTracerouteIsPartial
+                ? "This run timed out before it finished, so it can't be saved as a baseline or compared with one - run it again."
+                : null;
         }
     }
 
@@ -2667,7 +2677,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     /// <summary>#516: saves the most recently completed traceroute run as a named baseline.</summary>
     private void SaveTracerouteBaseline()
     {
-        if (_lastTracerouteHops.Count == 0 || string.IsNullOrWhiteSpace(TracerouteBaselineName)) return;
+        if (_lastTracerouteHops.Count == 0 || _lastTracerouteIsPartial || string.IsNullOrWhiteSpace(TracerouteBaselineName)) return;
 
         if (TracerouteBaselineService.SaveBaseline(TracerouteBaselineName.Trim(), TracerouteHost, _lastTracerouteHops) is null)
         {
@@ -2683,7 +2693,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     /// baseline, highlighting inserted/removed/reordered hops.</summary>
     private void CompareTracerouteBaseline()
     {
-        if (_lastTracerouteHops.Count == 0 || string.IsNullOrWhiteSpace(SelectedTracerouteBaseline)) return;
+        if (_lastTracerouteHops.Count == 0 || _lastTracerouteIsPartial || string.IsNullOrWhiteSpace(SelectedTracerouteBaseline)) return;
 
         var file = TracerouteBaselineService.Load();
         var baseline = file.Baselines.FirstOrDefault(b => b.Name.Equals(SelectedTracerouteBaseline, StringComparison.OrdinalIgnoreCase));
@@ -3614,9 +3624,12 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         FirewallRulesStatusText = "Loading every firewall rule - this can take a few seconds...";
         try
         {
-            _allFirewallRules = await NetworkFirewallService.ReadRulesAsync();
+            var ruleSet = await NetworkFirewallService.ReadRulesAsync();
+            _allFirewallRules = ruleSet.Rules;
             ApplyFirewallRuleFilter();
-            FirewallRulesStatusText = $"{_allFirewallRules.Count} rule(s) loaded.";
+            FirewallRulesStatusText = $"{_allFirewallRules.Count} rule(s) loaded" +
+                (ruleSet.PolicyOnlyCount > 0 ? $", {ruleSet.PolicyOnlyCount} of them only in the active (Group Policy/MDM) policy." : ".") +
+                (ruleSet.ActivePolicyNote is { } note ? $" {note}" : string.Empty);
         }
         catch (Exception ex)
         {
@@ -3794,10 +3807,12 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         {
             List<NetworkFirewallRuleInfo> matchingRules;
             string? rulesError = null;
+            string? rulesNote = null;
             try
             {
-                var rules = await NetworkFirewallService.ReadRulesAsync();
-                matchingRules = NetworkFirewallService.FilterRules(rules, query, executableOnly: true);
+                var ruleSet = await NetworkFirewallService.ReadRulesAsync();
+                matchingRules = NetworkFirewallService.FilterRules(ruleSet.Rules, query, executableOnly: true);
+                rulesNote = ruleSet.ActivePolicyNote;
             }
             catch (Exception ex)
             {
@@ -3828,6 +3843,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
                 Query = query,
                 MatchingFirewallRules = matchingRules,
                 FirewallRulesError = rulesError,
+                FirewallRulesNote = rulesNote,
                 MatchingWfpDrops = matchingDrops,
                 WfpChannelAvailable = wfpScan.ChannelAvailable,
                 ProxyApplicability = proxyText,

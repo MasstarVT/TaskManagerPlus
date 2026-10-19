@@ -163,7 +163,14 @@ public sealed class MtrService : IDisposable
                 }
 
                 if (reply?.Status == IPStatus.Success)
+                {
+                    // Higher TTLs would only get the destination's own echo again - drop any
+                    // trackers past it (the first cycle starts at MaxHops) and stop this cycle.
                     _knownHopCount = Math.Min(_knownHopCount, ttl);
+                    foreach (int stale in _hops.Keys.Where(k => k > _knownHopCount).ToList())
+                        _hops.Remove(stale);
+                    return;
+                }
             }
         }
     }

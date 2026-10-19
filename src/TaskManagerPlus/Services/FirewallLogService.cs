@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Text.RegularExpressions;
 
@@ -29,6 +30,8 @@ public static class FirewallLogService
         Environment.GetFolderPath(Environment.SpecialFolder.System), @"LogFiles\Firewall\pfirewall.log");
 
     private const int TimeoutMs = 15000;
+
+    private static readonly string[] TimestampFormats = { "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd H:mm:ss" };
 
     public static async Task<FirewallLogReadResult> ReadDropEntriesAsync(int maxEntries = 2000)
     {
@@ -65,7 +68,10 @@ public static class FirewallLogService
 
                 if (!Get("action").Equals("DROP", StringComparison.OrdinalIgnoreCase)) continue;
 
-                DateTime time = DateTime.TryParse($"{Get("date")} {Get("time")}", out var t) ? t : DateTime.MinValue;
+                // Machine-formatted W3C fields: parse invariant, or a non-Gregorian default calendar
+                // (th-TH, fa-IR) reads the year in its own era.
+                DateTime time = DateTime.TryParseExact($"{Get("date")} {Get("time")}", TimestampFormats,
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var t) ? t : DateTime.MinValue;
                 entries.Add(new FirewallLogEntry(time, Get("path"), Get("protocol"), Get("src-ip"), Get("dst-ip"), Get("src-port"), Get("dst-port")));
             }
 

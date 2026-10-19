@@ -2233,6 +2233,7 @@
                                                 <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6" TextWrapping="Wrap">
                                                     <Run Text="{Binding Namespaces, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" FontWeight="SemiBold" />
                                                     <Run Text=" → " /><Run Text="{Binding DnsServers, Mode=OneWay}" />
+                                                    <Run Text="  (" /><Run Text="{Binding Source, Mode=OneWay}" /><Run Text=")" />
                                                 </TextBlock>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
@@ -3646,6 +3647,7 @@
                                             <DataGridTextColumn Header="Remote port" Binding="{Binding RemotePort}" Width="1*" />
                                             <DataGridTextColumn Header="Program" Binding="{Binding ApplicationPath}" Width="2.4*" />
                                             <DataGridCheckBoxColumn Header="Enabled" Binding="{Binding Enabled}" Width="0.7*" />
+                                            <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="0.9*" />
                                         </DataGrid.Columns>
                                         <DataGrid.RowStyle>
                                             <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">

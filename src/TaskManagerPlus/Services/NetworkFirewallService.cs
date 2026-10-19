@@ -2,11 +2,11 @@ using System.IO;
 
 namespace TaskManagerPlus.Services;
 
-/// <summary>One Windows Firewall profile's headline state (#566) - Domain/Private/Public, parsed
-/// from `netsh advfirewall show allprofiles`. <see cref="Enabled"/> is null when the profile's
-/// block couldn't be found/parsed at all (degrade to Unknown, never guess). <see cref="IsFlagged"/>
-/// is true when the profile is off, or its default outbound action isn't Windows' own default
-/// (Allow) - a quick flag, not a verdict: a Block-by-default outbound policy is a deliberate,
+/// <summary>One Windows Firewall profile's headline state (#566) - Domain/Private/Public, from the
+/// effective (ActiveStore) policy. <see cref="Enabled"/> is null when the profile couldn't be read
+/// at all (degrade to Unknown, never guess). <see cref="IsFlagged"/>
+/// is true when the profile is off, or its default outbound action is Block rather than Windows'
+/// own default (Allow) - a quick flag, not a verdict: a Block-by-default outbound policy is a deliberate,
 /// legitimate lockdown in some environments. Named distinctly from the Security tab's own
 /// FirewallService/FirewallProfileInfo (#881/#882, a separate independently-built posture/rule
 /// audit) since both exist side by side.</summary>
@@ -22,14 +22,21 @@ public sealed record NetworkFirewallProfileStatus(
 /// <summary>One firewall rule (#567), from one `netsh advfirewall firewall show rule name=all
 /// verbose` block. <see cref="ApplicationPath"/> is empty when the rule isn't scoped to a specific
 /// program. Named distinctly from the Security tab's own FirewallRuleInfo for the same reason as
-/// NetworkFirewallProfileStatus above.</summary>
+/// NetworkFirewallProfileStatus above. <see cref="Source"/> is "Local" for the local store's rules,
+/// or netsh's own "Rule source" text for a rule only the active (merged) policy has.</summary>
 public sealed record NetworkFirewallRuleInfo(
     string Name, string Direction, string Action, string Protocol,
-    string LocalPort, string RemotePort, string ApplicationPath, bool Enabled, string Profiles, string Grouping);
+    string LocalPort, string RemotePort, string ApplicationPath, bool Enabled, string Profiles, string Grouping,
+    string Source = "Local");
+
+/// <summary><see cref="ActivePolicyNote"/> is non-null when the active-policy listing couldn't be
+/// read, so rules deployed by Group Policy/MDM may be missing from <see cref="Rules"/>.</summary>
+public sealed record NetworkFirewallRuleSet(List<NetworkFirewallRuleInfo> Rules, int PolicyOnlyCount, string? ActivePolicyNote);
 
 /// <summary>
 /// Items #566/#567 (suggestions.md "Firewall rules and blocked connections"): profile status and
-/// the full rule set, for the Network tab's own Firewall card. Deliberately parses
+/// the full rule set, for the Network tab's own Firewall card. Profiles come from the ActiveStore
+/// (see ReadProfileStatusAsync); for rules this deliberately parses
 /// `netsh advfirewall`'s own English-locale text output rather than the HNetCfg.FwPolicy2 COM
 /// object these items' text suggests - `netsh advfirewall firewall show rule name=all verbose`
 /// already prints one clean "Field: value" block per rule covering every column both items ask for
@@ -49,21 +56,48 @@ public sealed record NetworkFirewallRuleInfo(
 /// </summary>
 public static class NetworkFirewallService
 {
-    private const int TimeoutMs = 20000;
     private const int RulesTimeoutMs = 45000; // a few hundred rules is common; verbose output can run to several thousand lines
     private static readonly string[] ProfileNames = { "Domain", "Private", "Public" };
 
+    /// <summary>`netsh advfirewall show allprofiles` reads the Local store, where a Group Policy that
+    /// turns a profile off or blocks outbound doesn't show - so this reads the effective ActiveStore
+    /// policy through the Security tab's FirewallService.ReadPosture instead. A failed read gives
+    /// Unknown rows.</summary>
     public static async Task<List<NetworkFirewallProfileStatus>> ReadProfileStatusAsync()
     {
-        // A failed/timed-out read leaves output empty, which ParseProfiles turns into Unknown rows.
-        var (output, exitCode) = await RunNetshAsync("advfirewall show allprofiles", TimeoutMs);
-        return ParseProfiles(exitCode == 0 ? output : string.Empty);
+        List<FirewallService.FirewallProfileInfo> profiles;
+        try { profiles = (await Task.Run(FirewallService.ReadPosture)).Profiles; }
+        catch { profiles = new(); }
+
+        var results = new List<NetworkFirewallProfileStatus>();
+        foreach (var name in ProfileNames)
+        {
+            var p = profiles.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (p is null)
+            {
+                results.Add(new NetworkFirewallProfileStatus(name, null, "Unknown", "Unknown", false, null));
+                continue;
+            }
+
+            bool outboundBlocked = p.DefaultOutboundAction.Equals("Block", StringComparison.OrdinalIgnoreCase);
+            string? reason = p.Enabled == false
+                ? "This profile is turned off - no filtering applies while it's active."
+                : outboundBlocked
+                    ? "Default outbound action isn't Allow - outbound traffic is blocked unless a rule explicitly permits it. Unusual outside a deliberately locked-down environment. Quick flag, not a verdict."
+                    : null;
+            results.Add(new NetworkFirewallProfileStatus(name, p.Enabled, p.DefaultInboundAction, p.DefaultOutboundAction,
+                p.Enabled == false || outboundBlocked, reason));
+        }
+        return results;
     }
 
     /// <summary>Throws when the rule set couldn't be read (timeout, non-zero exit, or output with
     /// no parseable rule block) - an empty list here must mean "netsh listed no rules", never
-    /// "netsh failed", since both callers present the count as a fact.</summary>
-    public static async Task<List<NetworkFirewallRuleInfo>> ReadRulesAsync()
+    /// "netsh failed", since both callers present the count as a fact.
+    /// The full list (disabled rules included) comes from the Local store; `monitor show firewall
+    /// rule` lists the active policy's enabled rules for the current profile only, so any rule it
+    /// has that the Local store lacks (Group Policy/MDM-deployed) is appended.</summary>
+    public static async Task<NetworkFirewallRuleSet> ReadRulesAsync()
     {
         var (output, exitCode) = await RunNetshAsync("advfirewall firewall show rule name=all verbose", RulesTimeoutMs);
         if (exitCode is null)
@@ -76,7 +110,28 @@ public static class NetworkFirewallService
                 ? (text.Length > 0 ? text : $"netsh exited with code {exitCode}.")
                 : "netsh printed no rule this parser recognizes (non-English netsh output isn't supported).");
         }
-        return rules;
+
+        var (activeOutput, activeExit) = await RunNetshAsync("advfirewall monitor show firewall rule name=all verbose", RulesTimeoutMs);
+        var activeRules = activeExit == 0 ? ParseRules(activeOutput) : new List<NetworkFirewallRuleInfo>();
+        if (activeRules.Count == 0)
+        {
+            string why = activeExit is null ? $"timed out after {RulesTimeoutMs / 1000} s" : $"netsh exited with code {activeExit}";
+            return new NetworkFirewallRuleSet(rules, 0,
+                $"The active-policy rule list couldn't be read ({why}) - rules deployed by Group Policy or MDM may be missing.");
+        }
+
+        // Source isn't part of the key: the Local store's own rules print "Local Setting" there.
+        static string Key(NetworkFirewallRuleInfo r) => string.Join("\u001f",
+            r.Name, r.Direction, r.Action, r.Protocol, r.LocalPort, r.RemotePort, r.ApplicationPath, r.Enabled, r.Profiles, r.Grouping);
+        var known = new HashSet<string>(rules.Select(Key), StringComparer.OrdinalIgnoreCase);
+        int added = 0;
+        foreach (var r in activeRules)
+        {
+            if (!known.Add(Key(r))) continue;
+            rules.Add(r);
+            added++;
+        }
+        return new NetworkFirewallRuleSet(rules, added, null);
     }
 
     /// <summary>#567: the filter box (free-text over name/program/protocol/grouping) and the
@@ -102,79 +157,6 @@ public static class NetworkFirewallService
             r.Grouping.Contains(needle, StringComparison.OrdinalIgnoreCase)).ToList();
     }
 
-    private static List<NetworkFirewallProfileStatus> ParseProfiles(string output)
-    {
-        var results = new List<NetworkFirewallProfileStatus>();
-        foreach (var name in ProfileNames)
-        {
-            string? block = ExtractProfileBlock(output, name);
-            if (block is null)
-            {
-                results.Add(new NetworkFirewallProfileStatus(name, null, "Unknown", "Unknown", false, null));
-                continue;
-            }
-
-            bool? enabled = ExtractField(block, "State") switch
-            {
-                "ON" => true,
-                "OFF" => false,
-                _ => null,
-            };
-
-            string policy = ExtractField(block, "Firewall Policy") ?? string.Empty;
-            var parts = policy.Split(',', StringSplitOptions.TrimEntries);
-            string inbound = parts.Length > 0 && parts[0].Length > 0 ? parts[0] : "Unknown";
-            string outbound = parts.Length > 1 && parts[1].Length > 0 ? parts[1] : "Unknown";
-
-            bool flagged = enabled == false ||
-                (!outbound.Equals("AllowOutbound", StringComparison.OrdinalIgnoreCase) && outbound != "Unknown");
-            string? reason = enabled == false
-                ? "This profile is turned off - no filtering applies while it's active."
-                : !outbound.Equals("AllowOutbound", StringComparison.OrdinalIgnoreCase) && outbound != "Unknown"
-                    ? "Default outbound action isn't Allow - outbound traffic is blocked unless a rule explicitly permits it. Unusual outside a deliberately locked-down environment. Quick flag, not a verdict."
-                    : null;
-
-            results.Add(new NetworkFirewallProfileStatus(name, enabled, inbound, outbound, flagged, reason));
-        }
-        return results;
-    }
-
-    private static string? ExtractProfileBlock(string output, string profileName)
-    {
-        string marker = $"{profileName} Profile Settings:";
-        int start = output.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        if (start < 0) return null;
-        start += marker.Length;
-
-        int end = output.Length;
-        foreach (var other in ProfileNames)
-        {
-            if (other == profileName) continue;
-            int idx = output.IndexOf($"{other} Profile Settings:", start, StringComparison.OrdinalIgnoreCase);
-            if (idx >= 0 && idx < end) end = idx;
-        }
-        return output[start..end];
-    }
-
-    /// <summary>Field extraction for the "show allprofiles" block, which (unlike "show rule
-    /// verbose") uses whitespace-aligned columns rather than a colon separator - matches the label
-    /// at the start of a trimmed line, guarding against a longer label incidentally starting with
-    /// the requested one.</summary>
-    private static string? ExtractField(string block, string label)
-    {
-        foreach (var rawLine in block.Split('\n'))
-        {
-            string trimmed = rawLine.TrimEnd('\r').TrimStart();
-            if (!trimmed.StartsWith(label, StringComparison.OrdinalIgnoreCase)) continue;
-            if (trimmed.Length > label.Length && char.IsLetterOrDigit(trimmed[label.Length])) continue;
-
-            string rest = trimmed[label.Length..].Trim();
-            if (rest.Length == 0) continue;
-            return rest;
-        }
-        return null;
-    }
-
     private static List<NetworkFirewallRuleInfo> ParseRules(string output)
     {
         var rules = new List<NetworkFirewallRuleInfo>();
@@ -195,7 +177,8 @@ public static class NetworkFirewallService
                     block.GetValueOrDefault("Program", string.Empty),
                     block.GetValueOrDefault("Enabled", string.Empty).Equals("Yes", StringComparison.OrdinalIgnoreCase),
                     block.GetValueOrDefault("Profiles", string.Empty),
-                    block.GetValueOrDefault("Grouping", string.Empty)));
+                    block.GetValueOrDefault("Grouping", string.Empty),
+                    block.GetValueOrDefault("Rule source", "Local")));
             }
             block.Clear();
         }

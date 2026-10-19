@@ -20,6 +20,12 @@ public static class TracerouteService
 {
     private static readonly Regex ValidHostRegex = new(@"^[A-Za-z0-9][A-Za-z0-9.\-:]*$", RegexOptions.Compiled);
     private const int TimeoutSeconds = 75;
+    private const string PartialNotePrefix = "Traceroute timed out after";
+
+    /// <summary>True for a run RunAsync cut off at its timeout - its hops are real but incomplete,
+    /// so it must not be saved as, or diffed against, a baseline as if it were a full path.</summary>
+    public static bool IsPartialOutput(string? output) =>
+        output is not null && output.StartsWith(PartialNotePrefix, StringComparison.Ordinal);
 
     // Matches a leading hop number (tracert -d's numeric-only lines) and, separately, an IPv4 or
     // bare IPv6 address at the end of the line - tracert -d's own three timing columns sit
@@ -101,7 +107,7 @@ public static class TracerouteService
                 string partial = string.Empty;
                 if (await Task.WhenAny(outputTask, Task.Delay(2000)) == outputTask && outputTask.IsCompletedSuccessfully)
                     partial = outputTask.Result.Trim();
-                string note = $"Traceroute timed out after {TimeoutSeconds} seconds - the hops below are partial.";
+                string note = $"{PartialNotePrefix} {TimeoutSeconds} seconds - the hops below are partial.";
                 return partial.Length == 0 ? note : $"{note}\n{partial}";
             }
 

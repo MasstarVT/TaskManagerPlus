@@ -72,8 +72,10 @@ public sealed class TcpHealthCounterService
                     // them (e.g. a network stack reset/repair), same tolerance
                     // AdapterErrorCounterService already applies to its own cumulative counters.
                     double elapsedSeconds = Math.Max(0.001, (now - prev.Utc).TotalSeconds);
-                    double retransRate = Math.Max(0, retransmitted - prev.Retransmitted) / elapsedSeconds;
-                    double sentRate = Math.Max(0, sent - prev.Sent) / elapsedSeconds;
+                    // Widen before subtracting: a uint difference wraps on a reset/rollover before
+                    // Math.Max could clamp it.
+                    double retransRate = Math.Max(0, (long)retransmitted - prev.Retransmitted) / elapsedSeconds;
+                    double sentRate = Math.Max(0, (long)sent - prev.Sent) / elapsedSeconds;
                     long failuresDelta = Math.Max(0, (long)connFailures - prev.ConnFailures);
                     long resetDelta = Math.Max(0, (long)connReset - prev.ConnReset);
 

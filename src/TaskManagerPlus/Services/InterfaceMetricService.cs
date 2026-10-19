@@ -4,8 +4,10 @@ using System.Net.Sockets;
 namespace TaskManagerPlus.Services;
 
 /// <summary>One adapter's routing metric (#535), from `netsh interface ipv4/ipv6 show interfaces`.
-/// <see cref="HasDefaultRoute"/>: the interface has a default gateway for this address family.</summary>
-public sealed record InterfaceMetricInfo(string AddressFamily, int Index, int Metric, string State, string InterfaceName, bool HasDefaultRoute = false);
+/// <see cref="HasDefaultRoute"/>: the interface has a default gateway for this address family.
+/// <see cref="IsUp"/>: NetworkInterface.OperationalStatus is Up - <see cref="State"/> is netsh's own
+/// (localized) word, shown as-is but never matched against.</summary>
+public sealed record InterfaceMetricInfo(string AddressFamily, int Index, int Metric, string State, string InterfaceName, bool HasDefaultRoute = false, bool IsUp = false);
 
 /// <summary>
 /// Item #535: parses each adapter's routing metric out of `netsh interface ipv4 show interfaces`
@@ -42,7 +44,7 @@ public static class InterfaceMetricService
             var (output, _) = await ToolRunner.RunCapturedAsync("netsh.exe", $"interface {family} show interfaces", 10000, includeStderr: false);
 
             string af = family == "ipv4" ? "IPv4" : "IPv6";
-            var defaultRouteIndexes = ReadDefaultGatewayInterfaceIndexes(family == "ipv4");
+            var adapters = ReadAdaptersByIndex(family == "ipv4");
             foreach (var rawLine in output.Split('\n'))
             {
                 string line = rawLine.TrimEnd('\r').Trim();
@@ -59,7 +61,21 @@ public static class InterfaceMetricService
 
                 string state = tokens[3];
                 string name = string.Join(' ', tokens.Skip(4));
-                results.Add(new InterfaceMetricInfo(af, idx, metric, state, name, defaultRouteIndexes.Contains(idx)));
+                bool hasGateway = false, isUp = false;
+                if (adapters.TryGetValue(idx, out var adapter))
+                {
+                    (hasGateway, isUp) = (adapter.HasGateway, adapter.IsUp);
+                    // The name column is the adapter's own name; matching it from the end keeps a
+                    // multi-word (localized) state word out of it.
+                    string rest = string.Join(' ', tokens.Skip(3));
+                    if (adapter.Name.Length > 0 && rest.Length > adapter.Name.Length
+                        && rest.EndsWith(" " + adapter.Name, StringComparison.Ordinal))
+                    {
+                        name = adapter.Name;
+                        state = rest[..^(adapter.Name.Length + 1)].Trim();
+                    }
+                }
+                results.Add(new InterfaceMetricInfo(af, idx, metric, state, name, hasGateway, isUp));
             }
         }
         catch
@@ -69,23 +85,25 @@ public static class InterfaceMetricService
         return results;
     }
 
-    /// <summary>Interface indexes (the same Idx netsh prints) of non-loopback adapters that have a
-    /// default gateway for the family - only those can carry outbound traffic by default.</summary>
-    private static HashSet<int> ReadDefaultGatewayInterfaceIndexes(bool ipv4)
+    /// <summary>Per interface index (the same Idx netsh prints): the adapter's name, whether it has
+    /// a default gateway for the family (never loopback - only those can carry outbound traffic by
+    /// default), and whether it is operationally up.</summary>
+    private static Dictionary<int, (string Name, bool HasGateway, bool IsUp)> ReadAdaptersByIndex(bool ipv4)
     {
-        var indexes = new HashSet<int>();
+        var adapters = new Dictionary<int, (string Name, bool HasGateway, bool IsUp)>();
         try
         {
             var family = ipv4 ? AddressFamily.InterNetwork : AddressFamily.InterNetworkV6;
             foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
             {
-                if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
                 try
                 {
                     var props = ni.GetIPProperties();
-                    if (!props.GatewayAddresses.Any(g => g.Address.AddressFamily == family)) continue;
                     int? index = ipv4 ? props.GetIPv4Properties()?.Index : props.GetIPv6Properties()?.Index;
-                    if (index is int i) indexes.Add(i);
+                    if (index is not int i) continue;
+                    bool hasGateway = ni.NetworkInterfaceType != NetworkInterfaceType.Loopback
+                        && props.GatewayAddresses.Any(g => g.Address.AddressFamily == family);
+                    adapters[i] = (ni.Name ?? string.Empty, hasGateway, ni.OperationalStatus == OperationalStatus.Up);
                 }
                 catch
                 {
@@ -95,9 +113,9 @@ public static class InterfaceMetricService
         }
         catch
         {
-            // Best-effort - an empty set means no adapter is reported as carrying the default route.
+            // Best-effort - an empty map means no adapter is reported as up or carrying the default route.
         }
-        return indexes;
+        return adapters;
     }
 
     /// <summary>#535: "which adapter wins" - the lowest-metric *connected* interface with a default
@@ -109,8 +127,7 @@ public static class InterfaceMetricService
         var lines = new List<string>();
         foreach (var af in new[] { "IPv4", "IPv6" })
         {
-            var connected = interfaces.Where(i => i.AddressFamily == af && i.HasDefaultRoute
-                && i.State.Equals("connected", StringComparison.OrdinalIgnoreCase)).ToList();
+            var connected = interfaces.Where(i => i.AddressFamily == af && i.HasDefaultRoute && i.IsUp).ToList();
             if (connected.Count == 0) continue;
 
             int minMetric = connected.Min(i => i.Metric);

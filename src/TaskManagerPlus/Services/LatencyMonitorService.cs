@@ -132,7 +132,8 @@ public sealed class LatencyMonitorService : IDisposable
 
                 lock (_lock)
                 {
-                    foreach (var r in results) RecordSampleLocked(r);
+                    foreach (var r in results)
+                        if (r is not null) RecordSampleLocked(r);
                 }
 
                 CycleCompleted?.Invoke();
@@ -156,20 +157,41 @@ public sealed class LatencyMonitorService : IDisposable
         if (DateTime.UtcNow - _lastTargetRefreshUtc < TargetRefreshInterval && _targetHosts[LatencyTier.Gateway] is not null)
             return;
 
-        _targetHosts[LatencyTier.Nic] = FindPrimaryLocalAddress();
-        _targetHosts[LatencyTier.Gateway] = NetworkDiagnosticsService.FindDefaultGateway();
-        _targetHosts[LatencyTier.Resolver] = ResolverHost;
-        _targetHosts[LatencyTier.FirstHop] = await DiscoverFirstPublicHopAsync(ResolverHost, token);
+        var fresh = new Dictionary<LatencyTier, string?>
+        {
+            [LatencyTier.Nic] = FindPrimaryLocalAddress(),
+            [LatencyTier.Gateway] = NetworkDiagnosticsService.FindDefaultGateway(),
+            [LatencyTier.Resolver] = ResolverHost,
+            [LatencyTier.FirstHop] = await DiscoverFirstPublicHopAsync(ResolverHost, token),
+        };
+
+        lock (_lock)
+        {
+            foreach (var (tier, host) in fresh)
+            {
+                // A tier whose target changed (or vanished) starts a fresh window, so the matrix
+                // never shows one host's stats next to another host - or next to no host at all.
+                if (!string.Equals(_targetHosts[tier], host, StringComparison.OrdinalIgnoreCase))
+                {
+                    _windows[tier].Clear();
+                    _ttlHistory[tier].Clear();
+                }
+                _targetHosts[tier] = host;
+            }
+        }
 
         _lastTargetRefreshUtc = DateTime.UtcNow;
     }
 
-    private async Task<LatencyProbeResult> ProbeAsync(LatencyTier tier, CancellationToken token)
+    /// <summary>Null when the tier has no target (no IPv4 gateway, or no public first hop found) -
+    /// that's "no data", not a lost probe, so nothing is recorded.</summary>
+    private async Task<LatencyProbeResult?> ProbeAsync(LatencyTier tier, CancellationToken token)
     {
-        string? host = _targetHosts.TryGetValue(tier, out var h) ? h : null;
+        string? host;
+        lock (_lock) { host = _targetHosts.TryGetValue(tier, out var h) ? h : null; }
         var now = DateTime.UtcNow;
         if (string.IsNullOrEmpty(host))
-            return new LatencyProbeResult(tier, now, false, 0, null, false);
+            return null;
 
         try
         {
