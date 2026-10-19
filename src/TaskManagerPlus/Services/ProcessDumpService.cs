@@ -28,6 +28,8 @@ public static class ProcessDumpService
 {
     public enum DumpKind { Mini, Full }
 
+    private static readonly object DbgHelpLock = new();
+
     // MINIDUMP_TYPE flags (dbghelp.h) - only the handful this feature actually combines.
     private const int MiniDumpWithDataSegs = 0x00000001;
     private const int MiniDumpWithFullMemory = 0x00000002;
@@ -62,9 +64,17 @@ public static class ProcessDumpService
                 // the handle alive for the duration of the native call - a raw IntPtr captured
                 // ahead of time has no such guarantee and could, in principle, be finalized out
                 // from under a long-running call like a Full dump.
-                bool ok = MiniDumpWriteDump(processHandle, (uint)pid, stream.SafeFileHandle, dumpType, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                // DbgHelp is single-threaded - concurrent calls can corrupt its state - and the
+                // Processes and Responsiveness tabs can each start a dump, so a second one waits.
+                bool ok;
+                int error;
+                lock (DbgHelpLock)
+                {
+                    ok = MiniDumpWriteDump(processHandle, (uint)pid, stream.SafeFileHandle, dumpType, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                    error = ok ? 0 : Marshal.GetLastWin32Error();
+                }
                 if (ok) return (true, null);
-                failure = $"MiniDumpWriteDump failed (Win32 error {Marshal.GetLastWin32Error()}).";
+                failure = $"MiniDumpWriteDump failed (Win32 error {error}).";
             }
 
             // A failed write leaves a truncated .dmp that a debugger can't open - don't leave it

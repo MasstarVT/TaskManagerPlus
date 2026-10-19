@@ -156,7 +156,7 @@ public static class LsassHandleWatchService
 
         string? error = gaps.Count == 0
             ? null
-            : $"{findings.Count} process(es) found holding a handle to lsass.exe, but the list may be incomplete: {string.Join("; ", gaps)}.";
+            : $"{findings.Count} process(es) found holding a handle to lsass.exe - eyeball this list, it's not an alert. It may be incomplete: {string.Join("; ", gaps)}.";
         return (findings, error);
     }
 
