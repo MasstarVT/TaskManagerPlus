@@ -283,9 +283,15 @@ public sealed class IntegrityHistoryEntry
     public bool Success { get; init; }
     public List<string> UnrepairableFiles { get; init; } = new();
 
-    public string DurationText => DurationSeconds < 60
-        ? $"{DurationSeconds:0}s"
-        : $"{(int)(DurationSeconds / 60)}m {DurationSeconds % 60:0}s";
+    // Round to whole seconds first, so 119.6s reads "2m 0s" rather than "1m 60s".
+    public string DurationText
+    {
+        get
+        {
+            int total = (int)Math.Round(DurationSeconds);
+            return total < 60 ? $"{total}s" : $"{total / 60}m {total % 60}s";
+        }
+    }
 }
 
 /// <summary>#788: the in-place repair-install escape hatch checklist, shown after DISM
@@ -599,10 +605,15 @@ public sealed class UpgradeReadinessSnapshot
     public bool? TpmReady { get; init; }
     public bool? SecureBootEnabled { get; init; }
     public bool SystemDiskIsMbr { get; init; }
+    /// <summary>"GPT", "MBR" or "Unknown" (MSFT_Disk unreadable) - see SystemSpecsService.ReadFirmwareDiskInfo.</summary>
+    public string SystemDiskPartitionStyle { get; init; } = "Unknown";
     public long? SystemDriveFreeBytes { get; init; }
     public bool EspFound { get; init; }
     public long? EspFreeBytes { get; init; }
 
     public List<string> BlockingItems { get; init; } = new();
+    /// <summary>Worth fixing but not an upgrade blocker (e.g. Secure Boot off on a UEFI PC -
+    /// Windows 11 needs Secure Boot capability, not Secure Boot turned on).</summary>
+    public List<string> AdvisoryItems { get; init; } = new();
     public bool ReadyForNextFeatureUpdate => BlockingItems.Count == 0;
 }

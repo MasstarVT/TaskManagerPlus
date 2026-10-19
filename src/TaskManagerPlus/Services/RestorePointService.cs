@@ -23,8 +23,8 @@ namespace TaskManagerPlus.Services;
 /// <see cref="ReadSystemProtectionStatus"/>'s own remarks on exactly how tentative that flag is.
 ///
 /// #970/#974: a second, async create/check pair for the Troubleshoot tab's remediation-review flow
-/// (<see cref="CreateRestorePointAsync"/>/<see cref="CheckSystemProtectionEnabledAsync"/>), shelling
-/// out to PowerShell's Checkpoint-Computer/Get-ComputerRestorePoint cmdlets instead of the direct
+/// (<see cref="CreateRestorePointAsync"/>/<see cref="CheckSystemProtectionEnabledAsync"/>), the
+/// create half shelling out to PowerShell's Checkpoint-Computer cmdlet instead of the direct
 /// WMI call above - Checkpoint-Computer is what those cmdlets call internally, so this is the
 /// "known tool" version of the same call rather than a second, redundant WMI path, and its own
 /// error text is what RemediationPreconditionService's advisory precheck and the review dialog's
@@ -51,6 +51,7 @@ public static class RestorePointService
     {
         try
         {
+            uint? newestBefore = SystemRestoreService.ReadNewestSequenceNumber();
             using var restoreClass = new ManagementClass(@"root\default", "SystemRestore", null);
             using var inParams = restoreClass.GetMethodParameters("CreateRestorePoint");
             inParams["Description"] = description;
@@ -63,10 +64,12 @@ public static class RestorePointService
             uint returnValue = Convert.ToUInt32(outParams["ReturnValue"]);
 
             // CreateRestorePoint returns 0 (ERROR_SUCCESS) on success and a Win32 error code on
-            // failure - per the documented SystemRestore WMI class contract.
-            return returnValue == 0
-                ? (true, "System Restore point created.")
-                : (false, $"System Restore point could not be created (error {returnValue}) - System Restore may be turned off for this drive, or the service isn't running.");
+            // failure - per the documented SystemRestore WMI class contract. It also returns 0
+            // when the creation-frequency throttle skips the point, so success is confirmed by a
+            // new sequence number.
+            if (returnValue != 0)
+                return (false, $"System Restore point could not be created (error {returnValue}) - System Restore may be turned off for this drive, or the service isn't running.");
+            return SystemRestoreService.CheckPointWasCreated(newestBefore) ?? (true, "System Restore point created.");
         }
         catch (Exception ex)
         {
@@ -206,20 +209,29 @@ public static class RestorePointService
         catch { return DateTime.MinValue; }
     }
 
-    /// <summary>The documented Group-Policy-backed "Turn off System Restore" flag - 1 means System
-    /// Restore is disabled outright, machine-wide, regardless of any per-volume toggle.</summary>
+    /// <summary>The "Turn off System Restore" flag - 1 means System Restore is disabled outright,
+    /// machine-wide, regardless of any per-volume toggle. The Group Policy setting writes it under
+    /// Policies\...\SystemRestore (SystemRestore.admx), which wins; the legacy CurrentVersion
+    /// location is only a fallback.</summary>
     private static bool? ReadDisableSrPolicy()
     {
-        try
+        foreach (var path in new[]
+                 {
+                     @"SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore",
+                     @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore",
+                 })
         {
-            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore");
-            return key?.GetValue("DisableSR") is { } v ? Convert.ToInt32(v) != 0 : null;
+            try
+            {
+                using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(path);
+                if (key?.GetValue("DisableSR") is int v) return v != 0;
+            }
+            catch
+            {
+                // unreadable - try the next location
+            }
         }
-        catch
-        {
-            return null;
-        }
+        return null;
     }
 
     /// <summary>Best-effort signal for "is the system volume enrolled in VSS shadow-copy storage" -
@@ -320,25 +332,17 @@ public static class RestorePointService
     /// <summary>#974: a read-only, non-mutating precheck of whether System Restore looks enabled -
     /// reused by RemediationPreconditionService's advisory RequiresSystemProtectionOn check so the
     /// review dialog can show this ahead of time rather than only after a failed
-    /// CreateRestorePointAsync attempt. Deliberately calls Get-ComputerRestorePoint (a query) and
-    /// never Enable-ComputerRestore - a precondition *check* must never have the side effect of
-    /// actually turning System Protection on. Returns null when the check itself couldn't
-    /// determine an answer either way (CLAUDE.md's "degrade to Unknown, never fabricate") -
-    /// callers must not treat null as "enabled".</summary>
+    /// CreateRestorePointAsync attempt. Uses <see cref="ReadSystemProtectionStatus"/>'s policy +
+    /// restore-point + shadow-storage inference: Get-ComputerRestorePoint returns an empty list
+    /// without an error when System Protection is off, so "the query ran" said nothing. Never turns
+    /// System Protection on. Returns null when the answer couldn't be determined (CLAUDE.md's
+    /// "degrade to Unknown, never fabricate") - callers must not treat null as "enabled".</summary>
     public static async Task<bool?> CheckSystemProtectionEnabledAsync()
     {
         try
         {
-            const string psCommand =
-                "$ErrorActionPreference='Stop'; try { Get-ComputerRestorePoint | Out-Null; Write-Output 'SR_QUERY_OK' } catch { Write-Output $_.Exception.Message }";
-
-            var (output, exitCode) = await TroubleshootService.RunCapturedAsync(
-                "powershell.exe", $"-NoProfile -NonInteractive -Command \"{psCommand}\"", timeoutMs: 20000);
-
-            if (exitCode is null) return null; // timed out - couldn't determine an answer
-            if (output.Contains("SR_QUERY_OK", StringComparison.Ordinal)) return true;
-            if (LooksLikeSystemProtectionDisabled(output)) return false;
-            return null; // some other failure (PowerShell missing, WMI namespace denied, ...) - unknown, not "off"
+            var status = await Task.Run(ReadSystemProtectionStatus).ConfigureAwait(false);
+            return status.ProtectionEnabled;
         }
         catch
         {

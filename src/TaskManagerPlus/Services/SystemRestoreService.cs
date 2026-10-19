@@ -213,10 +213,7 @@ public static class SystemRestoreService
                 // Windows returns success but silently skips the point when one was already created
                 // inside the SystemRestorePointCreationFrequency window (24h by default) - only a
                 // new, higher sequence number shows a point was really made.
-                uint? newestAfter = ReadNewestSequenceNumber();
-                if (newestBefore is { } before && newestAfter is { } after && after <= before)
-                    return (false, "Windows skipped it - a restore point was already created within the last 24 hours (the SystemRestorePointCreationFrequency throttle), so no new point was made. The existing point is unchanged.");
-                return (true, "Restore point created.");
+                return CheckPointWasCreated(newestBefore) ?? (true, "Restore point created.");
             }
             catch (Exception ex)
             {
@@ -225,9 +222,27 @@ public static class SystemRestoreService
         }).ConfigureAwait(false);
     }
 
+    /// <summary>After a CreateRestorePoint call that returned 0: null when a new point really
+    /// exists, else the failure to report. A sequence number that didn't advance, or no point at
+    /// all afterwards, means Windows skipped it.</summary>
+    internal static (bool Success, string Message)? CheckPointWasCreated(uint? newestBefore)
+    {
+        uint? newestAfter = ReadNewestSequenceNumber();
+        if (newestAfter is { } after && (newestBefore is not { } before || after > before)) return null;
+
+        if (newestAfter is null)
+            return (false, "Windows reported success, but no restore point could be found afterwards - System Protection may be off for the system volume.");
+
+        int windowMinutes = ReadAutomaticFrequencyMinutes() is int m and >= 0 ? m : 1440;
+        if (windowMinutes == 0)
+            return (false, "Windows reported success, but no new restore point was made. The existing points are unchanged.");
+        string window = windowMinutes % 60 == 0 ? $"{windowMinutes / 60} hour(s)" : $"{windowMinutes} minute(s)";
+        return (false, $"Windows skipped it - a restore point was already created within the last {window} (the SystemRestorePointCreationFrequency throttle), so no new point was made. The existing point is unchanged.");
+    }
+
     /// <summary>Highest SystemRestore.SequenceNumber, or null when there are no points or the read
     /// fails.</summary>
-    private static uint? ReadNewestSequenceNumber()
+    internal static uint? ReadNewestSequenceNumber()
     {
         try
         {

@@ -57,8 +57,9 @@ public static class WindowsServicingService
 
     private static readonly Regex HostLineRegex = new(@"^\s*Host:\s*(.+)$", RegexOptions.Multiline | RegexOptions.Compiled);
     private static readonly Regex RollbackLineRegex = new(@"^.*Rollback.*$", RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex MoupgErrorRegex = new(@"^.*MOUPG.*Error.*$", RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex ExtendCodeRegex = new(@"[Ee]xtended?\s*[Cc]ode[:\s]*(0x[0-9A-Fa-f]+)", RegexOptions.Compiled);
+    // Panther lines are "date, Level  Component  message", so the level ("Error") comes before
+    // "MOUPG"; either order is accepted in case a message itself mentions an error.
+    private static readonly Regex MoupgErrorRegex = new(@"^(?=.*\bMOUPG\b)(?=.*\bError\b).*$", RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>#773: looks for setuperr.log/setupact.log under C:\$WINDOWS.~BT\Sources\Panther
     /// (an in-progress or just-failed upgrade that hasn't been cleaned up yet) first, then
@@ -100,9 +101,6 @@ public static class WindowsServicingService
 
         var rollbackMatches = RollbackLineRegex.Matches(text);
         string? rollbackReason = rollbackMatches.Count > 0 ? rollbackMatches[^1].Value.Trim() : null;
-
-        var extendMatch = ExtendCodeRegex.Match(text);
-        string? extendCode = extendMatch.Success ? extendMatch.Groups[1].Value : null;
 
         var moupgLines = MoupgErrorRegex.Matches(text)
             .Select(m => m.Value.Trim())
@@ -244,9 +242,10 @@ public static class WindowsServicingService
     /// bare success bool, so the user can see exactly what happened and how to reverse it. Blocking
     /// (ServiceControlService.Stop/Start each wait synchronously for the service to settle) - the
     /// caller runs this via Task.Run, the same "synchronous service, backgrounded by the ViewModel"
-    /// shape WindowsUpdatePolicyService.ReadRebootPendingDetail already uses.
+    /// shape WindowsUpdatePolicyService.ReadRebootPendingDetail already uses. Success means both
+    /// renames went through (or had nothing to rename) and every service came back up.
     /// </summary>
-    public static List<string> ResetWindowsUpdateComponents()
+    public static (List<string> Log, bool Success) ResetWindowsUpdateComponents()
     {
         var log = new List<string>();
         string windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
@@ -256,49 +255,88 @@ public static class WindowsServicingService
         log.Add($"[{DateTime.Now:T}] Starting guided Windows Update component reset.");
 
         foreach (var svc in ResetComponentsServices)
-        {
-            var (success, error) = ServiceControlService.Stop(svc);
-            log.Add(success
-                ? $"[{DateTime.Now:T}] Stopped {svc}."
-                : $"[{DateTime.Now:T}] Couldn't stop {svc}: {error} (continuing anyway).");
-        }
+            log.Add(StopLogged(svc, out _));
 
-        log.Add(RenameToBak(softwareDistribution));
-        log.Add(RenameToBak(catroot2));
+        var (sdLine, sdOk) = RenameToBak(softwareDistribution);
+        var (crLine, crOk) = RenameToBak(catroot2);
+        log.Add(sdLine);
+        log.Add(crLine);
 
+        bool allStarted = true;
         foreach (var svc in ResetComponentsServices)
         {
-            var (success, error) = ServiceControlService.Start(svc);
-            log.Add(success
-                ? $"[{DateTime.Now:T}] Started {svc}."
-                : $"[{DateTime.Now:T}] Couldn't start {svc}: {error}.");
+            log.Add(StartLogged(svc, out bool started));
+            allStarted &= started;
         }
 
         log.Add($"[{DateTime.Now:T}] Done. Windows recreates SoftwareDistribution and catroot2 automatically the next time it checks for updates.");
-        return log;
+        return (log, sdOk && crOk && allStarted);
+    }
+
+    /// <summary>ServiceController.Stop/Start throw on a service that is already in the target state
+    /// (msiserver is normally stopped), so that case is logged as done rather than as a failure.</summary>
+    private static string StopLogged(string serviceName, out bool ok)
+    {
+        if (ReadServiceStatus(serviceName) == System.ServiceProcess.ServiceControllerStatus.Stopped)
+        {
+            ok = true;
+            return $"[{DateTime.Now:T}] {serviceName} was already stopped.";
+        }
+        var (success, error) = ServiceControlService.Stop(serviceName);
+        ok = success;
+        return success
+            ? $"[{DateTime.Now:T}] Stopped {serviceName}."
+            : $"[{DateTime.Now:T}] Couldn't stop {serviceName}: {error} (continuing anyway).";
+    }
+
+    private static string StartLogged(string serviceName, out bool ok)
+    {
+        if (ReadServiceStatus(serviceName) == System.ServiceProcess.ServiceControllerStatus.Running)
+        {
+            ok = true;
+            return $"[{DateTime.Now:T}] {serviceName} is already running.";
+        }
+        var (success, error) = ServiceControlService.Start(serviceName);
+        ok = success;
+        return success
+            ? $"[{DateTime.Now:T}] Started {serviceName}."
+            : $"[{DateTime.Now:T}] Couldn't start {serviceName}: {error}.";
+    }
+
+    private static System.ServiceProcess.ServiceControllerStatus? ReadServiceStatus(string serviceName)
+    {
+        try
+        {
+            using var sc = new System.ServiceProcess.ServiceController(serviceName);
+            return sc.Status;
+        }
+        catch
+        {
+            return null; // not installed / access denied - let Stop/Start report the real error
+        }
     }
 
     /// <summary>Renames `path` to `path.bak` (or `path.bak.<timestamp>` if a `.bak` from a previous
     /// reset already exists, so a second reset never clobbers the first one's undo point), logging
     /// the exact undo step alongside the result - the log line itself carries "how to undo this",
-    /// not a separate lookup the user has to remember.</summary>
-    private static string RenameToBak(string path)
+    /// not a separate lookup the user has to remember. Ok is true when there was nothing to rename.</summary>
+    private static (string Line, bool Ok) RenameToBak(string path)
     {
         try
         {
             if (!Directory.Exists(path))
-                return $"[{DateTime.Now:T}] {path} doesn't exist - nothing to rename, skipping.";
+                return ($"[{DateTime.Now:T}] {path} doesn't exist - nothing to rename, skipping.", true);
 
             string bakPath = path + ".bak";
             if (Directory.Exists(bakPath))
                 bakPath = $"{path}.bak.{DateTime.Now:yyyyMMddHHmmss}";
 
             Directory.Move(path, bakPath);
-            return $"[{DateTime.Now:T}] Renamed \"{path}\" to \"{bakPath}\". To undo: stop the services above, then rename \"{bakPath}\" back to \"{path}\".";
+            return ($"[{DateTime.Now:T}] Renamed \"{path}\" to \"{bakPath}\". To undo: stop the services above, then rename \"{bakPath}\" back to \"{path}\".", true);
         }
         catch (Exception ex)
         {
-            return $"[{DateTime.Now:T}] Couldn't rename \"{path}\": {ex.Message}";
+            return ($"[{DateTime.Now:T}] Couldn't rename \"{path}\": {ex.Message}", false);
         }
     }
 
@@ -348,28 +386,25 @@ public static class WindowsServicingService
     /// <summary>#779: stops the owning service, clears every item directly under the cache folder,
     /// then restarts the service - for both caches when both are requested. Confirmed by the caller
     /// before this runs (WindowsHealthViewModel). Returns a step-by-step log, same shape as #778's
-    /// reset action, rather than a bare success bool.</summary>
-    public static async Task<List<string>> ClearUpdateCacheAsync(bool clearDownloadCache, bool clearDeliveryOptimizationCache)
+    /// reset action, plus whether everything was cleared and the services came back up.</summary>
+    public static async Task<(List<string> Log, bool Success)> ClearUpdateCacheAsync(bool clearDownloadCache, bool clearDeliveryOptimizationCache)
     {
         return await Task.Run(() =>
         {
             var log = new List<string>();
+            bool ok = true;
             if (clearDownloadCache)
-                log.AddRange(ClearCacheFolder("wuauserv", Path.Combine(WindowsDirectory, "SoftwareDistribution", "Download")));
+                ok &= ClearCacheFolder("wuauserv", Path.Combine(WindowsDirectory, "SoftwareDistribution", "Download"), log);
             if (clearDeliveryOptimizationCache)
-                log.AddRange(ClearCacheFolder("DoSvc", Path.Combine(WindowsDirectory, "SoftwareDistribution", "DeliveryOptimization")));
-            return log;
+                ok &= ClearCacheFolder("DoSvc", Path.Combine(WindowsDirectory, "SoftwareDistribution", "DeliveryOptimization"), log);
+            return (log, ok);
         });
     }
 
-    private static List<string> ClearCacheFolder(string serviceName, string folderPath)
+    private static bool ClearCacheFolder(string serviceName, string folderPath, List<string> log)
     {
-        var log = new List<string>();
-
-        var (stopSuccess, stopError) = ServiceControlService.Stop(serviceName);
-        log.Add(stopSuccess
-            ? $"[{DateTime.Now:T}] Stopped {serviceName}."
-            : $"[{DateTime.Now:T}] Couldn't stop {serviceName}: {stopError} (continuing anyway).");
+        bool ok = true;
+        log.Add(StopLogged(serviceName, out _));
 
         try
         {
@@ -392,6 +427,7 @@ public static class WindowsServicingService
                 log.Add(failed == 0
                     ? $"[{DateTime.Now:T}] Cleared {cleared} item(s) from \"{folderPath}\"."
                     : $"[{DateTime.Now:T}] Cleared {cleared} item(s) from \"{folderPath}\"; {failed} item(s) couldn't be removed (still in use).");
+                ok = failed == 0;
             }
             else
             {
@@ -401,14 +437,11 @@ public static class WindowsServicingService
         catch (Exception ex)
         {
             log.Add($"[{DateTime.Now:T}] Couldn't clear \"{folderPath}\": {ex.Message}");
+            ok = false;
         }
 
-        var (startSuccess, startError) = ServiceControlService.Start(serviceName);
-        log.Add(startSuccess
-            ? $"[{DateTime.Now:T}] Started {serviceName}."
-            : $"[{DateTime.Now:T}] Couldn't start {serviceName}: {startError}.");
-
-        return log;
+        log.Add(StartLogged(serviceName, out bool started));
+        return ok && started;
     }
 
     #endregion

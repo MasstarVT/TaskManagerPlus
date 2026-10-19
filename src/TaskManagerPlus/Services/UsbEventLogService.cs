@@ -12,8 +12,9 @@ namespace TaskManagerPlus.Services;
 /// app's existing convention of each shelled-out/event-log-reading service owning its own small
 /// helpers rather than a single do-everything class.
 ///
-/// Both reads are keyword-matched against the formatted event message rather than filtered by a
-/// specific numeric EventID. Every other undocumented-format event scan in this app
+/// The over-current read is keyword-matched against the formatted event message rather than
+/// filtered by a specific numeric EventID (the surprise-removal read uses Kernel-PnP's manifest
+/// event IDs instead - see ReadReenumerationEvents). Every other undocumented-format event scan in this app
 /// (EventLogService.ReadThermalCriticalEvents is the closest precedent) already makes this same
 /// choice for exactly this reason: the precise event IDs Windows uses for USB over-current/port-
 /// reset-failure and PnP surprise-removal are not published, versioned Microsoft constants, and
@@ -42,15 +43,15 @@ public static class UsbEventLogService
         "reset failed", "failed to reset", "port reset", "reset error",
     };
 
-    private static readonly string[] RemovalKeywords =
-    {
-        "surprise removal", "without first being prepared for removal", "unexpectedly removed", "disappeared from the system",
-    };
-
-    private static readonly string[] ArrivalKeywords =
-    {
-        "device arrival", "new device was detected", "device was recognized", "device was configured",
-    };
+    // Surprise removals are not in the System log at all: Kernel-PnP's System-log templates never
+    // mention removal/arrival. They are events 1010 ("has been surprise removed as it is reported
+    // as missing on the bus") and 1011 ("... as it was reported to be failing") in Kernel-PnP's
+    // Device Management channel, with the device instance ID as the first property - IDs taken
+    // from the provider manifest (Get-WinEvent -ListProvider Microsoft-Windows-Kernel-PnP). That
+    // channel is dominated by SWD\MMDEVAPI software-device noise, so it gets a larger read cap and
+    // is filtered on the cheap property value before any message is formatted.
+    private const string KernelPnpDeviceManagementLog = "Microsoft-Windows-Kernel-PnP/Device Management";
+    private const int MaxRemovalRecordsRead = 5000;
 
     // Most Kernel-PnP/usbhub/disk diagnostic messages embed the full device instance path
     // ("USB\VID_xxxx&PID_xxxx\..."). Extracting it lets these events be joined back onto
@@ -69,16 +70,16 @@ public static class UsbEventLogService
         return result.OrderByDescending(e => e.TimeCreated).ToList();
     }
 
-    /// <summary>#667: counts surprise-removal + device-arrival events per normalized USB instance
-    /// ID prefix over the lookback window - the raw per-event list plus a lookup dictionary keyed
-    /// the same way UsbPowerService.Normalize keys its own MSPower_DeviceEnable join, so
-    /// EnergyThermalsViewModel can attach a count onto each row of the existing USB device grid.</summary>
+    /// <summary>#667: counts USB surprise-removal events (Kernel-PnP 1010/1011) per normalized USB
+    /// instance ID prefix over the lookback window - the raw per-event list plus a lookup
+    /// dictionary keyed the same way UsbPowerService.Normalize keys its own MSPower_DeviceEnable
+    /// join, so EnergyThermalsViewModel can attach a count onto each row of the existing USB device
+    /// grid. Arrivals aren't counted: Kernel-PnP only logs a device start (410) when it is
+    /// configured, not on every re-plug, so a removal of a device that is present now is the
+    /// re-enumeration signal.</summary>
     public static (List<UsbPowerEvent> Events, Dictionary<string, int> CountsByNormalizedInstance) ReadReenumerationEvents()
     {
-        var keywords = RemovalKeywords.Concat(ArrivalKeywords).ToArray();
-        var events = new List<UsbPowerEvent>();
-        events.AddRange(ReadLogByKeyword("System", PathType.LogName, "Microsoft-Windows-Kernel-PnP", keywords));
-        events.AddRange(ReadLogByKeyword("System", PathType.LogName, "disk", keywords));
+        var events = ReadUsbSurpriseRemovals();
 
         var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var e in events)
@@ -89,6 +90,52 @@ public static class UsbEventLogService
         }
 
         return (events.OrderByDescending(e => e.TimeCreated).ToList(), counts);
+    }
+
+    private static List<UsbPowerEvent> ReadUsbSurpriseRemovals()
+    {
+        var result = new List<UsbPowerEvent>();
+        try
+        {
+            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+            string filter = $"*[System[(EventID=1010 or EventID=1011) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]";
+            var query = new EventLogQuery(KernelPnpDeviceManagementLog, PathType.LogName, filter) { ReverseDirection = true };
+            using var reader = new EventLogReader(query);
+
+            int count = 0;
+            while (count < MaxRemovalRecordsRead && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    string instanceId;
+                    try { instanceId = record.Properties.Count > 0 ? record.Properties[0].Value as string ?? string.Empty : string.Empty; }
+                    catch { continue; }
+
+                    var idMatch = UsbInstanceIdRegex.Match(instanceId);
+                    if (!idMatch.Success || idMatch.Index != 0) continue;
+
+                    string message;
+                    try { message = record.FormatDescription() ?? string.Empty; }
+                    catch { message = string.Empty; }
+                    if (message.Length == 0) message = $"Device {instanceId} was surprise removed (event {record.Id}).";
+
+                    result.Add(new UsbPowerEvent
+                    {
+                        TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                        ProviderName = record.ProviderName ?? string.Empty,
+                        DeviceIdHint = idMatch.Value,
+                        Message = Truncate(message, 300),
+                    });
+                }
+            }
+        }
+        catch
+        {
+            // Channel missing/disabled or access denied - no removals from this source, same
+            // degrade as the keyword reads below.
+        }
+        return result;
     }
 
     private static List<UsbPowerEvent> ReadLogByKeyword(string logName, PathType pathType, string? providerFilter, string[] keywords)

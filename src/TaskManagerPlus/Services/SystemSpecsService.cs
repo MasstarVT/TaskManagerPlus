@@ -444,15 +444,17 @@ public sealed class SystemSpecsService
 
     /// <summary>#16/#445/#446: the memory array's slot count (populated-vs-total, #16), maximum
     /// supported capacity (#445 - Win32_PhysicalMemoryArray.MaxCapacity, falling back to the
-    /// 64-bit ExtendedMaxCapacity field when the 32-bit MaxCapacity saturates the same way
+    /// 64-bit MaxCapacityEx field when the 32-bit MaxCapacity saturates the same way
     /// AdapterRAM does for GPU VRAM), and the array's documented ECC/error-correction type (#446) -
-    /// bundled into one query since all three come off the same single WMI class/instance.</summary>
+    /// bundled into one query since all three come off the same single WMI class/instance. The
+    /// class has no "ExtendedMaxCapacity" property (Get-CimClass), and naming one made the whole
+    /// query fail as an invalid query.</summary>
     private static (int? Slots, long? MaxCapacityBytes, string ErrorCorrectionText) ReadMemoryArrayInfo()
     {
         try
         {
             using var searcher = new ManagementObjectSearcher(
-                "SELECT MemoryDevices, MaxCapacity, ExtendedMaxCapacity, MemoryErrorCorrection FROM Win32_PhysicalMemoryArray");
+                "SELECT MemoryDevices, MaxCapacity, MaxCapacityEx, MemoryErrorCorrection FROM Win32_PhysicalMemoryArray");
             foreach (ManagementObject mo in searcher.Get())
             {
                 int? slots = null;
@@ -463,12 +465,12 @@ public sealed class SystemSpecsService
                 {
                     // MaxCapacity is in KB and, like AdapterRAM for GPU VRAM, is a 32-bit field
                     // that saturates at 0x80000000 KB (~2 TB) on a board whose real maximum is
-                    // larger - ExtendedMaxCapacity (KB, 64-bit) is the documented escape hatch for
+                    // larger - MaxCapacityEx (KB, 64-bit) is the documented escape hatch for
                     // exactly that case, and is used whenever MaxCapacity reports that sentinel.
                     uint maxCapacityKb = System.Convert.ToUInt32(mo["MaxCapacity"] ?? 0u);
-                    if (maxCapacityKb == 0x80000000 && mo["ExtendedMaxCapacity"] is not null)
+                    if (maxCapacityKb == 0x80000000 && mo["MaxCapacityEx"] is not null)
                     {
-                        ulong extendedKb = System.Convert.ToUInt64(mo["ExtendedMaxCapacity"]);
+                        ulong extendedKb = System.Convert.ToUInt64(mo["MaxCapacityEx"]);
                         if (extendedKb > 0) maxCapacityBytes = (long)(extendedKb * 1024UL);
                     }
                     else if (maxCapacityKb > 0)
@@ -923,9 +925,9 @@ public sealed class SystemSpecsService
         return (null, null, null);
     }
 
-    /// <summary>Round 13, #323: invokes MSFT_StorageReliabilityCounter.ResetStatistics() for one
-    /// disk - the driver's own counter-reset method (Storage Management API), not a registry/file
-    /// hack. Returns a short status message either way rather than throwing, matching every other
+    /// <summary>Round 13, #323: invokes MSFT_StorageReliabilityCounter.Reset() for one disk - the
+    /// driver's own counter-reset method (Storage Management API; the class has no
+    /// "ResetStatistics" method), not a registry/file hack. Returns a short status message either way rather than throwing, matching every other
     /// on-demand action's try/catch-to-status-text convention.</summary>
     public static string ResetReliabilityCounters(int diskIndex)
     {
@@ -936,11 +938,11 @@ public sealed class SystemSpecsService
                 $"SELECT * FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '{diskIndex}'");
             foreach (ManagementObject mo in searcher.Get())
             {
-                using var result = mo.InvokeMethod("ResetStatistics", null, null);
+                using var result = mo.InvokeMethod("Reset", null, null);
                 int returnValue = result?["ReturnValue"] is null ? 0 : Convert.ToInt32(result["ReturnValue"]);
                 return returnValue == 0
                     ? "Reliability counters reset."
-                    : $"ResetStatistics returned code {returnValue}.";
+                    : $"Reset returned code {returnValue}.";
             }
             return "No MSFT_StorageReliabilityCounter instance found for this disk.";
         }
@@ -1061,9 +1063,9 @@ public sealed class SystemSpecsService
     }
 
     /// <summary>
-    /// Page file drive letter and whether that drive is a fixed disk or an HDD/SSD (#70), via the
-    /// documented MSFT_Volume -&gt; MSFT_Partition -&gt; MSFT_Disk -&gt; (indirectly) MediaType
-    /// associator chain in root\Microsoft\Windows\Storage. A page file left on a slower secondary
+    /// Page file drive letter and whether that drive is a fixed disk or an HDD/SSD (#70), via
+    /// MSFT_Partition (DriveLetter -&gt; DiskNumber) and MSFT_PhysicalDisk.MediaType in
+    /// root\Microsoft\Windows\Storage. A page file left on a slower secondary
     /// HDD on a system that otherwise boots from SSD (or the reverse) is a common, easy-to-miss
     /// slowdown cause on multi-drive systems. Degrades to null on any failure - this namespace can
     /// legitimately be unavailable the same way the SMART/reliability-counter classes above can.
@@ -1086,28 +1088,21 @@ public sealed class SystemSpecsService
             string driveLetter = pageFilePath.Substring(0, 2); // e.g. "C:"
             string bootDrive = (Environment.GetEnvironmentVariable("SystemDrive") ?? "C:").ToUpperInvariant();
 
-            using var volSearcher = new ManagementObjectSearcher(
+            // MSFT_Partition carries both DriveLetter and DiskNumber, so no associator walk is
+            // needed: the MSFT ObjectIds contain embedded quotes that a single-quoted
+            // ObjectId='...' path rejects, and MSFT_PartitionToDisk/MSFT_DiskToPhysicalDisk don't
+            // exist (Get-CimClass) - the old chain never returned a media type.
+            if (!char.IsLetter(driveLetter[0])) return null;
+            using var partSearcher = new ManagementObjectSearcher(
                 @"root\Microsoft\Windows\Storage",
-                $"SELECT ObjectId FROM MSFT_Volume WHERE DriveLetter = '{driveLetter[0]}'");
-            foreach (ManagementObject vol in volSearcher.Get())
+                $"SELECT DiskNumber FROM MSFT_Partition WHERE DriveLetter = '{char.ToUpperInvariant(driveLetter[0])}'");
+            foreach (ManagementObject partition in partSearcher.Get())
             {
                 string mediaType = "Unknown";
                 try
                 {
-                    using var partitions = new ManagementObjectSearcher(
-                        @"root\Microsoft\Windows\Storage",
-                        $"ASSOCIATORS OF {{MSFT_Volume.ObjectId='{EscapeWmiPath((string)vol["ObjectId"])}'}} WHERE AssocClass=MSFT_PartitionToVolume");
-                    foreach (ManagementObject partition in partitions.Get())
-                    {
-                        using var disks = new ManagementObjectSearcher(
-                            @"root\Microsoft\Windows\Storage",
-                            $"ASSOCIATORS OF {{MSFT_Partition.ObjectId='{EscapeWmiPath((string)partition["ObjectId"])}'}} WHERE AssocClass=MSFT_PartitionToDisk");
-                        foreach (ManagementObject disk in disks.Get())
-                        {
-                            mediaType = ReadPhysicalDiskMediaType(disk);
-                            break;
-                        }
-                    }
+                    if (partition["DiskNumber"] is { } diskNumber)
+                        mediaType = ReadPhysicalDiskMediaType(Convert.ToUInt32(diskNumber));
                 }
                 catch { /* leave "Unknown" */ }
 
@@ -1186,15 +1181,16 @@ public sealed class SystemSpecsService
     }
 
     // MSFT_Disk itself doesn't expose a plain SSD/HDD media-type string reliably across drivers -
-    // MSFT_PhysicalDisk.MediaType (via the disk's associated physical disk) is the actual documented
-    // source for that, so this reads it as a second associator hop rather than guessing from the model name.
-    private static string ReadPhysicalDiskMediaType(ManagementObject disk)
+    // MSFT_PhysicalDisk.MediaType is the actual documented source for that. A non-pooled
+    // physical disk's DeviceId is its disk number; a Storage Spaces virtual disk's number matches
+    // no physical disk, so it reads "Unknown" rather than borrowing another disk's type.
+    private static string ReadPhysicalDiskMediaType(uint diskNumber)
     {
         try
         {
             using var physicalDisks = new ManagementObjectSearcher(
                 @"root\Microsoft\Windows\Storage",
-                $"ASSOCIATORS OF {{MSFT_Disk.ObjectId='{EscapeWmiPath((string)disk["ObjectId"])}'}} WHERE AssocClass=MSFT_DiskToPhysicalDisk");
+                $"SELECT MediaType FROM MSFT_PhysicalDisk WHERE DeviceId = '{diskNumber}'");
             foreach (ManagementObject phys in physicalDisks.Get())
             {
                 if (phys["MediaType"] is null) continue;
@@ -1210,8 +1206,6 @@ public sealed class SystemSpecsService
         catch { /* fall through */ }
         return "Unknown";
     }
-
-    private static string EscapeWmiPath(string objectId) => objectId.Replace(@"\", @"\\").Replace("\"", "\\\"");
 
     /// <summary>Per-drive-letter free space, for a low-disk-space warning list. DriveInfo (not
     /// WMI) since it already handles removable/unready drives cleanly via IsReady. Round 9 adds

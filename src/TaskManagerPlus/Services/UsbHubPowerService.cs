@@ -50,23 +50,33 @@ public static class UsbHubPowerService
             }
 
             int deviceCount = 0;
+            bool deviceCountRead = false;
             try
             {
                 using var searcher = new ManagementObjectSearcher("root\\CIMV2",
                     "SELECT PNPDeviceID FROM Win32_PnPEntity WHERE PNPDeviceID LIKE 'USB%' AND PNPClass != 'USB'");
                 deviceCount = searcher.Get().Count;
+                deviceCountRead = true;
             }
             catch
             {
-                // Leave 0 - the hub list above still has real data even without a device count.
+                // The hub list above still has real data even without a device count.
             }
 
+            // Win32_USBHub lists every USB-class device (root hubs, external hubs, composite
+            // devices), and Windows commonly leaves NumberOfPorts empty for all of them - so the
+            // devices-vs-ports comparison is only made when every entry reports a port count.
+            bool portsKnown = hubs.Count > 0 && hubs.All(h => h.PortCount is not null);
             int totalPorts = hubs.Sum(h => h.PortCount ?? 0);
+            string devicesText = deviceCountRead ? $"{deviceCount} USB device(s)" : "An unknown number of USB devices (Win32_PnPEntity unreadable)";
+            string entriesText = $"{hubs.Count} USB hub/composite device entr{(hubs.Count == 1 ? "y" : "ies")}";
             string status = hubs.Count == 0
                 ? "No USB hubs reported by WMI."
-                : totalPorts > 0 && deviceCount > totalPorts
-                    ? $"{deviceCount} USB device(s) attached across {hubs.Count} hub(s) providing {totalPorts} total port(s) - more devices than ports exist system-wide, which usually means composite devices/hubs-behind-hubs rather than a real conflict, but is worth a look if something keeps disconnecting."
-                    : $"{deviceCount} USB device(s) attached across {hubs.Count} hub(s) providing {totalPorts} total port(s).";
+                : !portsKnown
+                    ? $"{devicesText} attached; {entriesText} listed. Windows doesn't report a port count for {(hubs.Any(h => h.PortCount is not null) ? "some of them" : "any of them")}, so a devices-vs-ports comparison isn't possible."
+                    : deviceCountRead && deviceCount > totalPorts
+                        ? $"{devicesText} attached across {entriesText} providing {totalPorts} total port(s) - more devices than ports exist system-wide, which usually means composite devices/hubs-behind-hubs rather than a real conflict, but is worth a look if something keeps disconnecting."
+                        : $"{devicesText} attached across {entriesText} providing {totalPorts} total port(s).";
 
             return (hubs.OrderBy(h => h.HubName, StringComparer.OrdinalIgnoreCase).ToList(), deviceCount, status);
         });

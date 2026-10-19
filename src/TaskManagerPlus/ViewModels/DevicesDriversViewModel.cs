@@ -1025,8 +1025,9 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         try
         {
             var (success, message) = await DriverVerifierControlService.ResetAsync();
+            // On success, message carries verifier's output plus any PoolTag restore note.
             VerifierActionStatusText = success
-                ? "Driver Verifier reset. Restart the machine for this to take effect."
+                ? $"Driver Verifier reset. Restart the machine for this to take effect.\n{message}"
                 : $"Couldn't reset Driver Verifier: {message}";
             await LoadVerifierStatusAsync();
         }

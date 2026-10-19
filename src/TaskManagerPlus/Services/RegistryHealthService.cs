@@ -35,22 +35,39 @@ public static class RegistryHealthService
 
     public static RegistryHealthSnapshot ReadHiveHealth()
     {
+        // The five system hives are always loaded on a running system.
         var systemHives = new List<string> { "SYSTEM", "SOFTWARE", "SAM", "SECURITY", "DEFAULT" }
-            .Select(name => ReadHiveFile(name, Path.Combine(ConfigDir, name)))
+            .Select(name => ReadHiveFile(name, Path.Combine(ConfigDir, name), isLoaded: true))
             .ToList();
 
         var userHives = new List<RegistryHiveFileInfo>();
-        foreach (var (profileName, profilePath) in EnumerateProfiles())
+        foreach (var (profileName, profilePath, sid) in EnumerateProfiles())
         {
-            userHives.Add(ReadHiveFile($"NTUSER.DAT ({profileName})", Path.Combine(profilePath, "NTUSER.DAT")));
+            bool loaded = IsUserHiveLoaded(sid);
+            userHives.Add(ReadHiveFile($"NTUSER.DAT ({profileName})", Path.Combine(profilePath, "NTUSER.DAT"), loaded));
             string usrClassPath = Path.Combine(profilePath, "AppData", "Local", "Microsoft", "Windows", "UsrClass.dat");
-            userHives.Add(ReadHiveFile($"UsrClass.dat ({profileName})", usrClassPath));
+            userHives.Add(ReadHiveFile($"UsrClass.dat ({profileName})", usrClassPath, loaded));
         }
 
         return new RegistryHealthSnapshot { SystemHives = systemHives, UserHives = userHives };
     }
 
-    private static RegistryHiveFileInfo ReadHiveFile(string displayName, string path)
+    /// <summary>A logged-on (or service-loaded) profile's hive shows up under HKEY_USERS\{SID};
+    /// when the check itself fails it is treated as loaded, which only suppresses a note.</summary>
+    private static bool IsUserHiveLoaded(string sid)
+    {
+        try
+        {
+            using var key = Registry.Users.OpenSubKey(sid);
+            return key is not null;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static RegistryHiveFileInfo ReadHiveFile(string displayName, string path, bool isLoaded)
     {
         bool exists = false;
         long size = 0;
@@ -74,39 +91,36 @@ public static class RegistryHealthService
             SizeBytes = size,
             LastWriteTime = lastWrite,
             IsOversized = oversized,
-            TransactionLogNotes = exists ? ReadTransactionLogNotes(path) : new List<string>(),
+            TransactionLogNotes = exists ? ReadTransactionLogNotes(path, isLoaded) : new List<string>(),
         };
     }
 
-    /// <summary>#794: flags stale .LOG1/.LOG2 (the registry's own write-ahead transaction logs -
-    /// normally small and frequently rotated; one that's grown large or hasn't been touched in a
-    /// long time while the hive itself keeps changing suggests the hive isn't flushing/checkpointing
-    /// normally) and a leftover .blf/.regtrans-ms transactional-registry log set (normally cleaned
-    /// up automatically; leftovers here are usually harmless but worth noting, per this app's
-    /// "quick flag, not a verdict" convention).</summary>
-    private static List<string> ReadTransactionLogNotes(string hivePath)
+    /// <summary>#794: flags an unusually large .LOG1/.LOG2 (the registry's own write-ahead
+    /// transaction logs) and, for a hive that isn't loaded, more than one KTM log set beside it.
+    /// No age check: Windows doesn't update a log's LastWriteTime while the hive is open, so an
+    /// old timestamp is normal. Every hive carries one "{name}{guid}.TM.blf" +
+    /// "TMContainer*.regtrans-ms" resource-manager set whether loaded or not, so only extra sets
+    /// on an unloaded hive are noted ("quick flag, not a verdict").</summary>
+    private static List<string> ReadTransactionLogNotes(string hivePath, bool isLoaded)
     {
         var notes = new List<string>();
         try
         {
-            var hiveInfo = new FileInfo(hivePath);
             foreach (var suffix in new[] { ".LOG1", ".LOG2" })
             {
                 var logInfo = new FileInfo(hivePath + suffix);
                 if (!logInfo.Exists) continue;
                 if (logInfo.Length > 10L * 1024 * 1024)
                     notes.Add($"{Path.GetFileName(logInfo.FullName)} is unusually large ({Formatting.FormatBytes(logInfo.Length)}) - the hive may not be checkpointing normally.");
-                else if (hiveInfo.Exists && hiveInfo.LastWriteTime - logInfo.LastWriteTime > TimeSpan.FromDays(90))
-                    notes.Add($"{Path.GetFileName(logInfo.FullName)} hasn't been touched in over 90 days while the hive itself has kept changing.");
             }
 
             string dir = Path.GetDirectoryName(hivePath) ?? string.Empty;
             string baseName = Path.GetFileName(hivePath);
-            if (Directory.Exists(dir))
+            if (!isLoaded && Directory.Exists(dir))
             {
-                var blfFiles = Directory.EnumerateFiles(dir, baseName + ".blf").Concat(Directory.EnumerateFiles(dir, baseName + "*.regtrans-ms"));
-                int count = blfFiles.Count();
-                if (count > 0) notes.Add($"{count} leftover transactional-registry log file(s) ({baseName}.blf / .regtrans-ms) - usually harmless, cleaned up automatically over time.");
+                int sets = Directory.EnumerateFiles(dir, baseName + "{*}.TM.blf")
+                    .Count(f => f.EndsWith(".TM.blf", StringComparison.OrdinalIgnoreCase));
+                if (sets > 1) notes.Add($"{sets} transactional-registry log sets ({baseName}{{guid}}.TM.blf / .regtrans-ms) beside this unloaded hive - older sets are usually harmless leftovers.");
             }
         }
         catch { /* best-effort - a missing note isn't itself an error worth surfacing */ }
@@ -117,9 +131,9 @@ public static class RegistryHealthService
     /// LocalService/NetworkService/S-1-5-18 System - whose hives aren't useful here), the same
     /// "read the documented ProfileList inventory rather than guess from C:\Users" approach
     /// ProfileDiagnosticsService already takes elsewhere in this app.</summary>
-    private static List<(string Name, string Path)> EnumerateProfiles()
+    private static List<(string Name, string Path, string Sid)> EnumerateProfiles()
     {
-        var result = new List<(string, string)>();
+        var result = new List<(string, string, string)>();
         try
         {
             using var profileListKey = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList");
@@ -133,7 +147,7 @@ public static class RegistryHealthService
                     using var sidKey = profileListKey.OpenSubKey(sid);
                     if (sidKey?.GetValue("ProfileImagePath") is not string path || path.Length == 0) continue;
                     if (!Directory.Exists(path)) continue;
-                    result.Add((Path.GetFileName(path.TrimEnd('\\')), path));
+                    result.Add((Path.GetFileName(path.TrimEnd('\\')), path, sid));
                 }
                 catch { /* one malformed SID subkey shouldn't stop the rest */ }
             }

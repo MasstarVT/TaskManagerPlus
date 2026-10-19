@@ -92,7 +92,13 @@ public static class UpgradeReadinessService
         if (security.TpmPresent == false) blockers.Add("No TPM detected (Windows 11 requires TPM 2.0).");
         else if (security.TpmPresent == true && security.TpmReady == false) blockers.Add("A TPM is present but not activated/enabled/owned.");
 
-        if (security.SecureBootEnabled == false) blockers.Add("Secure Boot is off.");
+        // Windows 11 requires UEFI firmware that is Secure Boot capable - not Secure Boot turned
+        // on - so off-on-UEFI is advisory; legacy BIOS boot is the real blocker.
+        var advisories = new List<string>();
+        if (firmwareDisk.FirmwareType.StartsWith("Legacy BIOS", StringComparison.OrdinalIgnoreCase))
+            blockers.Add("This PC boots in legacy BIOS mode (Windows 11 needs UEFI firmware with Secure Boot capability).");
+        else if (security.SecureBootEnabled == false)
+            advisories.Add("Secure Boot is off. Windows 11 only needs a Secure Boot-capable PC, but turning it on in the firmware settings is recommended.");
         if (firmwareDisk.IsHardBlocker) blockers.Add("The system disk is MBR-partitioned (needs GPT for UEFI/Secure Boot).");
         if (systemDriveFree is { } free && free < RecommendedFreeSpaceBytes)
             blockers.Add($"Only {Formatting.FormatBytes(free)} free on the system drive (recommended: at least {Formatting.FormatBytes(RecommendedFreeSpaceBytes)}).");
@@ -108,10 +114,12 @@ public static class UpgradeReadinessService
             TpmReady = security.TpmReady,
             SecureBootEnabled = security.SecureBootEnabled,
             SystemDiskIsMbr = firmwareDisk.IsHardBlocker,
+            SystemDiskPartitionStyle = firmwareDisk.SystemDiskPartitionStyle,
             SystemDriveFreeBytes = systemDriveFree,
             EspFound = espFound,
             EspFreeBytes = espFree,
             BlockingItems = blockers,
+            AdvisoryItems = advisories,
         };
     }
 

@@ -147,10 +147,39 @@
             <Setter Property="Margin" Value="0,0,0,12" />
             <Setter Property="Padding" Value="0,0,0,0" />
         </Style>
+
+        <!-- Every section but Overview: until the first inventory read succeeds, the section
+             shows the loading/failure state instead of its cards, whose field-initializer
+             defaults ("Reboot pending: No", "0 in the last 30 days", "No memory modules
+             detected") would otherwise read as a real, clean result. Overview keeps its cards
+             visible because it hosts the Refresh button. -->
+        <Style x:Key="SpecsSectionBody" TargetType="ScrollViewer" BasedOn="{StaticResource SectionBody}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasLoaded}" Value="False">
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ScrollViewer">
+                                <StackPanel Margin="{TemplateBinding Padding}">
+                                    <TextBlock Text="Reading system inventory…" Style="{StaticResource SubStat}" Margin="0,0,0,12"
+                                               Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                                            BorderThickness="1" CornerRadius="8" Padding="14,10"
+                                            Visibility="{Binding RefreshErrorText, Converter={StaticResource NullToVisibilityConverter}}">
+                                        <StackPanel>
+                                            <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Text="{Binding RefreshErrorText}" />
+                                            <TextBlock Text="Use Refresh on the Overview section to try again." Style="{StaticResource SubStat}" Margin="0,4,0,0" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
     </UserControl.Resources>
 
-    <!-- Sections. A 23-card spec sheet reads better as named pages than as one long column.
-         Sections. A 23-card spec sheet reads better as named pages than as one long column. -->
+    <!-- Sections. A 23-card spec sheet reads better as named pages than as one long column. -->
     <TabControl Style="{StaticResource SectionTabControl}" SelectedIndex="0">
         <TabItem Header="Overview">
             <ScrollViewer Style="{StaticResource SectionBody}">
@@ -260,8 +289,9 @@
                                     <TextBlock Text="Chipset driver" Style="{StaticResource SpecLabel}" />
                                     <TextBlock Text="{Binding ChipsetDriverText}" Style="{StaticResource SpecValue}" TextWrapping="Wrap" />
                                 </StackPanel>
-                                <!-- #62: longest-uptime records this month/year, derived from the boot-history
-                                     trend the Startup tab already persists - no new sampling. -->
+                                <!-- #62: longest-uptime records this month/year, derived from the System
+                                     log's Kernel-General 12/13 boot/shutdown sessions - no new sampling.
+                                     "Unknown" when no session could be read. -->
                                 <StackPanel Margin="0,0,0,0">
                                     <TextBlock Text="Longest uptime (month / year)" Style="{StaticResource SpecLabel}" />
                                     <TextBlock Style="{StaticResource SpecValue}">
@@ -277,7 +307,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Memory">
-            <ScrollViewer Style="{StaticResource SectionBody}">
+            <ScrollViewer Style="{StaticResource SpecsSectionBody}">
                 <StackPanel>
                     <!-- #451: RAM health rollup - mismatched DIMMs, ECC corrected errors, memory
                          diagnostic results, XMP state, channel population and memory-related bugchecks,
@@ -305,6 +335,10 @@
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
                                             <Style.Triggers>
+                                                <!-- Not read yet - not a green all-clear. -->
+                                                <DataTrigger Binding="{Binding RamHealthVerdictText}" Value="Unknown">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                </DataTrigger>
                                                 <DataTrigger Binding="{Binding RamHealthIsWarning}" Value="True">
                                                     <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                                 </DataTrigger>
@@ -562,7 +596,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Graphics">
-            <ScrollViewer Style="{StaticResource SectionBody}">
+            <ScrollViewer Style="{StaticResource SpecsSectionBody}">
                 <StackPanel>
                     <!-- Graphics -->
                     <Border Style="{StaticResource CardStyle}">
@@ -781,7 +815,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Storage">
-            <ScrollViewer Style="{StaticResource SectionBody}">
+            <ScrollViewer Style="{StaticResource SpecsSectionBody}">
                 <StackPanel>
                     <!-- Storage -->
                     <Border Style="{StaticResource CardStyle}">
@@ -847,7 +881,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Devices">
-            <ScrollViewer Style="{StaticResource SectionBody}">
+            <ScrollViewer Style="{StaticResource SpecsSectionBody}">
                 <StackPanel>
                     <!-- USB devices (#69): flags a Windows-reported enumeration/driver problem - helps
                          catch a misbehaving peripheral or a failing USB controller/hub. Per-device power
@@ -895,7 +929,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Software">
-            <ScrollViewer Style="{StaticResource SectionBody}">
+            <ScrollViewer Style="{StaticResource SpecsSectionBody}">
                 <StackPanel>
                     <!-- #59: installed .NET runtime versions, from the shared-framework directory layout
                          dotnet.exe itself uses. -->
@@ -986,7 +1020,7 @@
             </ScrollViewer>
         </TabItem>
         <TabItem Header="Security">
-            <ScrollViewer Style="{StaticResource SectionBody}">
+            <ScrollViewer Style="{StaticResource SpecsSectionBody}">
                 <StackPanel>
                     <!-- Security posture: Secure Boot / TPM / VBS - each individually nullable (see
                          SecurityInfo's remarks), rendered as a warning color only on a confirmed "off"/

@@ -145,17 +145,13 @@ public static class EnvironmentHealthService
             var kind = value.Contains('%') ? RegistryValueKind.ExpandString : RegistryValueKind.String;
             key.SetValue(name, value, kind);
 
-            // The journal entry carries one value kind and Undo writes OldValueText back with it, so
-            // the OLD value's kind wins wherever it matters - otherwise undoing an edit of a
-            // REG_EXPAND_SZ value (PATH, TEMP, ...) to a %-free value would restore its %VAR% text
-            // as REG_SZ, which never expands. A %-free REG_SZ old value reads the same either way,
-            // so it keeps the new kind (which the entry's .reg export also uses).
-            var journalKind = !existedBefore ? kind
-                : oldIsExpand ? RegistryValueKind.ExpandString
-                : oldRaw.Contains('%') ? RegistryValueKind.String
-                : kind;
+            // Both kinds are journaled: the new value's kind (used by the entry's .reg export) and
+            // the old value's (used by Undo), so undoing an edit of a REG_EXPAND_SZ value (PATH,
+            // TEMP, ...) restores its %VAR% text as REG_EXPAND_SZ even when the new value was
+            // written as REG_SZ.
             RegistryChangeJournalService.Record("Environment", $"Set {scope} variable \"{name}\"",
-                hiveName, subKeyPath, name, journalKind, existedBefore ? oldRaw : null, value);
+                hiveName, subKeyPath, name, kind, existedBefore ? oldRaw : null, value,
+                oldKind: existedBefore ? (oldIsExpand ? RegistryValueKind.ExpandString : RegistryValueKind.String) : null);
 
             BroadcastEnvironmentChange();
             return (true, null);

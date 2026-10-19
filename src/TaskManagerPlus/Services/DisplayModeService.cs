@@ -83,7 +83,9 @@ public static class DisplayModeService
                 if (!EnumDisplayDevices(null, i, ref dd, 0)) break;
                 if ((dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) == 0) continue;
 
-                var row = ReadOneMonitor(dd.DeviceName, dd.DeviceString);
+                // dd.DeviceString here is the adapter (GPU) name; the monitor attached to this
+                // output is the first child device of dd.DeviceName.
+                var row = ReadOneMonitor(dd.DeviceName, ReadAttachedMonitorName(dd.DeviceName));
                 if (row is not null) rows.Add(row);
             }
         }
@@ -99,6 +101,27 @@ public static class DisplayModeService
                 ? "Couldn't enumerate any attached display's mode list on this system."
                 : $"{rows.Count} attached monitor(s) read.",
         };
+    }
+
+    /// <summary>"Generic PnP Monitor (DISPLAY1)"-style label from EnumDisplayDevices(outputName, 0);
+    /// the GDI output name keeps rows distinct when every monitor reports the same generic
+    /// string. Empty when no monitor device is reported (the caller then falls back to the
+    /// output name).</summary>
+    private static string ReadAttachedMonitorName(string outputDeviceName)
+    {
+        try
+        {
+            var mon = new DISPLAY_DEVICE();
+            mon.cb = Marshal.SizeOf<DISPLAY_DEVICE>();
+            if (!EnumDisplayDevices(outputDeviceName, 0, ref mon, 0) || string.IsNullOrWhiteSpace(mon.DeviceString))
+                return string.Empty;
+            string shortOutput = outputDeviceName.StartsWith(@"\\.\", StringComparison.Ordinal) ? outputDeviceName[4..] : outputDeviceName;
+            return $"{mon.DeviceString} ({shortOutput})";
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static DisplayModeRow? ReadOneMonitor(string deviceName, string deviceString)

@@ -24,7 +24,9 @@ public static class SfcIntegrityService
 
     private static readonly Regex ProgressPercentRegex = new(@"(\d{1,3}(?:\.\d+)?)\s*%", RegexOptions.Compiled);
     private static readonly Regex SrLineRegex = new(@"\[SR\]", RegexOptions.Compiled);
-    private static readonly Regex RepairedFileRegex = new(@"Repairing corrupted file \[[^\]]*\]\s*""(?<path>[^""]+)""", RegexOptions.Compiled);
+    // CBS.log splits the path: [ml:...]"\??\C:\Windows\System32"\[l:...]"wscsvc.dll" - the first
+    // quoted part is the directory, the second the file name (optional, in case a line has only one).
+    private static readonly Regex RepairedFileRegex = new(@"Repairing corrupted file \[[^\]]*\]\s*""(?<dir>[^""]+)""(?:\\?\[[^\]]*\]\s*""(?<file>[^""]+)"")?", RegexOptions.Compiled);
     private static readonly Regex CannotRepairRegex = new(@"Cannot repair member file \[[^\]]*\]\s*""(?<file>[^""]+)""\s+of\s+(?<component>[^,]+)", RegexOptions.Compiled);
 
     private static readonly string[] KnownVerdictPhrases =
@@ -212,7 +214,15 @@ public static class SfcIntegrityService
                     srLines.Add(line);
 
                     var repairMatch = RepairedFileRegex.Match(line);
-                    if (repairMatch.Success) { repaired.Add(repairMatch.Groups["path"].Value); continue; }
+                    if (repairMatch.Success)
+                    {
+                        string dir = repairMatch.Groups["dir"].Value;
+                        if (dir.StartsWith(@"\??\", StringComparison.Ordinal)) dir = dir[4..];
+                        repaired.Add(repairMatch.Groups["file"].Success
+                            ? dir.TrimEnd('\\') + "\\" + repairMatch.Groups["file"].Value
+                            : dir);
+                        continue;
+                    }
 
                     var cannotMatch = CannotRepairRegex.Match(line);
                     if (cannotMatch.Success)
@@ -261,7 +271,9 @@ public static class SfcIntegrityService
     #region #787 - Integrity scan history
 
     /// <summary>#787: fail-silent-to-empty JSON load, same pattern as
-    /// BootPerformanceService.LoadHistory's boot-history.json.</summary>
+    /// BootPerformanceService.LoadHistory's boot-history.json. Valid JSON with bad content (null
+    /// entries, null strings/lists, a negative duration) is sanitized here - this runs from
+    /// WindowsHealthViewModel's constructor, where a throw means no main window.</summary>
     public static List<IntegrityHistoryEntry> LoadHistory()
     {
         try
@@ -269,8 +281,22 @@ public static class SfcIntegrityService
             if (File.Exists(HistoryPath))
             {
                 var json = File.ReadAllText(HistoryPath);
-                var entries = JsonSerializer.Deserialize<List<IntegrityHistoryEntry>>(json);
-                if (entries is not null) return entries;
+                var entries = JsonSerializer.Deserialize<List<IntegrityHistoryEntry?>>(json);
+                if (entries is not null)
+                {
+                    return entries
+                        .OfType<IntegrityHistoryEntry>()
+                        .Select(e => new IntegrityHistoryEntry
+                        {
+                            Timestamp = e.Timestamp,
+                            ScanType = e.ScanType ?? string.Empty,
+                            Verdict = e.Verdict ?? string.Empty,
+                            DurationSeconds = double.IsFinite(e.DurationSeconds) && e.DurationSeconds > 0 ? e.DurationSeconds : 0,
+                            Success = e.Success,
+                            UnrepairableFiles = e.UnrepairableFiles?.Where(f => !string.IsNullOrEmpty(f)).ToList() ?? new List<string>(),
+                        })
+                        .ToList();
+                }
             }
         }
         catch { /* corrupt/unreadable file - start a fresh history rather than blocking the tab */ }

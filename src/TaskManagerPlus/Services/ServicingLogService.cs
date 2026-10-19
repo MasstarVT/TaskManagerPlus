@@ -576,7 +576,7 @@ public static class ServicingLogService
         ["0x800f0922"] = "The update couldn't be installed - commonly caused by too little free space on the system-reserved partition, or the machine couldn't reach the servicing endpoint it needed.",
     };
 
-    /// <summary>Combines Microsoft-Windows-WindowsUpdateClient/Operational events 19
+    /// <summary>Combines Microsoft-Windows-WindowsUpdateClient events 19 (System log)
     /// (success)/20 (failure), the Setup channel's events 1-4, and Win32_QuickFixEngineering (WMI,
     /// installed-hotfix inventory only - no failure info by definition) into one "update history
     /// with reasons" list, sorted newest first. Reuses EventLogExplorerService.ReadPage for both
@@ -591,7 +591,9 @@ public static class ServicingLogService
         {
             try
             {
-                var page = eventLog.ReadPage("Microsoft-Windows-WindowsUpdateClient/Operational", "*[System[(EventID=19 or EventID=20)]]", null, pageSize: 300);
+                // 19/20 are logged to the System log (the provider manifest links them there), not the
+                // client's Operational channel.
+                var page = eventLog.ReadPage("System", "*[System[Provider[@Name='Microsoft-Windows-WindowsUpdateClient'] and (EventID=19 or EventID=20)]]", null, pageSize: 300);
                 if (page.ErrorText is null)
                     foreach (var row in page.Rows) entries.Add(BuildWuClientEntry(row));
             }

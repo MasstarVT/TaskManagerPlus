@@ -25,6 +25,11 @@ public static class DisplayConfigService
     private const uint DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME = 1;
     private const uint DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME = 2;
     private const uint DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO = 9;
+    private const uint DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2 = 15;
+
+    // DISPLAYCONFIG_ADVANCED_COLOR_MODE (activeColorMode in the _2 packet).
+    private const uint DISPLAYCONFIG_ADVANCED_COLOR_MODE_WCG = 1;
+    private const uint DISPLAYCONFIG_ADVANCED_COLOR_MODE_HDR = 2;
 
     private const uint DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE = 1;
 
@@ -140,6 +145,9 @@ public static class DisplayConfigService
     // wingdi.h: header (20 bytes) + the bitfield union + colorEncoding + bitsPerColorChannel = 32
     // bytes. header.size is validated against that, so the old 24-byte declaration always failed
     // with ERROR_INVALID_PARAMETER and HDR state read as Unknown.
+    // Bitfield (value): bit0 advancedColorSupported, bit1 advancedColorEnabled, bit2
+    // wideColorEnforced, bit3 advancedColorForceDisabled. "Advanced color" includes Windows 11's
+    // auto color management on SDR panels, so bit0 alone does not mean HDR.
     [StructLayout(LayoutKind.Sequential)]
     private struct DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
     {
@@ -147,6 +155,21 @@ public static class DisplayConfigService
         public uint value;
         public uint colorEncoding;
         public uint bitsPerColorChannel;
+    }
+
+    // wingdi.h (Windows 11 24H2+): header (20) + bitfield + colorEncoding + bitsPerColorChannel +
+    // activeColorMode = 36 bytes. Bitfield: bit0 advancedColorSupported, bit1 advancedColorActive,
+    // bit2 reserved, bit3 advancedColorLimitedByPolicy, bit4 highDynamicRangeSupported, bit5
+    // highDynamicRangeUserEnabled, bit6 wideColorSupported, bit7 wideColorUserEnabled. An SDR
+    // panel with auto color management reads 0x45 (bits 0, 2, 6) with activeColorMode 0 (SDR).
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2
+    {
+        public DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+        public uint value;
+        public uint colorEncoding;
+        public uint bitsPerColorChannel;
+        public uint activeColorMode;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -180,6 +203,9 @@ public static class DisplayConfigService
 
     [DllImport("user32.dll")]
     private static extern int DisplayConfigGetDeviceInfo(ref DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO requestPacket);
+
+    [DllImport("user32.dll")]
+    private static extern int DisplayConfigGetDeviceInfo(ref DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2 requestPacket);
 
     [DllImport("user32.dll")]
     private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
@@ -303,21 +329,45 @@ public static class DisplayConfigService
         double? dpiPercent = gdiDeviceName.Length > 0 && dpiByGdiName.TryGetValue(gdiDeviceName, out var dpi) ? dpi : null;
 
         bool? hdrSupported = null, hdrEnabled = null, wideColor = null;
-        var colorPacket = new DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
+        var colorPacket2 = new DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2
         {
             header = new DISPLAYCONFIG_DEVICE_INFO_HEADER
             {
-                type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO,
-                size = (uint)Marshal.SizeOf<DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO>(),
+                type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2,
+                size = (uint)Marshal.SizeOf<DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2>(),
                 adapterId = path.targetInfo.adapterId,
                 id = path.targetInfo.id,
             },
         };
-        if (DisplayConfigGetDeviceInfo(ref colorPacket) == ERROR_SUCCESS)
+        if (DisplayConfigGetDeviceInfo(ref colorPacket2) == ERROR_SUCCESS)
         {
-            hdrSupported = (colorPacket.value & 0x1) != 0;
-            hdrEnabled = (colorPacket.value & 0x2) != 0;
-            wideColor = (colorPacket.value & 0x4) != 0;
+            hdrSupported = (colorPacket2.value & 0x10) != 0;
+            hdrEnabled = colorPacket2.activeColorMode == DISPLAYCONFIG_ADVANCED_COLOR_MODE_HDR;
+            wideColor = colorPacket2.activeColorMode == DISPLAYCONFIG_ADVANCED_COLOR_MODE_WCG;
+        }
+        else
+        {
+            // Pre-24H2 builds reject type 15. Type 9 can't tell HDR from auto color management:
+            // advanced color on with wide color enforced is the SDR/ACM case, so HDR is only
+            // inferred when bit2 is clear, and wide color stays unknown.
+            var colorPacket = new DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
+            {
+                header = new DISPLAYCONFIG_DEVICE_INFO_HEADER
+                {
+                    type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO,
+                    size = (uint)Marshal.SizeOf<DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO>(),
+                    adapterId = path.targetInfo.adapterId,
+                    id = path.targetInfo.id,
+                },
+            };
+            if (DisplayConfigGetDeviceInfo(ref colorPacket) == ERROR_SUCCESS)
+            {
+                bool supported = (colorPacket.value & 0x1) != 0;
+                bool enabled = (colorPacket.value & 0x2) != 0;
+                bool wideColorEnforced = (colorPacket.value & 0x4) != 0;
+                hdrSupported = wideColorEnforced ? null : supported;
+                hdrEnabled = enabled && !wideColorEnforced;
+            }
         }
 
         return new DisplayTargetConfig

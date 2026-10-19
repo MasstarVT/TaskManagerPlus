@@ -91,7 +91,7 @@ public static class SystemRepairService
         try { result = await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, outputEncoding: outputEncoding); }
         catch (Exception ex) { return (false, $"Couldn't start {exe}: {ex.Message}"); }
         if (result.ExitCode is null)
-            return (false, $"{exe} {args} timed out after {timeoutMs / 60000} minute(s) and was stopped.");
+            return (false, $"{exe} {args} timed out after {(timeoutMs >= 60000 ? $"{timeoutMs / 60000} minute(s)" : $"{timeoutMs / 1000} second(s)")} and was stopped.");
         return (result.ExitCode == 0, result.Output);
     }
 }

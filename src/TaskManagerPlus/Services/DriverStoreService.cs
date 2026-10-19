@@ -247,7 +247,10 @@ public static class DriverStoreService
             if (driverVersionText is { Length: > 0 })
             {
                 string dateToken = driverVersionText.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty;
-                if (DateTime.TryParse(dateToken, out var parsed)) driverDate = parsed;
+                // pnputil prints the INF DriverVer date as MM/dd/yyyy on every locale.
+                if (DateTime.TryParseExact(dateToken, new[] { "MM/dd/yyyy", "M/d/yyyy" }, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out var parsed))
+                    driverDate = parsed;
             }
 
             packages.Add(new DriverStorePackage

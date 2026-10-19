@@ -116,7 +116,7 @@ public sealed class SystemSpecsViewModel : ObservableObject
     private int _correctedMemoryErrorCount;
     public int CorrectedMemoryErrorCount { get => _correctedMemoryErrorCount; private set => SetProperty(ref _correctedMemoryErrorCount, value); }
 
-    private string _lastCorrectedMemoryErrorText = "None in the last 30 days";
+    private string _lastCorrectedMemoryErrorText = "Unknown";
     public string LastCorrectedMemoryErrorText { get => _lastCorrectedMemoryErrorText; private set => SetProperty(ref _lastCorrectedMemoryErrorText, value); }
 
     // #448/#449: Windows Memory Diagnostic launcher + last-run result.
@@ -159,6 +159,12 @@ public sealed class SystemSpecsViewModel : ObservableObject
 
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
+
+    /// <summary>True once a refresh has succeeded. Until then every section but Overview shows
+    /// the loading/failure state instead of its field-initializer defaults ("Reboot pending: No",
+    /// "0 in the last 30 days", ...), which would read as a real, clean inventory.</summary>
+    private bool _hasLoaded;
+    public bool HasLoaded { get => _hasLoaded; private set => SetProperty(ref _hasLoaded, value); }
 
     /// <summary>Set when RefreshAsync's WMI/registry inventory query fails outright - empty/null
     /// the rest of the time. Mirrors the "...failed: {message}" convention this app's other
@@ -254,10 +260,10 @@ public sealed class SystemSpecsViewModel : ObservableObject
     public ObservableCollection<DisplayChangeEvent> DisplayChangeHistory { get; } = new();
 
     // Round 10, #62: longest-uptime records, derived from the existing boot-history.json.
-    private string _longestUptimeThisMonthText = "Not enough boot history yet";
+    private string _longestUptimeThisMonthText = "Unknown";
     public string LongestUptimeThisMonthText { get => _longestUptimeThisMonthText; private set => SetProperty(ref _longestUptimeThisMonthText, value); }
 
-    private string _longestUptimeThisYearText = "Not enough boot history yet";
+    private string _longestUptimeThisYearText = "Unknown";
     public string LongestUptimeThisYearText { get => _longestUptimeThisYearText; private set => SetProperty(ref _longestUptimeThisYearText, value); }
 
     // Round 10, #63: Windows Defender exclusion list - read-only viewer.
@@ -342,10 +348,12 @@ public sealed class SystemSpecsViewModel : ObservableObject
             // history below - see DisplayChangeHistory's own remarks.
             var pnpEvents = await Task.Run(() => _eventLog.ReadMonitorPnpEvents());
             Apply(specs);
-            LongestUptimeThisMonthText = uptimeMonth is { } m ? FormatUptime(m) : "Not enough boot history yet";
-            LongestUptimeThisYearText = uptimeYear is { } y ? FormatUptime(y) : "Not enough boot history yet";
+            // (null, null) covers both "no boot sessions found" and an unreadable source.
+            LongestUptimeThisMonthText = uptimeMonth is { } m ? FormatUptime(m) : "Unknown (no boot sessions could be read)";
+            LongestUptimeThisYearText = uptimeYear is { } y ? FormatUptime(y) : "Unknown (no boot sessions could be read)";
             ApplyDisplayChangeHistory(pnpEvents);
             RefreshErrorText = null;
+            HasLoaded = true;
         }
         catch (Exception ex)
         {

@@ -72,9 +72,11 @@ public static class WindowsUpdateErrorCatalog
         return "0x" + hex.PadLeft(8, '0').ToUpperInvariant();
     }
 
-    /// <summary>`certutil -error 0xNNNNNNNN` prints the symbolic name and a short description on
-    /// its first output line (e.g. "CBS_E_STORE_CORRUPTION -- component store is corrupted") -
-    /// certutil ships with every Windows install, so no extra dependency, matching this app's
+    private static readonly System.Text.RegularExpressions.Regex UnknownCodeEchoRegex =
+        new(@"^Error\s+(?:0x)?[0-9A-Fa-f]+\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>`certutil -error 0xNNNNNNNN` prints a code echo line, then the system message text
+    /// on an "Error message text:" line (see the parse below) - certutil ships with every Windows install, so no extra dependency, matching this app's
     /// "prefer a known Windows tool" convention. Bounded by a short timeout and killed if it hangs,
     /// same as every other shelled-out command in this app.</summary>
     private static async Task<string?> TryCertutilAsync(string normalizedHex)
@@ -107,10 +109,19 @@ public static class WindowsUpdateErrorCatalog
             string output = ((await outputTask) + (await errorTask)).Trim();
             if (output.Length == 0 || proc.ExitCode != 0) return null;
 
-            // First non-empty line is the useful one - later lines are usually "CertUtil: -error
-            // command completed successfully." noise.
-            string firstLine = output.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? string.Empty;
-            return firstLine.Length > 0 ? firstLine : null;
+            // certutil prints the code echo first ("0x80070005 (WIN32: 5 ERROR_ACCESS_DENIED) -- ..."),
+            // then "Error message text: <meaning>", then a "CertUtil: ... completed" line. The
+            // meaning is the second line's text after its label (label matched in English, else
+            // the text after the first ": " for a localized build); a code certutil doesn't know
+            // comes back as just "Error 0x... (...)", which is no meaning at all.
+            var lines = output.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+            string? text = lines.FirstOrDefault(l => l.StartsWith("Error message text:", StringComparison.OrdinalIgnoreCase)) is { } labelled
+                ? labelled["Error message text:".Length..].Trim()
+                : lines.Count >= 2 && !lines[1].StartsWith("CertUtil:", StringComparison.OrdinalIgnoreCase) && lines[1].IndexOf(": ", StringComparison.Ordinal) is int c and >= 0
+                    ? lines[1][(c + 2)..].Trim()
+                    : null;
+            if (string.IsNullOrEmpty(text) || UnknownCodeEchoRegex.IsMatch(text)) return null;
+            return text;
         }
         catch
         {

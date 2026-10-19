@@ -781,14 +781,13 @@ public sealed class WindowsHealthViewModel : ObservableObject
         IsResettingWuComponents = true;
         try
         {
-            var log = await Task.Run(WindowsServicingService.ResetWindowsUpdateComponents);
+            var (log, success) = await Task.Run(WindowsServicingService.ResetWindowsUpdateComponents);
             ResetWuComponentsLog.Clear();
             foreach (var line in log) ResetWuComponentsLog.Add(line);
             StatusMessage = "Windows Update component reset finished - see the log below.";
-            // Every failed step logs a "Couldn't ..." line (WindowsServicingService's own wording).
             JournalOneShotRun("Windows Update components",
                 "Windows Update component reset (stop services, rename SoftwareDistribution and catroot2 to .bak, restart services)",
-                !log.Any(l => l.Contains("Couldn't", StringComparison.Ordinal)));
+                success);
         }
         finally
         {
@@ -833,10 +832,14 @@ public sealed class WindowsHealthViewModel : ObservableObject
         IsClearingUpdateCache = true;
         try
         {
-            var log = await WindowsServicingService.ClearUpdateCacheAsync(clearDownload, clearDo);
+            var (log, success) = await WindowsServicingService.ClearUpdateCacheAsync(clearDownload, clearDo);
             ClearUpdateCacheLog.Clear();
             foreach (var line in log) ClearUpdateCacheLog.Add(line);
             StatusMessage = "Update cache clear finished - see the log below.";
+            var cleared = new List<string>();
+            if (clearDownload) cleared.Add($"\"{info.DownloadCachePath}\" (wuauserv)");
+            if (clearDo) cleared.Add($"\"{info.DeliveryOptimizationCachePath}\" (DoSvc)");
+            JournalOneShotRun("Update caches", $"update cache clear of {string.Join(" and ", cleared)}", success);
 
             UpdateCacheInfo = await Task.Run(WindowsServicingService.ReadUpdateCacheSizes);
             ClearUpdateCacheCommand.RaiseCanExecuteChanged();
@@ -887,6 +890,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
         try
         {
             var (success, rebootRequired, output) = await WindowsUpdateUninstallService.UninstallAsync(update);
+            JournalOneShotRun(update.DisplayName, command, success);
             StatusMessage = success
                 ? rebootRequired
                     ? $"\"{update.DisplayName}\" was removed - a restart is required to finish removing it."
@@ -1602,10 +1606,12 @@ public sealed class WindowsHealthViewModel : ObservableObject
             TpmReady = current.TpmReady,
             SecureBootEnabled = current.SecureBootEnabled,
             SystemDiskIsMbr = current.SystemDiskIsMbr,
+            SystemDiskPartitionStyle = current.SystemDiskPartitionStyle,
             SystemDriveFreeBytes = current.SystemDriveFreeBytes,
             EspFound = current.EspFound,
             EspFreeBytes = current.EspFreeBytes,
             BlockingItems = current.BlockingItems,
+            AdvisoryItems = current.AdvisoryItems,
         };
     }
 
