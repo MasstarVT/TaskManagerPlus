@@ -151,7 +151,9 @@ public sealed class HardwareSnapshot
     /// integrated GPU shared memory, etc.) reserves before Windows ever sees it. Read once via
     /// WMI, like ReadPageFileTotalMb below - it only changes with a hardware/firmware config
     /// change, not per tick.</summary>
-    public long HardwareReservedBytes { get; init; }
+    /// <summary>Installed minus OS-visible RAM; null when installed RAM couldn't be read (a 0 here
+    /// would read as "nothing reserved").</summary>
+    public long? HardwareReservedBytes { get; init; }
 
     public double DiskActivePercent { get; init; }
     public double DiskReadBytesPerSec { get; init; }

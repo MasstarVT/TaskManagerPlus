@@ -718,7 +718,8 @@ public sealed class PriorityInversionHint
 /// registry values and per-task scheduling profile - see MmcssService.Read.</summary>
 public sealed class MmcssAuditInfo
 {
-    public bool ServiceRunning { get; init; }
+    /// <summary>Null when the service state couldn't be read (shown neutrally, not as "not running").</summary>
+    public bool? ServiceRunning { get; init; }
     public string ServiceStatusText { get; init; } = "Unknown";
     public int? SystemResponsiveness { get; init; }
     public int? NetworkThrottlingIndex { get; init; }

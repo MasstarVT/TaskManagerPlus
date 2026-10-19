@@ -562,7 +562,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Also installed but reserved by hardware (not in the total above)" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
-                                <TextBlock Grid.Column="1" Text="{Binding Performance.HardwareReservedGb, StringFormat={}{0:0.00} GB}" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <TextBlock Grid.Column="1" Text="{Binding Performance.HardwareReservedGb, StringFormat={}{0:0.00} GB, TargetNullValue=Unknown}" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource TextSecondaryBrush}" />
                             </Grid>
                         </StackPanel>
                     </Border>

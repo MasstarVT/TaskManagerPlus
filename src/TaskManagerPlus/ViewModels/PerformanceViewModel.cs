@@ -424,8 +424,8 @@ public sealed class PerformanceViewModel : ObservableObject, IDisposable
     private double _modifiedGb;
     public double ModifiedGb { get => _modifiedGb; private set => SetProperty(ref _modifiedGb, value); }
 
-    private double _hardwareReservedGb;
-    public double HardwareReservedGb { get => _hardwareReservedGb; private set => SetProperty(ref _hardwareReservedGb, value); }
+    private double? _hardwareReservedGb;
+    public double? HardwareReservedGb { get => _hardwareReservedGb; private set => SetProperty(ref _hardwareReservedGb, value); }
 
     // #425: system-wide handle count vs. the one documented per-process reference point Windows
     // actually publishes (there is no single documented system-wide cap - the real constraint is

@@ -60,7 +60,7 @@ public static class MmcssService
 
         return new MmcssAuditInfo
         {
-            ServiceRunning = running == true,
+            ServiceRunning = running,
             ServiceStatusText = serviceStatusText,
             SystemResponsiveness = systemResponsiveness,
             NetworkThrottlingIndex = networkThrottlingIndex,

@@ -277,7 +277,7 @@ public sealed class HardwareMonitorService : IDisposable
             SystemDriverTotalBytes = (long)Math.Max(0, _memory.Value("System Driver Total Bytes")),
             SystemCodeResidentBytes = (long)Math.Max(0, _memory.Value("System Code Resident Bytes")),
             ModifiedListBytes = (long)Math.Max(0, _memory.Value("Modified Page List Bytes")),
-            HardwareReservedBytes = Math.Max(0, _installedRamBytes - totalBytes),
+            HardwareReservedBytes = _installedRamBytes > 0 && _installedRamBytes >= totalBytes ? _installedRamBytes - totalBytes : null,
 
             DiskActivePercent = Math.Round(diskPercent, 1),
             DiskReadBytesPerSec = diskRead,
