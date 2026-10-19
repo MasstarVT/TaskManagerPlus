@@ -238,7 +238,22 @@ public static class AppPaths
             string settings = Path.TrimEndingDirectorySeparator(Path.GetFullPath(SettingsDirectory));
             string full = Path.GetFullPath(path);
             if (!full.StartsWith(settings + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return null;
-            return QuarantineService.FindReparsePoint(full);
+
+            // Walk from the target up to and including the settings root; any existing component
+            // that is a junction/symlink would redirect the elevated write.
+            string current = Path.TrimEndingDirectorySeparator(full);
+            while (true)
+            {
+                if (File.Exists(current) || Directory.Exists(current))
+                {
+                    if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                        return $"{current} is a junction or symbolic link";
+                }
+                if (current.Equals(settings, StringComparison.OrdinalIgnoreCase)) return null;
+                string? parent = Path.GetDirectoryName(current);
+                if (parent is null) return null;
+                current = parent;
+            }
         }
         catch (Exception ex)
         {
