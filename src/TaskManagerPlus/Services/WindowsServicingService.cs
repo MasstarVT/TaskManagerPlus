@@ -138,20 +138,36 @@ public static class WindowsServicingService
     // SetupDiag isn't installed by default - it's a standalone download from Microsoft, so this
     // only checks the couple of places someone would plausibly have dropped it rather than
     // assuming any one fixed path.
+    private static string[] SetupDiagCandidates() => new[]
+    {
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SetupDiag", "SetupDiag.exe"),
+        Path.Combine(PantherBtPath, "SetupDiag.exe"),
+        Path.Combine(AppContext.BaseDirectory, "SetupDiag.exe"),
+        @"C:\SetupDiag\SetupDiag.exe",
+    };
+
     private static string? FindSetupDiagPath()
     {
-        string[] candidates =
-        {
-            Path.Combine(PantherBtPath, "SetupDiag.exe"),
-            Path.Combine(AppContext.BaseDirectory, "SetupDiag.exe"),
-            @"C:\SetupDiag\SetupDiag.exe",
-        };
-        foreach (var candidate in candidates)
+        foreach (var candidate in SetupDiagCandidates())
         {
             try { if (File.Exists(candidate)) return candidate; }
             catch { /* ignore this candidate, try the next */ }
         }
         return null;
+    }
+
+    /// <summary>This app runs elevated, so a SetupDiag.exe it launches must be one a standard user
+    /// couldn't have planted or swapped: C:\SetupDiag and C:\$WINDOWS.~BT can be created by any
+    /// user (C:\ grants "create folders"). Requires an admin-only folder chain AND an embedded
+    /// Microsoft signature; a signature alone would still race a swap in a user-writable folder.</summary>
+    private static string? SetupDiagTrustProblem(string path)
+    {
+        string? writable = UnattendedScanService.FindNonAdminWriteAccess(path);
+        if (writable is not null) return writable;
+        var sig = SignatureCheckService.GetResult(path);
+        bool microsoftSigned = sig.Verification == SignatureVerification.SignedEmbedded &&
+            (sig.SubjectCn?.Contains("Microsoft", StringComparison.OrdinalIgnoreCase) ?? false);
+        return microsoftSigned ? null : $"{path} isn't Microsoft-signed";
     }
 
     /// <summary>#773: runs SetupDiag.exe (when present - see FindSetupDiagPath) against the newest
@@ -161,8 +177,22 @@ public static class WindowsServicingService
     /// convention without silently fetching a binary from the internet.</summary>
     public static async Task<(bool Success, string? Verdict, string? Error)> RunSetupDiagAsync()
     {
-        string? exePath = FindSetupDiagPath();
-        if (exePath is null) return (false, null, "SetupDiag.exe wasn't found on this machine.");
+        string? exePath = null;
+        string? rejection = null;
+        foreach (var candidate in SetupDiagCandidates())
+        {
+            try { if (!File.Exists(candidate)) continue; }
+            catch { continue; }
+            string? problem = SetupDiagTrustProblem(candidate);
+            if (problem is null) { exePath = candidate; break; }
+            rejection ??= problem;
+        }
+        if (exePath is null)
+        {
+            return (false, null, rejection is null
+                ? "SetupDiag.exe wasn't found on this machine."
+                : $"Found SetupDiag.exe but won't run it elevated: {rejection}. Put Microsoft's SetupDiag.exe in an admin-only folder such as {Path.GetDirectoryName(SetupDiagCandidates()[0])} and try again.");
+        }
 
         try
         {

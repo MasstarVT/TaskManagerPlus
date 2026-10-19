@@ -37,7 +37,17 @@ public sealed record ProxyConfigInfo(bool Enabled, string ProxyServer, string Au
 /// <summary>Round 19, #889: the MACHINE-level WinHTTP proxy (distinct from the per-user
 /// ProxyConfigInfo above - this is what non-interactive/system-context processes and some
 /// enterprise software use), via `netsh winhttp show proxy`.</summary>
-public sealed record WinHttpProxyInfo(bool DirectAccess, string ProxyServer, string BypassList);
+public sealed record WinHttpProxyInfo(bool? DirectAccess, string ProxyServer, string BypassList)
+{
+    /// <summary>Null DirectAccess = netsh failed, timed out, or printed labels this parser doesn't
+    /// recognize (non-English Windows) - Unknown, never "Direct".</summary>
+    public string StatusText => DirectAccess switch
+    {
+        true => "Direct (no proxy)",
+        false => "Proxy set",
+        null => "Unknown (couldn't read netsh winhttp output)",
+    };
+}
 
 /// <summary>Round 19, #889: proxy hijack check - bundles the per-user + machine-level proxy
 /// configuration with a severity-ranked warning about the AutoConfigURL specifically, since a
@@ -179,17 +189,19 @@ public sealed class NetworkDiagnosticsService
     {
         try
         {
-            string output = RunCapturedSyncStatic("netsh.exe", "winhttp show proxy", TimeSpan.FromSeconds(10));
+            var (output, exitCode) = ToolRunner.RunCaptured("netsh.exe", "winhttp show proxy", TimeSpan.FromSeconds(10));
+            if (exitCode != 0) return new WinHttpProxyInfo(null, string.Empty, string.Empty);
             if (output.Contains("Direct access", StringComparison.OrdinalIgnoreCase))
                 return new WinHttpProxyInfo(true, string.Empty, string.Empty);
 
             string server = ExtractNetshField(output, "Proxy Server(s)");
             string bypass = ExtractNetshField(output, "Bypass List");
-            return new WinHttpProxyInfo(server.Length == 0, server, bypass);
+            // Neither English marker found - a localized netsh; don't claim "Direct".
+            return new WinHttpProxyInfo(server.Length > 0 ? false : null, server, bypass);
         }
         catch
         {
-            return new WinHttpProxyInfo(true, string.Empty, string.Empty);
+            return new WinHttpProxyInfo(null, string.Empty, string.Empty);
         }
     }
 
@@ -259,28 +271,34 @@ public sealed class NetworkDiagnosticsService
     /// proxy`, `netsh winsock reset`, `ipconfig /flushdns`. Genuinely disruptive (winsock reset
     /// needs a reboot to fully take effect) - SecurityViewModel gates this behind an explicit
     /// confirmation dialog that names the reboot requirement before calling this.</summary>
-    public static async Task<string> ResetProxyAndWinsockAsync()
+    /// <returns>Success is true only when all three commands exited 0.</returns>
+    public static async Task<(bool Success, string Output)> ResetProxyAndWinsockAsync()
     {
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine(await RunCapturedAsync("netsh.exe", "winhttp reset proxy"));
-        sb.AppendLine(await RunCapturedAsync("netsh.exe", "winsock reset"));
-        sb.AppendLine(await RunCapturedAsync("ipconfig.exe", "/flushdns"));
-        return sb.ToString().Trim();
+        bool allOk = true;
+        foreach (var (exe, args) in new[] { ("netsh.exe", "winhttp reset proxy"), ("netsh.exe", "winsock reset"), ("ipconfig.exe", "/flushdns") })
+        {
+            var (text, ok) = await RunCapturedAsync(exe, args);
+            sb.AppendLine(text);
+            allOk &= ok;
+        }
+        return (allOk, sb.ToString().Trim());
     }
 
     /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>, keeping this method's
     /// historical "tool: output / timed out / failed" display formatting.</summary>
-    private static async Task<string> RunCapturedAsync(string exe, string args)
+    private static async Task<(string Text, bool Ok)> RunCapturedAsync(string exe, string args)
     {
         try
         {
             var (output, exitCode) = await ToolRunner.RunCapturedAsync(exe, args, timeoutMs: 20000);
-            if (exitCode is null) return $"{exe} {args}: timed out.";
-            return $"{exe} {args}:\n{output}".Trim();
+            if (exitCode is null) return ($"{exe} {args}: timed out.", false);
+            if (exitCode != 0) return ($"{exe} {args}: exit code {exitCode}\n{output}".Trim(), false);
+            return ($"{exe} {args}:\n{output}".Trim(), true);
         }
         catch (Exception ex)
         {
-            return $"{exe} {args}: failed ({ex.Message}).";
+            return ($"{exe} {args}: failed ({ex.Message}).", false);
         }
     }
 

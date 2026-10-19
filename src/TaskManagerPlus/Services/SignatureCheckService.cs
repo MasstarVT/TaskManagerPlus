@@ -342,10 +342,12 @@ public static class SignatureCheckService
             return (false, false);
         }
 
-        if (hresult == CryptERevocationOffline || hresult == TrustETimeStamp)
-            return (false, false); // offline/no timestamp - "couldn't check", not "not revoked"
-
-        return (true, hresult == CertERevoked);
+        // Only a clean verify proves "not revoked". Every other failure (offline, no timestamp,
+        // CERT_E_REVOCATION_FAILURE, unsigned/catalog-only, untrusted root, bad digest) means the
+        // revocation question was never answered - "couldn't check", not "not revoked".
+        if (hresult == CertERevoked) return (true, true);
+        if (hresult == 0) return (true, false);
+        return (false, false);
     }
 
     // ---- Computation --------------------------------------------------------------------------

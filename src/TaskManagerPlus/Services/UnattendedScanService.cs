@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 using TaskManagerPlus.Models;
 
@@ -37,6 +39,16 @@ public static class UnattendedScanService
     public static Task<(bool Success, string? Error)> SetupScheduledScanAsync(ScheduledTaskFrequency frequency, TimeSpan timeOfDay, DayOfWeek dayOfWeek, bool scrub)
     {
         string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule!.FileName!;
+
+        // The task runs this exe as SYSTEM. From a folder a standard user can write to (a build
+        // output folder, Downloads, a portable copy), any unelevated process could swap the exe or
+        // a DLL beside it and get SYSTEM code execution on the next run - refuse instead.
+        string? writable = FindNonAdminWriteAccess(exePath, includeSiblingBinaries: true);
+        if (writable is not null)
+            return Task.FromResult<(bool, string?)>((false,
+                $"this copy of Task Manager Plus would run as SYSTEM, but {writable} - a standard user could swap in their own code. " +
+                "Install it to an admin-only folder (for example under Program Files) and set up the scan from that copy."));
+
         string command = scrub
             ? $"\"{exePath}\" --scan \"{UnattendedScansDirectory}\" --scrub --quiet"
             : $"\"{exePath}\" --scan \"{UnattendedScansDirectory}\" --quiet";
@@ -44,6 +56,94 @@ public static class UnattendedScanService
     }
 
     public static Task<(bool Success, string? Error)> RemoveScheduledScanAsync() => ScheduledTaskService.DeleteAsync(TaskName);
+
+    // SYSTEM, BUILTIN\Administrators, NT SERVICE\TrustedInstaller - the only principals allowed to
+    // be able to change a binary this app runs with elevated/SYSTEM rights.
+    private static readonly HashSet<string> TrustedWriterSids = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "S-1-5-18",
+        "S-1-5-32-544",
+        "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
+    };
+
+    private const FileSystemRights FileWriteRights =
+        FileSystemRights.WriteData | FileSystemRights.AppendData | FileSystemRights.Delete |
+        FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+
+    private const FileSystemRights DirectoryWriteRights =
+        FileWriteRights | FileSystemRights.DeleteSubdirectoriesAndFiles;
+
+    // An ancestor only needs guarding against having this folder renamed/deleted out from under it
+    // or its ACL rewritten - plain "create folders" (which C:\ grants Authenticated Users) is fine.
+    private const FileSystemRights AncestorWriteRights =
+        FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles |
+        FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+
+    /// <summary>Null when <paramref name="filePath"/>, its folder and that folder's ancestors can
+    /// only be modified by SYSTEM/Administrators/TrustedInstaller (owner and every allow ACE that
+    /// applies to the object); otherwise a short reason. Fails closed - an unreadable ACL is a
+    /// reason, not a pass. <paramref name="includeSiblingBinaries"/> also checks the .exe/.dll/.json
+    /// files beside it (a framework-dependent app's code is the .dll next to the apphost).</summary>
+    public static string? FindNonAdminWriteAccess(string filePath, bool includeSiblingBinaries = false)
+    {
+        try
+        {
+            var file = new FileInfo(filePath);
+            var dir = file.Directory;
+            if (!file.Exists || dir is null) return $"{filePath} couldn't be found";
+
+            string? problem = CheckAcl(file.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner), file.FullName, FileWriteRights);
+            if (problem is not null) return problem;
+
+            problem = CheckAcl(dir.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner), dir.FullName, DirectoryWriteRights);
+            if (problem is not null) return problem;
+
+            if (includeSiblingBinaries)
+            {
+                foreach (var sibling in dir.EnumerateFiles())
+                {
+                    string ext = sibling.Extension;
+                    if (!ext.Equals(".dll", StringComparison.OrdinalIgnoreCase) && !ext.Equals(".exe", StringComparison.OrdinalIgnoreCase) &&
+                        !ext.Equals(".json", StringComparison.OrdinalIgnoreCase)) continue;
+                    problem = CheckAcl(sibling.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner), sibling.FullName, FileWriteRights);
+                    if (problem is not null) return problem;
+                }
+            }
+
+            for (var ancestor = dir.Parent; ancestor is not null; ancestor = ancestor.Parent)
+            {
+                problem = CheckAcl(ancestor.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner), ancestor.FullName, AncestorWriteRights);
+                if (problem is not null) return problem;
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"the permissions on {filePath} couldn't be read ({ex.Message})";
+        }
+    }
+
+    private static string? CheckAcl(FileSystemSecurity security, string path, FileSystemRights dangerousRights)
+    {
+        if (security.GetOwner(typeof(SecurityIdentifier)) is SecurityIdentifier owner && !TrustedWriterSids.Contains(owner.Value))
+            return $"{path} is owned by {DescribeSid(owner)}, who can rewrite its permissions";
+
+        foreach (FileSystemAccessRule rule in security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
+        {
+            if (rule.AccessControlType != AccessControlType.Allow) continue;
+            if ((rule.PropagationFlags & PropagationFlags.InheritOnly) != 0) continue; // applies to children only
+            if ((rule.FileSystemRights & dangerousRights) == 0) continue;
+            if (rule.IdentityReference is SecurityIdentifier sid && TrustedWriterSids.Contains(sid.Value)) continue;
+            return $"{path} is writable by {DescribeSid(rule.IdentityReference)}";
+        }
+        return null;
+    }
+
+    private static string DescribeSid(IdentityReference id)
+    {
+        try { return id.Translate(typeof(NTAccount)).Value; }
+        catch { return id.Value; }
+    }
 
     private sealed class Tracker
     {

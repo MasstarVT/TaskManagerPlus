@@ -576,7 +576,8 @@
                         Command="{Binding DataContext.RulesEditor.NewRuleCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
                 <ListBox ItemsSource="{Binding DataContext.RulesEditor.Rows, RelativeSource={RelativeSource AncestorType=Window}}"
                          SelectedItem="{Binding DataContext.RulesEditor.SelectedRow, RelativeSource={RelativeSource AncestorType=Window}}"
-                         MaxHeight="340" Margin="0,0,0,10" BorderThickness="1" BorderBrush="{DynamicResource BorderBrush2}">
+                         MaxHeight="340" Margin="0,0,0,10" BorderThickness="1" BorderBrush="{DynamicResource BorderBrush2}"
+                         Background="{DynamicResource BgElevatedBrush}" Foreground="{DynamicResource TextPrimaryBrush}">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <Grid Margin="2,4">
@@ -697,16 +698,19 @@
                         <Run Text="{Binding DataContext.RulesEditor.ImportSourceFileName, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" FontWeight="SemiBold" />
                         <Run Text=" - not verified by this app:" />
                     </TextBlock>
-                    <ItemsControl ItemsSource="{Binding DataContext.RulesEditor.PendingImportRules, RelativeSource={RelativeSource AncestorType=Window}}" MaxHeight="160" Margin="0,0,0,8">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2">
-                                    <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" />
-                                    <Run Text=" (" /><Run Text="{Binding Id, Mode=OneWay}" /><Run Text=")" />
-                                </TextBlock>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                    <!-- MaxHeight on a bare ItemsControl clips silently; the ScrollViewer carries it instead. -->
+                    <ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto" Margin="0,0,0,8">
+                        <ItemsControl ItemsSource="{Binding DataContext.RulesEditor.PendingImportRules, RelativeSource={RelativeSource AncestorType=Window}}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2">
+                                        <Run Text="{Binding Title, Mode=OneWay}" FontWeight="SemiBold" />
+                                        <Run Text=" (" /><Run Text="{Binding Id, Mode=OneWay}" /><Run Text=")" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
                     <StackPanel Orientation="Horizontal">
                         <Button Content="Confirm import" Margin="0,0,8,0"
                                 Command="{Binding DataContext.RulesEditor.ConfirmImportCommand, RelativeSource={RelativeSource AncestorType=Window}}" />

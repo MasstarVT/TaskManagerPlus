@@ -5,7 +5,8 @@ namespace TaskManagerPlus.Services;
 /// <summary>
 /// Round 16, #858: joins NetworkConnectionsService's per-process TCP table with SignatureCheckService
 /// to surface processes that are (a) LISTENING on a socket bound to every interface (0.0.0.0/::) or
-/// (b) hold an ESTABLISHED outbound connection to a non-loopback remote address, and that are
+/// (b) hold an ESTABLISHED connection (outbound, or inbound to one of its own listeners) with a
+/// non-loopback remote address, and that are
 /// unsigned or not Microsoft-signed - anything that isn't SignedEmbedded/SignedCatalog (Unsigned,
 /// Unknown, UntrustedChain, Expired) is treated as flaggable here, per #858's own guidance.
 ///
@@ -28,18 +29,30 @@ public static class UnsignedNetworkActivityService
     {
         var findings = new List<Finding>();
         var pathCache = new Dictionary<int, string?>();
+        var connections = NetworkConnectionsService.Sample().ToList();
 
-        foreach (var conn in NetworkConnectionsService.Sample())
+        // An ESTABLISHED socket on one of the owning process's own LISTENING ports was accepted by
+        // that listener - a client connecting IN, not this process connecting out.
+        var listeningPorts = connections
+            .Where(c => c.State == "LISTENING")
+            .Select(c => (c.Pid, c.LocalPort))
+            .ToHashSet();
+
+        foreach (var conn in connections)
         {
             bool isWildcardListening = conn.State == "LISTENING" && (conn.LocalAddress == "0.0.0.0" || conn.LocalAddress == "::");
-            bool isEstablishedOutbound = conn.State == "ESTABLISHED" && !IsLoopback(conn.RemoteAddress);
-            if (!isWildcardListening && !isEstablishedOutbound) continue;
+            bool isEstablishedRemote = conn.State == "ESTABLISHED" && !IsLoopback(conn.RemoteAddress);
+            if (!isWildcardListening && !isEstablishedRemote) continue;
 
             string? filePath = ResolvePath(conn.Pid, pathCache);
             if (!IsFlaggable(SignatureCheckService.GetVerification(filePath))) continue;
 
+            string direction = isWildcardListening ? "Listening"
+                : listeningPorts.Contains((conn.Pid, conn.LocalPort)) ? "Inbound"
+                : "Outbound";
+
             findings.Add(new Finding(
-                conn.Pid, conn.ProcessName, isWildcardListening ? "Listening" : "Outbound",
+                conn.Pid, conn.ProcessName, direction,
                 conn.LocalAddress, conn.LocalPort, conn.RemoteAddress, conn.RemotePort, conn.State,
                 SignatureCheckService.GetStatus(filePath)));
         }

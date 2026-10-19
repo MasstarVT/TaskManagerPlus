@@ -25,6 +25,11 @@ public sealed class SecurityActionJournalEntry
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public DateTime TimestampUtc { get; init; } = DateTime.UtcNow;
+
+    /// <summary>For display - the grid's "g" format would otherwise show UTC as if it were local.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime TimestampLocal => TimestampUtc.ToLocalTime();
+
     public SecurityActionKind Kind { get; init; }
     public string ActionDescription { get; init; } = string.Empty;
     public string Target { get; init; } = string.Empty;

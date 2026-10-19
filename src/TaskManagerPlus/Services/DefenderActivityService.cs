@@ -183,7 +183,7 @@ public static class DefenderActivityService
                 Directory = kv.Key,
                 EventCount = kv.Value.Count,
                 LastSeen = kv.Value.Last,
-                IsAlreadyExcluded = exclusions.Any(e => kv.Key.StartsWith(e.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)),
+                IsAlreadyExcluded = exclusions.Any(e => IsSameOrUnder(kv.Key, e)),
             })
             .OrderByDescending(r => r.EventCount)
             .Take(50)
@@ -201,6 +201,14 @@ public static class DefenderActivityService
             ExclusionPaths = exclusions,
         };
     });
+
+    // Path-boundary match: an exclusion of C:\Temp covers C:\Temp and C:\Temp\x, not C:\Temp2.
+    private static bool IsSameOrUnder(string dir, string exclusion)
+    {
+        string e = exclusion.TrimEnd('\\');
+        return dir.TrimEnd('\\').Equals(e, StringComparison.OrdinalIgnoreCase)
+            || dir.StartsWith(e + "\\", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static DateTime? ToDateTimeOrNull(object? value)
     {

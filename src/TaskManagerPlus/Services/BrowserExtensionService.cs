@@ -260,6 +260,10 @@ public static class BrowserExtensionService
                         // user-installed extension so this list matches what about:addons shows.
                         string location = addon.TryGetProperty("location", out var locEl) ? locEl.GetString() ?? string.Empty : string.Empty;
                         if (location.Contains("builtin", StringComparison.OrdinalIgnoreCase)) continue;
+                        // Mozilla's own system add-ons (shipped / updated with Firefox). The other
+                        // app-system-* scopes (share/local/user) are third-party sideloads - kept.
+                        if (location.Equals("app-system-defaults", StringComparison.OrdinalIgnoreCase) ||
+                            location.Equals("app-system-addons", StringComparison.OrdinalIgnoreCase)) continue;
                         bool isActive = !addon.TryGetProperty("active", out var activeEl) || activeEl.ValueKind != JsonValueKind.False;
 
                         string id = addon.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? string.Empty : string.Empty;

@@ -75,8 +75,9 @@ public static class DefenderService
         public string AmProductVersion { get; init; } = "Unknown";
         public DateTime? AntivirusSignatureLastUpdated { get; init; }
         public DateTime? AntispywareSignatureLastUpdated { get; init; }
-        public int? AntivirusSignatureAgeDays => AntivirusSignatureLastUpdated is { } d ? Math.Max(0, (int)(DateTime.UtcNow - d).TotalDays) : null;
-        public int? AntispywareSignatureAgeDays => AntispywareSignatureLastUpdated is { } d ? Math.Max(0, (int)(DateTime.UtcNow - d).TotalDays) : null;
+        // ManagementDateTimeConverter yields local time, so normalize before subtracting from UtcNow.
+        public int? AntivirusSignatureAgeDays => AntivirusSignatureLastUpdated is { } d ? Math.Max(0, (int)(DateTime.UtcNow - d.ToUniversalTime()).TotalDays) : null;
+        public int? AntispywareSignatureAgeDays => AntispywareSignatureLastUpdated is { } d ? Math.Max(0, (int)(DateTime.UtcNow - d.ToUniversalTime()).TotalDays) : null;
 
         // #861 (the config half - QuickScanSource/timestamps; the event-log timeline is separate)
         public DateTime? QuickScanStartTime { get; init; }
@@ -369,14 +370,26 @@ public static class DefenderService
         error = null;
         string exe = ResolveMpCmdRunPath();
         var (exitCode, output) = RunCapturedWithExitCode(exe, "-Restore -ListAll", TimeSpan.FromSeconds(30));
-        if (string.IsNullOrWhiteSpace(output))
+        // Check the exit code before the output: a timeout returns the non-empty "(timed out)"
+        // sentinel, and a failure (e.g. hr 0x80070005, exit 2) prints an error message - both
+        // would otherwise parse as an empty list and read as "0 quarantined item(s)".
+        if (exitCode == -1)
         {
-            error = exitCode == -1
-                ? "MpCmdRun timed out listing quarantined items."
-                : "MpCmdRun returned no output - either nothing is quarantined, or MpCmdRun.exe couldn't be found/run.";
+            error = "MpCmdRun timed out listing quarantined items.";
             return new List<QuarantineItem>();
         }
-        return ParseQuarantineList(output);
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            error = "MpCmdRun returned no output - either nothing is quarantined, or MpCmdRun.exe couldn't be found/run.";
+            return new List<QuarantineItem>();
+        }
+        var items = ParseQuarantineList(output);
+        if (exitCode != 0 && items.Count == 0)
+        {
+            string firstLine = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "";
+            error = $"MpCmdRun exited with code {exitCode}: {firstLine}";
+        }
+        return items;
     }
 
     /// <summary>Defensive line-by-line parse: a new "ThreatName ="/"Threat name:" line starts a new
@@ -759,7 +772,7 @@ public static class DefenderService
         string state = wmiTamperProtected is { } wmi
             ? (wmi ? "On" : "Off")
             : regState is { } r
-                ? (r != 0 ? "On" : "Off")
+                ? ((r & 1) != 0 ? "On" : "Off") // 0/4 = off, 1/5 = on
                 : "Unknown";
 
         string disclaimer = wmiTamperProtected is null

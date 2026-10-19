@@ -613,10 +613,12 @@ public static class PlatformSecurityService
     private static (BootIntegrityInfo Info, SecurityFinding? Finding) BuildBootIntegrity(List<AutorunEntry> kernelDrivers)
     {
         string output;
-        try { output = RunCapturedSync("bcdedit.exe", "/enum {current}", TimeSpan.FromSeconds(10)); }
-        catch { output = string.Empty; }
+        int exitCode;
+        try { (exitCode, output) = RunCapturedWithExitCode("bcdedit.exe", "/enum {current}", TimeSpan.FromSeconds(10)); }
+        catch { (exitCode, output) = (-1, string.Empty); }
 
-        if (string.IsNullOrWhiteSpace(output))
+        // A failed run (not elevated, timeout) prints an error, not fields - "couldn't run", not clean.
+        if (exitCode != 0 || string.IsNullOrWhiteSpace(output))
             return (new BootIntegrityInfo { CouldRun = false }, null);
 
         var raw = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -631,7 +633,7 @@ public static class PlatformSecurityService
                 raw[field] = value;
         }
 
-        var onFields = raw.Where(kv => IsOnValue(kv.Value)).Select(kv => kv.Key).ToList();
+        var onFields = raw.Where(kv => IsOnValue(kv.Key, kv.Value)).Select(kv => kv.Key).ToList();
         var info = new BootIntegrityInfo { RawFields = raw, OnFields = onFields, CouldRun = true };
 
         if (onFields.Count == 0) return (info, null);
@@ -651,8 +653,19 @@ public static class PlatformSecurityService
         return (info, finding);
     }
 
-    private static bool IsOnValue(string v) =>
-        v.Equals("Yes", StringComparison.OrdinalIgnoreCase) || v.Equals("On", StringComparison.OrdinalIgnoreCase) || v == "1";
+    // bcdedit localizes Yes/No ("Ja"/"Nein", "Oui"/"Non", ...), so match the OFF side: these
+    // elements are absent unless set, and a set value that isn't a recognized "no" is treated as
+    // on (raw values stay visible in RawFieldsText). safeboot's value is a mode name, never Yes/No -
+    // its presence alone means Safe Mode is configured.
+    private static readonly HashSet<string> BcdOffValues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "No", "Off", "0", "False",
+        "Nein", "Non", "Nee", "Nej", "Nei", "Ei", "Nie", "Ne", "Nem", "Nu", "Não", "Nao", "Hayır", "Nē",
+        "Нет", "Ні", "Не", "Όχι", "いいえ", "否", "아니요", "לא", "لا", "ไม่",
+    };
+
+    private static bool IsOnValue(string field, string v) =>
+        field.Equals("safeboot", StringComparison.OrdinalIgnoreCase) || !BcdOffValues.Contains(v.Trim());
 
     // ==================================================================================
     // #877: App control policy presence - WDAC (.cip files + CodeIntegrityPolicyEnforcementStatus),
@@ -873,7 +886,8 @@ public static class PlatformSecurityService
         {
             KeyPresent = true,
             Enabled = enabled,
-            SetupMode = setupMode == 1,
+            // The SetupMode value is usually absent from SecureBoot\State - Unknown, not "No".
+            SetupMode = setupMode is { } setupModeValue ? setupModeValue == 1 : null,
             DbxRecencyText = "Unknown - no reliable programmatic source found.",
         };
     }

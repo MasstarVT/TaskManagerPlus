@@ -33,7 +33,7 @@ public static class DnsPostureService
         public bool NrptCmdletAvailable { get; init; }
 
         public string DohAvailabilityText => DohCmdletAvailable ? "Read" : "Not available on this Windows build";
-        public string NrptAvailabilityText => NrptCmdletAvailable ? "Read" : "Cmdlet not available";
+        public string NrptAvailabilityText => NrptCmdletAvailable ? "Read" : "Couldn't read (cmdlet missing, failed or timed out)";
     }
 
     /// <summary>Per-adapter DNS servers + DHCP status via Win32_NetworkAdapterConfiguration - the
@@ -155,9 +155,12 @@ public static class DnsPostureService
     {
         try
         {
-            string output = RunCapturedSync("powershell.exe",
-                "-NoProfile -Command \"Get-DnsClientNrptPolicy | Format-List | Out-String -Width 300\"",
+            // -ErrorAction Stop makes any cmdlet error a nonzero exit, so error text (merged in from
+            // stderr) is never listed as a rule; a timeout (null exit) is "unavailable", not "none".
+            var (output, exitCode) = ToolRunner.RunCaptured("powershell.exe",
+                "-NoProfile -Command \"Get-DnsClientNrptPolicy -ErrorAction Stop | Format-List | Out-String -Width 300\"",
                 TimeSpan.FromSeconds(15));
+            if (exitCode != 0) return (new List<string>(), false);
             if (string.IsNullOrWhiteSpace(output)) return (new List<string>(), true); // ran fine, nothing found - the common case
 
             var rules = output

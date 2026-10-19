@@ -101,7 +101,13 @@ public static class BrowserHijackCheckService
                 }
 
                 // session.restore_on_startup + session.startup_urls.
-                if (prefs.TryGetProperty("session", out var sessionEl))
+                // startup_urls is kept after the user switches away from "open specific pages", so
+                // it only takes effect when restore_on_startup is 4 (1 = restore session, 5 = NTP).
+                if (prefs.TryGetProperty("session", out var sessionEl) &&
+                    sessionEl.ValueKind == JsonValueKind.Object &&
+                    sessionEl.TryGetProperty("restore_on_startup", out var restoreEl) &&
+                    restoreEl.ValueKind == JsonValueKind.Number &&
+                    restoreEl.TryGetInt32(out int restoreOnStartup) && restoreOnStartup == 4)
                 {
                     var startupUrls = new List<string>();
                     if (sessionEl.TryGetProperty("startup_urls", out var urlsEl) && urlsEl.ValueKind == JsonValueKind.Array)

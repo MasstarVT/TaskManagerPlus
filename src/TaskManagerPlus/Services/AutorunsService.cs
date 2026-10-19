@@ -1422,6 +1422,8 @@ public static class AutorunsService
                     string? resolvedDir = exists ? System.IO.Path.GetDirectoryName(resolved) : null;
                     bool outsideStandardPath = exists && resolvedDir is not null
                         && !resolvedDir.Equals(standardDriverDir, StringComparison.OrdinalIgnoreCase)
+                        // Subfolders count too - Defender's own drivers live in drivers\wd.
+                        && !resolvedDir.StartsWith(standardDriverDir + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
                         && !resolvedDir.StartsWith(driverStoreDir, StringComparison.OrdinalIgnoreCase);
 
                     var location = $@"HKLM\{keyPath}\{serviceName}\ImagePath";
@@ -1812,9 +1814,11 @@ public static class AutorunsService
 
                     var hklmVersion = sub?.GetValue("Version") as string ?? string.Empty;
                     string? hkcuVersion = null;
+                    bool hkcuKeyExists = false;
                     try
                     {
                         using var hkcuSub = Registry.CurrentUser.OpenSubKey($@"{keyPath}\{subName}");
+                        hkcuKeyExists = hkcuSub is not null;
                         hkcuVersion = hkcuSub?.GetValue("Version") as string;
                     }
                     catch
@@ -1822,7 +1826,18 @@ public static class AutorunsService
                         // No HKCU mirror for this user yet - treated the same as "missing" below.
                     }
 
-                    bool willRerun = !hklmVersion.Equals(hkcuVersion, StringComparison.OrdinalIgnoreCase);
+                    // Active Setup's own rules: IsInstalled=0 never runs; with no HKLM Version the
+                    // stub runs once (the HKCU key's existence records it); otherwise it runs while
+                    // the HKCU Version is missing or lower than HKLM's.
+                    object? isInstalledRaw = sub?.GetValue("IsInstalled");
+                    bool isInstalled = isInstalledRaw switch
+                    {
+                        int i => i != 0,
+                        string str => str.Trim() != "0",
+                        _ => true,
+                    };
+                    bool willRerun = isInstalled && (!hkcuKeyExists
+                        || (hklmVersion.Length > 0 && IsActiveSetupVersionLower(hkcuVersion, hklmVersion)));
 
                     var friendlyName = sub?.GetValue(null) as string;
                     var displayName = string.IsNullOrWhiteSpace(friendlyName) ? subName : friendlyName;
@@ -1855,6 +1870,30 @@ public static class AutorunsService
         {
             // Key inaccessible (or absent) - contribute nothing.
         }
+    }
+
+    /// <summary>Active Setup versions are comma-separated numbers ("12,0,10011,16384"). A missing
+    /// HKCU version counts as lower; an unparseable pair falls back to "differs".</summary>
+    private static bool IsActiveSetupVersionLower(string? hkcuVersion, string hklmVersion)
+    {
+        if (string.IsNullOrWhiteSpace(hkcuVersion)) return true;
+        static int[]? Parse(string v)
+        {
+            var parts = v.Split(new[] { ',', '.' }, StringSplitOptions.TrimEntries);
+            var nums = new int[parts.Length];
+            for (int i = 0; i < parts.Length; i++)
+                if (!int.TryParse(parts[i], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out nums[i])) return null;
+            return nums;
+        }
+        var cu = Parse(hkcuVersion);
+        var lm = Parse(hklmVersion);
+        if (cu is null || lm is null) return !hkcuVersion.Equals(hklmVersion, StringComparison.OrdinalIgnoreCase);
+        for (int i = 0; i < Math.Max(cu.Length, lm.Length); i++)
+        {
+            int a = i < cu.Length ? cu[i] : 0, b = i < lm.Length ? lm[i] : 0;
+            if (a != b) return a < b;
+        }
+        return false;
     }
 
     // #824: Explorer legacy load/run values and the per-user logon script - all three still execute

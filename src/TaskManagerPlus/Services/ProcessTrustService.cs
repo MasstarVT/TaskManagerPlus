@@ -44,11 +44,17 @@ public static class ProcessTrustService
             // path at all (protected process, race with exit) - nothing to compare, don't guess.
             if (string.IsNullOrEmpty(filePath)) return null;
 
-            bool underSystemDir = IsUnderSystemDirectory(filePath);
-            var signer = SignatureCheckService.GetSignerInfo(filePath);
-            bool microsoftSigned = ContainsMicrosoft(signer.SubjectCn) || ContainsMicrosoft(signer.IssuerCn);
+            // explorer.exe's home is %SystemRoot% itself, not System32.
+            bool underSystemDir = IsUnderSystemDirectory(filePath)
+                || (expected == "explorer" && IsWindowsDirectoryExplorer(filePath));
+            var sig = SignatureCheckService.GetResult(filePath);
+            // Windows' own system binaries are catalog-signed (no embedded cert, so no CN to read);
+            // in a system directory that is the normal Microsoft shape, not a missing signature.
+            bool microsoftSigned = sig.Verification == SignatureVerification.SignedCatalog
+                || ContainsMicrosoft(sig.SubjectCn) || ContainsMicrosoft(sig.IssuerCn);
 
             if (underSystemDir && microsoftSigned) return null; // right place, Microsoft-signed - clean
+            if (underSystemDir && sig.Verification == SignatureVerification.Unknown) return null; // couldn't verify - don't guess
 
             return underSystemDir
                 ? $"\"{processName}\" is in System32/SysWOW64 but isn't Microsoft-signed - worth a manual check."
@@ -70,6 +76,19 @@ public static class ProcessTrustService
         name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
 
     private static bool ContainsMicrosoft(string? s) => s is not null && s.Contains("Microsoft", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsWindowsDirectoryExplorer(string filePath)
+    {
+        try
+        {
+            var expectedPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+            return string.Equals(Path.GetFullPath(filePath), Path.GetFullPath(expectedPath), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private static bool IsUnderSystemDirectory(string filePath)
     {

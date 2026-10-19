@@ -169,15 +169,20 @@ public static class FirewallService
     /// block-per-rule text output, then flags risky shapes on each one. "Created recently" is not
     /// computed - netsh's output carries no rule-creation timestamp - see this method's caller for
     /// the Implemented-partially note.</summary>
+    /// <exception cref="InvalidOperationException">netsh timed out, failed, or printed no
+    /// recognizable "Rule Name:" block (e.g. a localized Windows) - thrown rather than returning an
+    /// empty list, which callers would present as "0 enabled inbound Allow rules".</exception>
     public static List<FirewallRuleInfo> ScanEnabledInboundAllowRules()
     {
-        string output;
-        try { output = RunCapturedSync("netsh.exe", "advfirewall firewall show rule name=all verbose", TimeSpan.FromSeconds(30)); }
-        catch { return new List<FirewallRuleInfo>(); }
-        if (string.IsNullOrWhiteSpace(output)) return new List<FirewallRuleInfo>();
+        var (output, exitCode) = ToolRunner.RunCaptured("netsh.exe", "advfirewall firewall show rule name=all verbose", TimeSpan.FromSeconds(30));
+        if (exitCode is null)
+            throw new InvalidOperationException("netsh timed out listing firewall rules.");
+        if (exitCode != 0)
+            throw new InvalidOperationException($"netsh couldn't list firewall rules (exit code {exitCode}): {output.Trim()}");
 
         var results = new List<FirewallRuleInfo>();
         var current = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        int ruleBlocks = 0;
 
         void FlushIfInboundAllow()
         {
@@ -196,6 +201,7 @@ public static class FirewallService
             {
                 FlushIfInboundAllow();
                 current = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                ruleBlocks++;
             }
             if (line.All(c => c == '-')) continue; // the dashed separator line under "Rule Name:"
 
@@ -204,6 +210,8 @@ public static class FirewallService
         }
         FlushIfInboundAllow();
 
+        if (ruleBlocks == 0)
+            throw new InvalidOperationException("netsh's rule listing had no \"Rule Name:\" blocks this parser recognizes (a non-English Windows prints localized labels), so the rule audit can't be read here.");
         return results;
     }
 

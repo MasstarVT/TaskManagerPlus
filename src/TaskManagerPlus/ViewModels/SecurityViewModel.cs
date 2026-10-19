@@ -932,7 +932,7 @@ public sealed class SecurityViewModel : ObservableObject
             var (couldCheck, revoked) = await Task.Run(() => SignatureCheckService.TryCheckRevocation(entry.ResolvedPath, TimeSpan.FromSeconds(8)));
             if (!couldCheck)
             {
-                StatusMessage = $"Couldn't check revocation for {entry.Name} (offline, no timestamp, or the check timed out) - this is NOT the same as \"not revoked\".";
+                StatusMessage = $"Couldn't check revocation for {entry.Name} (offline, no timestamp, no embedded signature, a chain that didn't verify, or the check timed out) - this is NOT the same as \"not revoked\".";
                 return;
             }
 
@@ -1304,14 +1304,19 @@ public sealed class SecurityViewModel : ObservableObject
         ExposedListenerScanStatus = null;
         try
         {
+            string? ruleScanError = null;
             var listeners = await Task.Run(() =>
             {
                 var connections = NetworkConnectionsService.Sample();
-                var rules = FirewallService.ScanEnabledInboundAllowRules();
+                // The listener list is still worth showing when the rule audit can't be read; the
+                // empty rule set then must not read as "no Allow rule, so blocked".
+                List<FirewallService.FirewallRuleInfo> rules;
+                try { rules = FirewallService.ScanEnabledInboundAllowRules(); }
+                catch (InvalidOperationException ex) { rules = new(); ruleScanError = ex.Message; }
                 var (profiles, adapterProfiles) = FirewallService.ReadPosture();
 
                 var activeProfileNames = adapterProfiles.Select(a => a.ProfileName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                bool everyActiveDefaultsToBlock = activeProfileNames.Count > 0 && activeProfileNames.All(name =>
+                bool everyActiveDefaultsToBlock = ruleScanError is null && activeProfileNames.Count > 0 && activeProfileNames.All(name =>
                     profiles.Any(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase) &&
                                        p.DefaultInboundAction.Equals("Block", StringComparison.OrdinalIgnoreCase)));
 
@@ -1328,7 +1333,8 @@ public sealed class SecurityViewModel : ObservableObject
 
             bool selfShown = listeners.Any(l => l.IsSelf);
             ExposedListenerScanStatus = $"{listeners.Count} listening socket(s) - {ExposedListeners.Count} bound to all interfaces (the interesting ones), {OtherListeners.Count} loopback-only/specific-address (common, shown collapsed below). This is a heuristic cross-reference, not a definitive reachability test."
-                + (selfShown ? " Includes Task Manager Plus's own remote-monitor endpoint (shown honestly, not filtered out) since it's currently running." : string.Empty);
+                + (selfShown ? " Includes Task Manager Plus's own remote-monitor endpoint (shown honestly, not filtered out) since it's currently running." : string.Empty)
+                + (ruleScanError is not null ? $" Firewall-rule cross-reference unavailable: {ruleScanError}" : string.Empty);
         }
         catch (Exception ex)
         {
@@ -1492,7 +1498,7 @@ public sealed class SecurityViewModel : ObservableObject
             MachineProxyConfig = machine;
             ReplaceSectionFindings("ProxyPosture", findings);
 
-            ProxyPostureStatus = $"Per-user proxy: {(perUser.Enabled ? "Enabled" : "Disabled")}. Machine WinHTTP proxy: {(machine.DirectAccess ? "Direct (no proxy)" : machine.ProxyServer)}. {findings.Count} new finding(s).";
+            ProxyPostureStatus = $"Per-user proxy: {(perUser.Enabled ? "Enabled" : "Disabled")}. Machine WinHTTP proxy: {(machine.DirectAccess == false ? machine.ProxyServer : machine.StatusText)}. {findings.Count} new finding(s).";
         }
         catch (Exception ex)
         {
@@ -1521,8 +1527,22 @@ public sealed class SecurityViewModel : ObservableObject
         ProxyResetOutput = null;
         try
         {
-            ProxyResetOutput = await NetworkDiagnosticsService.ResetProxyAndWinsockAsync();
-            ProxyPostureStatus = "Reset complete - REBOOT to finish applying the Winsock reset.";
+            var (success, output) = await NetworkDiagnosticsService.ResetProxyAndWinsockAsync();
+            ProxyResetOutput = output;
+            ProxyPostureStatus = success
+                ? "Reset complete - REBOOT to finish applying the Winsock reset."
+                : "Reset finished with errors - see the output below. REBOOT if the Winsock reset step succeeded.";
+            ChangeJournalService.Append(new ChangeJournalEntry
+            {
+                Kind = ChangeKind.OneShotToolRun,
+                Target = "WinHTTP proxy, Winsock catalog, DNS cache",
+                ActionDescription = "Reset proxy and Winsock",
+                AfterValue = "netsh winhttp reset proxy; netsh winsock reset; ipconfig /flushdns",
+                TriggeredBy = "Security tab",
+                Success = success,
+                IsUndoable = false,
+                NotUndoableReason = "One-shot tool run - the previous proxy and Winsock catalog weren't recorded.",
+            });
         }
         catch (Exception ex)
         {

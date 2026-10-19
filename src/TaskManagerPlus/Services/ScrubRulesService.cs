@@ -39,9 +39,13 @@ public static class ScrubRulesService
 
     public static ScrubRuleSet Load()
     {
-        try
+        bool fileExists;
+        try { fileExists = File.Exists(SettingsPath); }
+        catch { fileExists = false; }
+
+        if (fileExists)
         {
-            if (File.Exists(SettingsPath))
+            try
             {
                 var json = File.ReadAllText(SettingsPath);
                 var loaded = JsonSerializer.Deserialize<ScrubRuleSet>(json);
@@ -57,11 +61,14 @@ public static class ScrubRulesService
                     return loaded;
                 }
             }
-        }
-        catch
-        {
-            // Corrupt/unreadable file - fall back to built-in-only defaults, same as every other
-            // settings file in this app.
+            catch
+            {
+                // Corrupt/unreadable (or transiently locked) file - fall through to built-ins.
+            }
+
+            // Built-ins for this session only, never saved over the existing file: it may hold the
+            // user's custom redaction rules, and overwriting it would silently stop redacting them.
+            return new ScrubRuleSet { Rules = BuiltInRules() };
         }
 
         var seeded = new ScrubRuleSet { Rules = BuiltInRules() };
@@ -75,7 +82,10 @@ public static class ScrubRulesService
         {
             Directory.CreateDirectory(AppPaths.SettingsDirectory);
             var json = JsonSerializer.Serialize(set, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(SettingsPath, json);
+            // Write-then-rename so an interrupted save can't leave a truncated file behind.
+            string tempPath = SettingsPath + ".tmp";
+            File.WriteAllText(tempPath, json);
+            File.Move(tempPath, SettingsPath, overwrite: true);
         }
         catch
         {

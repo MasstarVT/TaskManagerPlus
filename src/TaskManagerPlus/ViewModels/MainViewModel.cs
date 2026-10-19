@@ -485,7 +485,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(SelectedMachineOption));
         });
 
-        OpenKeyboardShortcutsCommand = new RelayCommand(_ => new Views.KeyboardShortcutsWindow().Show());
+        // Owned by the main window so it closes with it - an unowned (and taskbar-less) window would
+        // otherwise keep the elevated process alive after the main window closes. One instance only.
+        OpenKeyboardShortcutsCommand = new RelayCommand(_ =>
+        {
+            var existing = Application.Current.Windows.OfType<Views.KeyboardShortcutsWindow>().FirstOrDefault();
+            if (existing is not null) { existing.Activate(); return; }
+            var window = new Views.KeyboardShortcutsWindow();
+            if (Application.Current.MainWindow is { IsLoaded: true } main) window.Owner = main;
+            window.Show();
+        });
 
         ApplyThemeToPerformance();
         Theme.ColorsChanged += ApplyThemeToPerformance;

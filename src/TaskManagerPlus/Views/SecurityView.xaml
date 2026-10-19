@@ -1299,7 +1299,11 @@
                                     </DataGridTemplateColumn>
                                 </DataGrid.Columns>
                             </DataGrid>
-                            <Expander Header="{Binding OtherListeners.Count, StringFormat='Loopback-only / specific-address listeners ({0}) - common and expected'}" Margin="0,0,0,16">
+                            <Expander Margin="0,0,0,16">
+                                <!-- StringFormat on Header (an object) is ignored; a TextBlock applies it. -->
+                                <Expander.Header>
+                                    <TextBlock Text="{Binding OtherListeners.Count, StringFormat='Loopback-only / specific-address listeners ({0}) - common and expected'}" />
+                                </Expander.Header>
                                 <DataGrid IsReadOnly="True" MaxHeight="180" Margin="0,6,0,0" ItemsSource="{Binding OtherListeners}" AutoGenerateColumns="False">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="Process" Binding="{Binding Connection.ProcessName}" Width="1*" />
@@ -1485,7 +1489,10 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
-                                <Expander Header="{Binding HostsFileAudit.NonLoopbackEntries.Count, StringFormat=Non-loopback entries ({0})}" Margin="0,4,0,0">
+                                <Expander Margin="0,4,0,0">
+                                    <Expander.Header>
+                                        <TextBlock Text="{Binding HostsFileAudit.NonLoopbackEntries.Count, StringFormat=Non-loopback entries ({0})}" />
+                                    </Expander.Header>
                                     <ItemsControl ItemsSource="{Binding HostsFileAudit.NonLoopbackEntries}" Margin="0,4,0,0">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
@@ -1553,7 +1560,7 @@
                                     <TextBlock TextWrapping="Wrap"><Run Text="Per-user proxy: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.Enabled, Mode=OneWay}" /><Run Text="   Server: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.ProxyServer, Mode=OneWay}" /></TextBlock>
                                     <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Bypass list: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.ProxyOverride, Mode=OneWay}" /></TextBlock>
                                     <TextBlock Margin="0,2,0,0" TextWrapping="Wrap" FontFamily="Consolas" FontSize="{StaticResource FontBody}"><Run Text="Auto-config URL: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding ProxyConfig.AutoConfigUrl, Mode=OneWay}" /></TextBlock>
-                                    <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"><Run Text="Machine WinHTTP proxy: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.DirectAccess, StringFormat={}{0}, Mode=OneWay}" /><Run Text="   Server: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.ProxyServer, Mode=OneWay}" /></TextBlock>
+                                    <TextBlock Margin="0,6,0,0" TextWrapping="Wrap"><Run Text="Machine WinHTTP proxy: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.StatusText, Mode=OneWay}" /><Run Text="   Server: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.ProxyServer, Mode=OneWay}" /></TextBlock>
                                     <TextBlock Margin="0,2,0,0" TextWrapping="Wrap"><Run Text="Bypass list: " Foreground="{DynamicResource TextSecondaryBrush}" /><Run Text="{Binding MachineProxyConfig.BypassList, Mode=OneWay}" /></TextBlock>
                                 </StackPanel>
                             </Border>
@@ -2004,7 +2011,7 @@
                                        Text="Persisted to security-actions.json - every Disable/Quarantine action recorded here can be undone by calling the exact same toggle method again with the opposite state, or (for a quarantined file) moving it back to its original path." />
                             <DataGrid IsReadOnly="True" MaxHeight="240" ItemsSource="{Binding ActionJournal}" AutoGenerateColumns="False">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Time" Binding="{Binding TimestampUtc, StringFormat=g}" Width="140" />
+                                    <DataGridTextColumn Header="Time" Binding="{Binding TimestampLocal, StringFormat=g}" Width="140" />
                                     <DataGridTextColumn Header="Action" Binding="{Binding ActionDescription}" Width="2.4*" />
                                     <DataGridTextColumn Header="Target" Binding="{Binding Target}" Width="2*" />
                                     <DataGridTextColumn Header="State" Binding="{Binding StatusText}" Width="90" />
