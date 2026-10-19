@@ -291,7 +291,20 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <!-- Only after the first sensor poll - before it, an empty list means "not read yet". -->
+                    <TextBlock Text="Drive temperatures unavailable - the hardware sensor library couldn't load (Smart App Control or a driver-signing policy can block it), so no sensor was read." TextWrapping="Wrap">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DriveSensorsAvailable}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <!-- Only once a poll has read some temperature sensor - before that, or after a
+                         poll that read nothing, an empty list means "not read", not "none". -->
                     <TextBlock Text="No drive temperature sensors detected.">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
@@ -2752,7 +2765,7 @@
                             <TextBlock Text="{Binding StorPortStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
                             <DataGrid ItemsSource="{Binding StorPortEvents}" IsReadOnly="True" MaxHeight="220" AutoGenerateColumns="False">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Time" Binding="{Binding TimestampUtc, StringFormat={}{0:HH:mm:ss.fff}}" Width="110" />
+                                    <DataGridTextColumn Header="Time (UTC)" Binding="{Binding TimestampUtc, StringFormat={}{0:HH:mm:ss.fff}}" Width="110" />
                                     <DataGridTextColumn Header="Device" Binding="{Binding Device}" Width="1.4*" />
                                     <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="90" />
                                     <DataGridTextColumn Header="Duration (ms)" Binding="{Binding DurationMs, StringFormat={}{0:0.0}}" Width="100" />

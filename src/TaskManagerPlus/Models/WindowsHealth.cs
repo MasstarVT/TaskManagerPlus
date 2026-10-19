@@ -1,7 +1,8 @@
 namespace TaskManagerPlus.Models;
 
 /// <summary>#769/#771: one Windows Update Client install/download/failure event, read from
-/// Microsoft-Windows-WindowsUpdateClient/Operational (event IDs 19/20/21/25/31/43/44) - a much
+/// the Microsoft-Windows-WindowsUpdateClient provider (System log 19/20/21/22/43/44, Operational
+/// channel 25/31/41) - a much
 /// fuller history than Win32_QuickFixEngineering's own hotfix-only view (see
 /// SystemSpecsService.ReadRecentHotfixes' remarks: QFE only sees CBS-installed hotfixes and misses
 /// driver/definition/feature updates entirely). See WindowsUpdateHistoryService.ReadUpdateClientHistory.
@@ -165,15 +166,17 @@ public sealed class UpdateServiceHealthEntry
     public bool IsFlagged => IsDisabled || IsMissing;
 }
 
-/// <summary>#779: measured sizes of the two update-related cache folders under SoftwareDistribution -
-/// the download cache (wuauserv) and the Delivery Optimization cache (DoSvc). See
-/// WindowsServicingService.ReadUpdateCacheSizes.</summary>
+/// <summary>#779: the WU download cache (SoftwareDistribution\Download, wuauserv) and the Delivery
+/// Optimization cache (DoSvc - reported by DoSvc itself, since its folder lives in a service profile).
+/// See WindowsServicingService.ReadUpdateCacheSizes.</summary>
 public sealed class UpdateCacheInfo
 {
     public string DownloadCachePath { get; init; } = string.Empty;
     public long DownloadCacheSizeBytes { get; init; }
     public string DeliveryOptimizationCachePath { get; init; } = string.Empty;
-    public long DeliveryOptimizationCacheSizeBytes { get; init; }
+    /// <summary>Null when DoSvc couldn't report it (cmdlet missing, service stopped, timeout).</summary>
+    public long? DeliveryOptimizationCacheSizeBytes { get; init; }
+    public string? DeliveryOptimizationError { get; init; }
 }
 
 /// <summary>#780: one candidate for "uninstall a specific update" - either a KB-numbered hotfix from
@@ -240,6 +243,15 @@ public sealed class DismHealthScanResult
     public bool NeedsRepairSource { get; init; }
     public string? ErrorCode { get; init; }
     public string? DismLogTail { get; init; }
+
+    /// <summary>DISM said "The component store cannot be repaired." - corruption it can't fix, the
+    /// worse case than IsRepairable. Set by DismService when it recognizes that line.</summary>
+    public bool CannotBeRepaired { get; init; }
+
+    /// <summary>A CheckHealth/ScanHealth run that exited 0 without a verdict this app recognizes
+    /// (a translated Windows, or a message it doesn't know) - DISM's last line ("The operation
+    /// completed successfully.") is then not a verdict and mustn't be shown as one.</summary>
+    public bool VerdictUnrecognized => Success && IsRepairable is null && !CannotBeRepaired && Operation != DismHealthOperation.RestoreHealth;
 }
 
 /// <summary>#785: one image index from `dism /Get-WimInfo /WimFile:&lt;path&gt;` - lets the user
@@ -549,7 +561,9 @@ public sealed class EnvironmentVariableEntry
 public sealed class EnvironmentSanityCheck
 {
     public string Title { get; init; } = string.Empty;
-    public bool Passed { get; init; }
+    /// <summary>Null when the check itself couldn't be evaluated (e.g. a folder's permissions
+    /// couldn't be read) - shown neutral, not as a pass or a failure.</summary>
+    public bool? Passed { get; init; }
     public string Detail { get; init; } = string.Empty;
 }
 

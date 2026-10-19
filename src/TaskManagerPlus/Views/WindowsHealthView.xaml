@@ -48,6 +48,9 @@
                                         <Style TargetType="Border">
                                             <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
                                             <Style.Triggers>
+                                                <DataTrigger Binding="{Binding UpgradeReadiness.HasUnknownChecks}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                </DataTrigger>
                                                 <DataTrigger Binding="{Binding UpgradeReadiness.IsBlocked}" Value="True">
                                                     <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
                                                 </DataTrigger>
@@ -367,13 +370,14 @@
             <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- #769/#771/#772: Update history - Windows Update Client install/download/failure
-                         events (Microsoft-Windows-WindowsUpdateClient/Operational), correlated against the
-                         Setup servicing channel and described via the shared offline error catalog. -->
+                         events (Microsoft-Windows-WindowsUpdateClient: installs/restarts in the System log,
+                         scans/downloads in its Operational channel), correlated against the Setup servicing
+                         channel and described via the shared offline error catalog. -->
                     <Border Style="{StaticResource CardStyle}">
                         <StackPanel>
                             <TextBlock Text="Update history" Style="{StaticResource CardTitle}" />
                             <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,-4,0,10"
-                                       Text="Install/download successes and failures from the Windows Update client log, last 180 days - covers driver, definition and feature updates that Win32_QuickFixEngineering (the System tab's hotfix list) never sees." />
+                                       Text="Install, download and scan results reported by the Windows Update client, last 180 days - covers driver, definition and feature updates that Win32_QuickFixEngineering (the System tab's hotfix list) never sees." />
                             <DataGrid ItemsSource="{Binding UpdateEvents}" Height="340" IsReadOnly="True">
                                 <DataGrid.RowStyle>
                                     <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
@@ -422,6 +426,7 @@
                                                 <MultiDataTrigger.Conditions>
                                                     <Condition Binding="{Binding UpdateEvents.Count}" Value="0" />
                                                     <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                    <Condition Binding="{Binding UpdateHistoryReadError}" Value="{x:Null}" />
                                                 </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
                                             </MultiDataTrigger>
@@ -429,6 +434,9 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
+                            <!-- A log that couldn't be read: the list above is incomplete, not "nothing found". -->
+                            <TextBlock Text="{Binding UpdateHistoryReadError}" Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,8,0,0"
+                                       Visibility="{Binding UpdateHistoryReadError, Converter={StaticResource StringToVisibilityConverter}}" />
                             <TextBlock Text="Reading the Windows Update client log…" Margin="0,8,0,0">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
@@ -480,6 +488,42 @@
                                 <Button Grid.Column="1" Content="Resume updates" Command="{Binding ResumeUpdatesCommand}" Padding="10,4" FontSize="{StaticResource FontBody}"
                                         Visibility="{Binding UpdatePolicy.IsPausedNow, Converter={StaticResource BoolToVisibilityConverter}}" />
                             </Grid>
+                            <!-- The policy is read at the end of the tab refresh; until that has succeeded the
+                                 default snapshot's all-clear summary and "Not set" tiles mean nothing. -->
+                            <TextBlock Text="Checking update policy…" Margin="0,0,0,12">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding HasLoaded}" Value="False" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock Text="Unknown - the update policy couldn't be read because the refresh failed (see Update history above)." TextWrapping="Wrap"
+                                       Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" Margin="0,0,0,12">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding HasLoaded}" Value="False" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <StackPanel Visibility="{Binding HasLoaded, Converter={StaticResource BoolToVisibilityConverter}}">
                             <TextBlock Text="{Binding UpdatePolicy.SummaryText}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,0,0,12" />
 
                             <UniformGrid Columns="3" Rows="3">
@@ -523,6 +567,7 @@
                                     <TextBlock Style="{StaticResource SpecValue}" Text="{Binding UpdatePolicy.WuServer, TargetNullValue=Not set}" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
                             </UniformGrid>
+                            </StackPanel>
 
                             <!-- #776: WSUS/WUfB reachability check - only offered when a WUServer policy
                                  value is actually set. A plain HTTP GET/HEAD, on demand only (network call). -->
@@ -635,6 +680,9 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
+                            <!-- DISM failed/timed out: the list (if any) is from an earlier successful load. -->
+                            <TextBlock Text="{Binding ServicingPackagesError}" Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,4,0,0"
+                                       Visibility="{Binding ServicingPackagesError, Converter={StaticResource StringToVisibilityConverter}}" />
                         </StackPanel>
                     </Border>
                     <!-- #773: feature-update failure analysis - on demand, hidden (a brief "not found"
@@ -855,8 +903,8 @@
                             </ItemsControl>
                         </StackPanel>
                     </Border>
-                    <!-- #779: update cache reclaim - reports the two SoftwareDistribution cache folder
-                         sizes, with a confirmed clear action. Cross-linked to the Storage tab. -->
+                    <!-- #779: update cache reclaim - reports the WU download cache and the Delivery
+                         Optimization cache sizes, with a confirmed clear action. Cross-linked to the Storage tab. -->
                     <Border Style="{StaticResource CardStyle}">
                         <StackPanel>
                             <Grid Margin="0,0,0,4">
@@ -896,7 +944,7 @@
                                 </Button>
                             </Grid>
                             <TextBlock Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,10"
-                                       Text="Sizes of the WU download cache and the Delivery Optimization cache under SoftwareDistribution - routinely the largest reclaimable chunk of space on a machine that's run Windows Update for a while." />
+                                       Text="Sizes of the WU download cache (SoftwareDistribution\Download) and the Delivery Optimization cache (as DoSvc reports it) - routinely the largest reclaimable chunk of space on a machine that's run Windows Update for a while." />
 
                             <StackPanel Visibility="{Binding UpdateCacheInfo, Converter={StaticResource NullToVisibilityConverter}}">
                                 <UniformGrid Columns="2">
@@ -909,6 +957,8 @@
                                         <TextBlock Text="DELIVERY OPTIMIZATION CACHE" Style="{StaticResource SpecLabel}" />
                                         <TextBlock Style="{StaticResource SpecValue}" Text="{Binding UpdateCacheInfo.DeliveryOptimizationCacheSizeBytes, Converter={StaticResource BytesToReadableConverter}}" />
                                         <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap" Text="{Binding UpdateCacheInfo.DeliveryOptimizationCachePath}" />
+                                        <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Text="{Binding UpdateCacheInfo.DeliveryOptimizationError}"
+                                                   Visibility="{Binding UpdateCacheInfo.DeliveryOptimizationError, Converter={StaticResource StringToVisibilityConverter}}" />
                                     </StackPanel>
                                 </UniformGrid>
                                 <Button Content="View in Storage" HorizontalAlignment="Left" Padding="10,4" FontSize="{StaticResource FontBody}" Margin="0,0,0,10"
@@ -1254,6 +1304,12 @@
                                                 <DataTrigger Binding="{Binding CheckHealthResult.IsRepairable}" Value="True">
                                                     <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
                                                 </DataTrigger>
+                                                <DataTrigger Binding="{Binding CheckHealthResult.VerdictUnrecognized}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding CheckHealthResult.CannotBeRepaired}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
@@ -1271,6 +1327,15 @@
                                                 </Style>
                                             </TextBlock.Style>
                                         </TextBlock>
+                                        <!-- Exit 0 with no recognized verdict (translated Windows, "cannot be repaired", ...):
+                                             the last line below isn't a verdict, so neither pass nor fail is shown. -->
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}"
+                                                   ToolTip="{Binding CheckHealthResult.RawOutput}"
+                                                   Text="Result not recognized - DISM finished, but its output didn't say whether the component store is corrupt. Hover for DISM's full output."
+                                                   Visibility="{Binding CheckHealthResult.VerdictUnrecognized, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                                   Text="Component store corruption detected that DISM says cannot be repaired - see the in-place repair-install guidance in the Repair section."
+                                                   Visibility="{Binding CheckHealthResult.CannotBeRepaired, Converter={StaticResource BoolToVisibilityConverter}}" />
                                         <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding CheckHealthResult.Summary}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
@@ -1280,6 +1345,12 @@
                                                             <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding CheckHealthResult.IsRepairable}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding CheckHealthResult.VerdictUnrecognized}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding CheckHealthResult.CannotBeRepaired}" Value="True">
                                                             <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
@@ -1331,6 +1402,12 @@
                                                 <DataTrigger Binding="{Binding ScanHealthResult.IsRepairable}" Value="True">
                                                     <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
                                                 </DataTrigger>
+                                                <DataTrigger Binding="{Binding ScanHealthResult.VerdictUnrecognized}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding ScanHealthResult.CannotBeRepaired}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
@@ -1348,6 +1425,13 @@
                                                 </Style>
                                             </TextBlock.Style>
                                         </TextBlock>
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="{DynamicResource WarningBrush}"
+                                                   ToolTip="{Binding ScanHealthResult.RawOutput}"
+                                                   Text="Result not recognized - DISM finished, but its output didn't say whether the component store is corrupt. Hover for DISM's full output."
+                                                   Visibility="{Binding ScanHealthResult.VerdictUnrecognized, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                                   Text="Component store corruption detected that DISM says cannot be repaired - see the in-place repair-install guidance in the Repair section."
+                                                   Visibility="{Binding ScanHealthResult.CannotBeRepaired, Converter={StaticResource BoolToVisibilityConverter}}" />
                                         <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding ScanHealthResult.Summary}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
@@ -1357,6 +1441,12 @@
                                                             <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding ScanHealthResult.IsRepairable}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding ScanHealthResult.VerdictUnrecognized}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding ScanHealthResult.CannotBeRepaired}" Value="True">
                                                             <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
@@ -1666,12 +1756,18 @@
                                                        Foreground="{DynamicResource TextSecondaryBrush}" Text="{Binding Verdict}" />
                                             <StackPanel Grid.Column="3" HorizontalAlignment="Right">
                                                 <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}" HorizontalAlignment="Right" Text="{Binding DurationText}" />
-                                                <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource DangerBrush}" HorizontalAlignment="Right"
-                                                           Text="{Binding UnrepairableFiles.Count, StringFormat={}{0} unrepairable}">
+                                                <!-- SFC rows list unrepairable files; DISM rows carry one finding
+                                                     ("corruption found", "result not recognized", a RestoreHealth
+                                                     failure), shown as-is rather than counted as "unrepairable". -->
+                                                <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource DangerBrush}" HorizontalAlignment="Right">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
                                                             <Setter Property="Visibility" Value="Visible" />
+                                                            <Setter Property="Text" Value="{Binding UnrepairableFiles[0]}" />
                                                             <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding ScanType}" Value="SFC">
+                                                                    <Setter Property="Text" Value="{Binding UnrepairableFiles.Count, StringFormat={}{0} unrepairable}" />
+                                                                </DataTrigger>
                                                                 <DataTrigger Binding="{Binding UnrepairableFiles.Count}" Value="0">
                                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                                 </DataTrigger>
@@ -1859,7 +1955,23 @@
                                     </DataGrid>
 
                                     <TextBlock Text="SYSTEM PROTECTION BY VOLUME" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
+                                    <!-- The per-volume guess is "has shadow storage", so a failed shadow-storage read
+                                         makes every volume unknown - say so instead of a column of red dots. -->
+                                    <TextBlock Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,14"
+                                               Visibility="{Binding ShadowStorageReadError, Converter={StaticResource StringToVisibilityConverter}}">
+                                        <Run Text="Unknown - couldn't read shadow-copy storage, so System Protection per volume can't be inferred: " /><Run Text="{Binding ShadowStorageReadError, Mode=OneWay}" />
+                                    </TextBlock>
                                     <ItemsControl ItemsSource="{Binding SystemRestoreSnapshot.VolumeProtection}" Margin="0,0,0,14">
+                                        <ItemsControl.Style>
+                                            <Style TargetType="ItemsControl">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ShadowStorageReadError}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ItemsControl.Style>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
                                                 <Grid Margin="0,0,0,8">
@@ -1901,9 +2013,13 @@
                                             <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                                 <Setter Property="Visibility" Value="Collapsed" />
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding SystemRestoreSnapshot.ShadowStorage.Count}" Value="0">
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding SystemRestoreSnapshot.ShadowStorage.Count}" Value="0" />
+                                                            <Condition Binding="{Binding ShadowStorageReadError}" Value="{x:Null}" />
+                                                        </MultiDataTrigger.Conditions>
                                                         <Setter Property="Visibility" Value="Visible" />
-                                                    </DataTrigger>
+                                                    </MultiDataTrigger>
                                                 </Style.Triggers>
                                             </Style>
                                         </TextBlock.Style>
@@ -2350,6 +2466,10 @@
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding Passed}" Value="False">
                                                                     <Setter Property="Fill" Value="{DynamicResource DangerBrush}" />
+                                                                </DataTrigger>
+                                                                <!-- The check couldn't be evaluated - neither pass nor fail. -->
+                                                                <DataTrigger Binding="{Binding Passed}" Value="{x:Null}">
+                                                                    <Setter Property="Fill" Value="{DynamicResource TextTertiaryBrush}" />
                                                                 </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>

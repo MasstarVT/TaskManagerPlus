@@ -17,11 +17,12 @@ public static class WakeDeviceService
         var armedTask = RunProcessAsync("powercfg.exe", "/devicequery wake_armed", 15000);
         var fromAnyTask = RunProcessAsync("powercfg.exe", "/devicequery wake_from_any", 15000);
         string armedOutput, fromAnyOutput;
+        int? armedExit, fromAnyExit;
         try
         {
             await Task.WhenAll(armedTask, fromAnyTask);
-            armedOutput = armedTask.Result.Output;
-            fromAnyOutput = fromAnyTask.Result.Output;
+            (armedOutput, armedExit) = armedTask.Result;
+            (fromAnyOutput, fromAnyExit) = fromAnyTask.Result;
         }
         catch (Exception ex)
         {
@@ -31,6 +32,17 @@ public static class WakeDeviceService
         if (armedOutput.Contains("administrator", StringComparison.OrdinalIgnoreCase) ||
             fromAnyOutput.Contains("administrator", StringComparison.OrdinalIgnoreCase))
             return (new List<WakeArmedDevice>(), "powercfg /devicequery needs administrator privileges (this app should already be elevated - try relaunching it).");
+
+        // A timed-out run's Output is ToolRunner's "(command timed out)" sentinel and a failed one's
+        // is an error line - neither is a device list, and half a pair can't be intersected.
+        if (armedExit != 0 || fromAnyExit != 0)
+        {
+            var (failedQuery, failedExit, failedOutput) = armedExit != 0
+                ? ("wake_armed", armedExit, armedOutput)
+                : ("wake_from_any", fromAnyExit, fromAnyOutput);
+            string reason = failedExit is null ? "timed out" : $"exit code {failedExit}: {failedOutput.Trim()}";
+            return (new List<WakeArmedDevice>(), $"Couldn't read wake-armed devices - powercfg /devicequery {failedQuery} {reason}");
+        }
 
         var armed = ParseDeviceNames(armedOutput);
         var fromAny = new HashSet<string>(ParseDeviceNames(fromAnyOutput), StringComparer.OrdinalIgnoreCase);

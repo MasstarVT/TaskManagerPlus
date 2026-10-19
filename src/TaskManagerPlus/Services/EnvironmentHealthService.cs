@@ -1,5 +1,8 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
 
@@ -29,21 +32,22 @@ public static class EnvironmentHealthService
         var issues = new List<PathIssue>();
         var machineSegments = SplitSegments(machineRaw);
         var userSegments = SplitSegments(userRaw);
+        var vars = ReadFreshVariables();
 
-        AnalyzeScope("Machine", machineRaw, machineIsExpand, machineSegments, issues);
-        AnalyzeScope("User", userRaw, userIsExpand, userSegments, issues);
+        AnalyzeScope("Machine", machineRaw, machineIsExpand, machineSegments, issues, vars);
+        AnalyzeScope("User", userRaw, userIsExpand, userSegments, issues, vars);
 
         // Cross-scope duplicates: the same directory listed in both Machine and User PATH is
         // harmless but pointless - it's on the effective PATH twice either way.
-        var machineExpanded = machineSegments.Select(s => Expand(s).TrimEnd('\\').ToLowerInvariant()).Where(s => s.Length > 0).ToHashSet();
+        var machineExpanded = machineSegments.Select(s => Expand(s, vars).TrimEnd('\\').ToLowerInvariant()).Where(s => s.Length > 0).ToHashSet();
         foreach (var seg in userSegments)
         {
-            string expanded = Expand(seg).TrimEnd('\\').ToLowerInvariant();
+            string expanded = Expand(seg, vars).TrimEnd('\\').ToLowerInvariant();
             if (expanded.Length > 0 && machineExpanded.Contains(expanded))
                 issues.Add(new PathIssue { Scope = "User", Segment = seg, IssueType = "Duplicated across scopes", Detail = "This directory is already present in the Machine PATH." });
         }
 
-        string combinedExpanded = Expand(machineRaw) + ";" + Expand(userRaw);
+        string combinedExpanded = Expand(machineRaw, vars) + ";" + Expand(userRaw, vars);
         int totalLength = combinedExpanded.Length;
         if (totalLength > PathDoctorResult.MaxExpandedLength)
             issues.Add(new PathIssue { Scope = "Both", Segment = "(combined)", IssueType = "Length limit exceeded", Detail = $"The combined, fully expanded Machine+User PATH is {totalLength:N0} characters - over the practical {PathDoctorResult.MaxExpandedLength:N0}-character CreateProcess environment-block limit. New processes may silently see a truncated PATH." });
@@ -59,7 +63,8 @@ public static class EnvironmentHealthService
         };
     }
 
-    private static void AnalyzeScope(string scope, string raw, bool isExpandSz, List<string> segments, List<PathIssue> issues)
+    private static void AnalyzeScope(string scope, string raw, bool isExpandSz, List<string> segments, List<PathIssue> issues,
+        IReadOnlyDictionary<string, string> vars)
     {
         if (raw.Length == 0) return;
 
@@ -76,14 +81,14 @@ public static class EnvironmentHealthService
 
             if (trimmed.Contains('%'))
             {
-                string expanded = Expand(trimmed);
+                string expanded = Expand(trimmed, vars);
                 if (expanded.Contains('%'))
                     issues.Add(new PathIssue { Scope = scope, Segment = trimmed, IssueType = "Unexpanded %VAR%", Detail = $"\"{trimmed}\" contains a %VARIABLE% reference that doesn't resolve to anything - the referenced variable isn't set." });
                 else if (!isExpandSz)
                     issues.Add(new PathIssue { Scope = scope, Segment = trimmed, IssueType = "REG_SZ needs REG_EXPAND_SZ", Detail = $"This PATH value is stored as REG_SZ but contains \"%...%\" references - it should be REG_EXPAND_SZ, or the literal text \"{trimmed}\" is used as-is instead of being expanded." });
             }
 
-            string expandedPath = Expand(trimmed);
+            string expandedPath = Expand(trimmed, vars);
             if (!expandedPath.Contains('%') && !Directory.Exists(expandedPath))
                 issues.Add(new PathIssue { Scope = scope, Segment = trimmed, IssueType = "Directory doesn't exist", Detail = $"\"{expandedPath}\" doesn't exist - likely a leftover from an uninstalled program." });
         }
@@ -98,7 +103,64 @@ public static class EnvironmentHealthService
     private static List<string> SplitSegments(string raw) =>
         raw.Length == 0 ? new List<string>() : raw.Split(';').ToList();
 
-    private static string Expand(string s) => Environment.ExpandEnvironmentVariables(s);
+    // Per-session variables Windows sets for a new process without storing them in either
+    // Environment key - taken from this process (ProcessEnvironmentHardening resets the system-folder
+    // ones to their real values) and from HKCU\Volatile Environment.
+    private static readonly string[] SessionVariableNames =
+    {
+        "SystemRoot", "SystemDrive", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
+        "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432", "ProgramData",
+        "ALLUSERSPROFILE", "PUBLIC", "COMPUTERNAME", "USERPROFILE", "USERNAME", "USERDOMAIN",
+        "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+    };
+
+    private static readonly Regex VariableReferenceRegex = new(@"%([^%;\r\n]+)%", RegexOptions.Compiled);
+
+    /// <summary>The variables a process started now would see: machine then user values freshly
+    /// read from the registry (user wins), over the per-session ones above. Not this process's own
+    /// environment - it's stale for anything set after the app started, and ProcessEnvironmentHardening
+    /// rewrites parts of it (TEMP/TMP point at an admin-only folder), so expanding against it would
+    /// misread a new %VAR% entry and the user's real TEMP.</summary>
+    private static Dictionary<string, string> ReadFreshVariables()
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in SessionVariableNames)
+            if (Environment.GetEnvironmentVariable(name) is { Length: > 0 } value) map[name] = value;
+        AddRegistryVariables(map, Registry.LocalMachine, MachineEnvKeyPath);
+        AddRegistryVariables(map, Registry.CurrentUser, UserEnvKeyPath);
+        AddRegistryVariables(map, Registry.CurrentUser, "Volatile Environment");
+        // Stored values are unexpanded (REG_EXPAND_SZ) - resolve them against each other.
+        foreach (var name in map.Keys.ToList()) map[name] = Expand(map[name], map);
+        return map;
+    }
+
+    private static void AddRegistryVariables(Dictionary<string, string> into, RegistryKey hive, string subKeyPath)
+    {
+        try
+        {
+            using var key = hive.OpenSubKey(subKeyPath);
+            if (key is null) return;
+            foreach (var name in key.GetValueNames())
+            {
+                if (name.Length == 0 || name.Equals("Path", StringComparison.OrdinalIgnoreCase)) continue; // PATH is analyzed, not referenced
+                if (key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is string value) into[name] = value;
+            }
+        }
+        catch { /* access denied - that scope contributes nothing */ }
+    }
+
+    /// <summary>%VAR% expansion against <paramref name="vars"/>; an unknown reference is left as-is,
+    /// like ExpandEnvironmentStrings. A few passes resolve nested references (TEMP -> %USERPROFILE%).</summary>
+    private static string Expand(string s, IReadOnlyDictionary<string, string> vars)
+    {
+        for (int pass = 0; pass < 8 && s.Contains('%'); pass++)
+        {
+            string next = VariableReferenceRegex.Replace(s, m => vars.TryGetValue(m.Groups[1].Value, out var v) ? v : m.Value);
+            if (next == s) break;
+            s = next;
+        }
+        return s;
+    }
 
     #endregion
 
@@ -241,12 +303,13 @@ public static class EnvironmentHealthService
     {
         var checks = new List<EnvironmentSanityCheck>();
         string? Find(string scope, string name) => variables.FirstOrDefault(v => v.Scope.Equals(scope, StringComparison.OrdinalIgnoreCase) && v.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.Value;
+        var vars = ReadFreshVariables();
 
-        CheckTempLike(checks, "TEMP", variables);
-        CheckTempLike(checks, "TMP", variables);
+        CheckTempLike(checks, "TEMP", variables, vars);
+        CheckTempLike(checks, "TMP", variables, vars);
 
         string? comSpec = Find("Machine", "ComSpec") ?? Find("User", "ComSpec");
-        string expandedComSpec = comSpec is null ? string.Empty : Environment.ExpandEnvironmentVariables(comSpec);
+        string expandedComSpec = comSpec is null ? string.Empty : Expand(comSpec, vars);
         checks.Add(new EnvironmentSanityCheck
         {
             Title = "ComSpec",
@@ -256,8 +319,9 @@ public static class EnvironmentHealthService
 
         foreach (var name in new[] { "windir", "SystemRoot" })
         {
-            string? raw = Find("Machine", name);
-            string expanded = raw is null ? string.Empty : Environment.ExpandEnvironmentVariables(raw);
+            // SystemRoot isn't stored in the Environment key - Windows sets it per process.
+            string? raw = Find("Machine", name) ?? (name == "SystemRoot" ? vars.GetValueOrDefault(name) : null);
+            string expanded = raw is null ? string.Empty : Expand(raw, vars);
             checks.Add(new EnvironmentSanityCheck
             {
                 Title = name,
@@ -292,7 +356,8 @@ public static class EnvironmentHealthService
         return checks;
     }
 
-    private static void CheckTempLike(List<EnvironmentSanityCheck> checks, string name, List<EnvironmentVariableEntry> variables)
+    private static void CheckTempLike(List<EnvironmentSanityCheck> checks, string name, List<EnvironmentVariableEntry> variables,
+        IReadOnlyDictionary<string, string> vars)
     {
         string? raw = variables.FirstOrDefault(v => v.Scope == "User" && v.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.Value
             ?? variables.FirstOrDefault(v => v.Scope == "Machine" && v.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.Value;
@@ -303,24 +368,68 @@ public static class EnvironmentHealthService
             return;
         }
 
-        string expanded = Environment.ExpandEnvironmentVariables(raw);
+        string expanded = Expand(raw, vars);
         if (!Directory.Exists(expanded))
         {
             checks.Add(new EnvironmentSanityCheck { Title = name, Passed = false, Detail = $"\"{expanded}\" doesn't exist." });
             return;
         }
 
-        bool writable = true;
-        string probePath = Path.Combine(expanded, $".tmplus-probe-{Guid.NewGuid():N}.tmp");
-        try { File.WriteAllText(probePath, string.Empty); File.Delete(probePath); }
-        catch { writable = false; }
-
+        bool? writable = CanStandardUserCreateFiles(expanded, out string? aclError);
         checks.Add(new EnvironmentSanityCheck
         {
             Title = name,
             Passed = writable,
-            Detail = writable ? expanded : $"\"{expanded}\" exists but doesn't appear to be writable by this account.",
+            Detail = writable switch
+            {
+                true => expanded,
+                false => $"\"{expanded}\" exists but its permissions don't let this account (without admin rights) create files in it.",
+                null => $"\"{expanded}\" exists, but its permissions couldn't be read ({aclError}) - writability unknown.",
+            },
         });
+    }
+
+    // BUILTIN\Administrators and "Local account and member of Administrators group" are deny-only
+    // in the user's unelevated token, so they don't count toward what the user's own programs can do.
+    private static readonly HashSet<string> ElevatedOnlyGroupSids = new(StringComparer.OrdinalIgnoreCase) { "S-1-5-32-544", "S-1-5-114" };
+
+    // FILE_ADD_FILE (WriteData on a folder), plus the generic rights an ACE can carry unmapped.
+    private const int CreateFilesMask = (int)FileSystemRights.CreateFiles | 0x10000000 /* GENERIC_ALL */ | 0x40000000 /* GENERIC_WRITE */;
+
+    /// <summary>Whether the signed-in user's own (unelevated) programs can create files in
+    /// <paramref name="directory"/>, judged from its DACL. This used to write and delete a probe
+    /// file, but that ran with this process's admin token - it passed for an admin-only folder, and
+    /// it was an elevated write into whatever folder HKCU\Environment (user-writable) named. Null
+    /// when the ACL can't be read.</summary>
+    private static bool? CanStandardUserCreateFiles(string directory, out string? error)
+    {
+        error = null;
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            var sids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (identity.User is { } user) sids.Add(user.Value);
+            foreach (var group in identity.Groups ?? new IdentityReferenceCollection())
+                if (!ElevatedOnlyGroupSids.Contains(group.Value)) sids.Add(group.Value);
+
+            var rules = new DirectoryInfo(directory).GetAccessControl(AccessControlSections.Access)
+                .GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier));
+            bool allowed = false;
+            foreach (FileSystemAccessRule rule in rules)
+            {
+                if ((rule.PropagationFlags & PropagationFlags.InheritOnly) != 0) continue; // applies to children only
+                if (((int)rule.FileSystemRights & CreateFilesMask) == 0) continue;
+                if (rule.IdentityReference is not SecurityIdentifier sid || !sids.Contains(sid.Value)) continue;
+                if (rule.AccessControlType == AccessControlType.Deny) return false; // a matching deny wins
+                allowed = true;
+            }
+            return allowed;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return null;
+        }
     }
 
     #endregion
@@ -330,18 +439,20 @@ public static class EnvironmentHealthService
     /// <summary>#799: the current, freshly-read (not this process's own cached copy) effective
     /// PATH/TEMP - machine value first, user value appended/preferred where Windows itself prefers
     /// the user value (TEMP/TMP). Shared by both the PATH doctor above and #799's process-drift
-    /// scan so "what does 'current' mean" is answered in exactly one place.</summary>
+    /// scan so "what does 'current' mean" is answered in exactly one place. %VAR% references are
+    /// expanded against the freshly read variables too (see ReadFreshVariables).</summary>
     public static (string EffectivePath, string EffectiveTemp) ReadEffectivePathAndTemp()
     {
+        var vars = ReadFreshVariables();
         var (machinePath, _, _) = ReadRawValue(Registry.LocalMachine, MachineEnvKeyPath, "Path");
         var (userPath, _, _) = ReadRawValue(Registry.CurrentUser, UserEnvKeyPath, "Path");
-        string effectivePath = Environment.ExpandEnvironmentVariables(
-            userPath.Length == 0 ? machinePath : machinePath.TrimEnd(';') + ";" + userPath);
+        string effectivePath = Expand(
+            userPath.Length == 0 ? machinePath : machinePath.TrimEnd(';') + ";" + userPath, vars);
 
         var (userTemp, _, _) = ReadRawValue(Registry.CurrentUser, UserEnvKeyPath, "TEMP");
         var (machineTemp, _, _) = ReadRawValue(Registry.LocalMachine, MachineEnvKeyPath, "TEMP");
         string rawTemp = userTemp.Length > 0 ? userTemp : machineTemp;
-        string effectiveTemp = Environment.ExpandEnvironmentVariables(rawTemp);
+        string effectiveTemp = Expand(rawTemp, vars);
 
         return (effectivePath, effectiveTemp);
     }

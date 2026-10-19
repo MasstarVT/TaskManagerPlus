@@ -26,14 +26,19 @@ public static class DiskFragmentationService
     // fragmentation-percent regex above already only matches some builds' phrasing, per its own
     // "no fragmentation figure was reported" fallback), so every one of these degrades to
     // "not reported" rather than guessed when it doesn't match this build's exact text.
+    //
+    // defrag formats these numbers in the user's regional format, so a number can carry either
+    // separator ("1.25 GB" / "1,25 GB", "1,234,567" / "1.234.567" / "1 234 567" with a no-break
+    // space) - the capture takes all of them and ParseLocaleNumber decides which is which.
+    private const string LocaleNumber = @"(\d(?:[\d.,'   ]*\d)?)";
     private static readonly Regex MftSizeRegex = new(
-        @"(?:total\s+)?mft\s+size\s*[:=]\s*([\d.,]+)\s*(B|KB|MB|GB|TB)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        @"(?:total\s+)?mft\s+size\s*[:=]\s*" + LocaleNumber + @"\s*(B|KB|MB|GB|TB)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex MftRecordCountRegex = new(
-        @"mft\s+record\s+count\s*[:=]\s*([\d,]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        @"mft\s+record\s+count\s*[:=]\s*" + LocaleNumber, RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex MftFragmentsRegex = new(
-        @"(?:total\s+)?mft\s+fragment(?:ation|s)?(?:\s+count)?\s*[:=]\s*([\d,]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        @"(?:total\s+)?mft\s+fragment(?:ation|s)?(?:\s+count)?\s*[:=]\s*" + LocaleNumber, RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex LargestFreeExtentRegex = new(
-        @"largest\s+free\s+space\s+(?:size|extent)\s*[:=]\s*([\d.,]+)\s*(B|KB|MB|GB|TB)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        @"largest\s+free\s+space\s+(?:size|extent)\s*[:=]\s*" + LocaleNumber + @"\s*(B|KB|MB|GB|TB)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>Media type for one drive letter ("C", no colon) - "HDD"/"SSD"/"SCM"/"Unknown".</summary>
     public static string GetMediaType(string driveLetter)
@@ -108,7 +113,9 @@ public static class DiskFragmentationService
             // a trailing colon already (see StorageViewModel), so this strips one off before
             // re-appending it rather than risking a "C::" argument if a caller passes it either way.
             string letter = driveLetter.TrimEnd(':');
-            var psi = new ProcessStartInfo("defrag.exe", $"{letter}: /A /V")
+            // System32's defrag.exe by absolute path - a bare name is searched for in this
+            // (elevated) app's own folder first.
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("defrag.exe"), $"{letter}: /A /V")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -149,6 +156,15 @@ public static class DiskFragmentationService
                 percent = p;
                 message = $"{p}% fragmented";
             }
+            else if (proc.ExitCode != 0)
+            {
+                // Nothing parsed and defrag reported failure (access denied, volume not supported,
+                // optimization service unavailable) - its own text, not a completed analysis.
+                string reason = output.Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.Length > 0) ?? string.Empty;
+                return new FragmentationAnalysis(false,
+                    $"defrag couldn't analyze this volume (exit code 0x{proc.ExitCode:X8}){(reason.Length > 0 ? ": " + reason : ".")}",
+                    null, null, null, null, null);
+            }
             else if (output.Contains("do not need to defragment", StringComparison.OrdinalIgnoreCase))
             {
                 // defrag's own verdict, but no figure to show - leave the percent unreported
@@ -178,9 +194,7 @@ public static class DiskFragmentationService
     {
         var m = regex.Match(text);
         if (!m.Success) return null;
-        if (!double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Number,
-                System.Globalization.CultureInfo.InvariantCulture, out double amount))
-            return null;
+        if (ParseLocaleNumber(m.Groups[1].Value) is not { } amount) return null;
         return (long)(amount * UnitMultiplier(m.Groups[2].Value));
     }
 
@@ -188,8 +202,37 @@ public static class DiskFragmentationService
     {
         var m = regex.Match(text);
         if (!m.Success) return null;
-        string digits = m.Groups[1].Value.Replace(",", string.Empty);
-        return long.TryParse(digits, out long count) ? count : null;
+        // A count has no fraction, so every separator in it is a group separator.
+        string digits = new(m.Groups[1].Value.Where(char.IsAsciiDigit).ToArray());
+        return long.TryParse(digits, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long count) ? count : null;
+    }
+
+    /// <summary>A size figure in either separator convention. With both '.' and ',' present the last
+    /// one is the decimal point; a separator that repeats is grouping; a single one followed by
+    /// exactly three digits is ambiguous ("1,234") and is read the way the current culture would
+    /// write it, since defrag formats with the user's regional settings.</summary>
+    private static double? ParseLocaleNumber(string raw)
+    {
+        string s = new(raw.Where(c => char.IsAsciiDigit(c) || c == '.' || c == ',').ToArray());
+        int lastDot = s.LastIndexOf('.'), lastComma = s.LastIndexOf(',');
+        char? decimalSep;
+        if (lastDot >= 0 && lastComma >= 0) decimalSep = lastDot > lastComma ? '.' : ',';
+        else if (lastDot < 0 && lastComma < 0) decimalSep = null;
+        else
+        {
+            char sep = lastDot >= 0 ? '.' : ',';
+            int pos = Math.Max(lastDot, lastComma);
+            if (s.Count(c => c == sep) > 1) decimalSep = null;
+            else if (s.Length - pos - 1 == 3)
+                decimalSep = System.Globalization.CultureInfo.CurrentCulture.NumberFormat.NumberGroupSeparator == sep.ToString() ? null : sep;
+            else decimalSep = sep;
+        }
+
+        string normalized = decimalSep is { } d
+            ? new string(s.Where(c => char.IsAsciiDigit(c) || c == d).ToArray()).Replace(d, '.')
+            : new string(s.Where(char.IsAsciiDigit).ToArray());
+        return double.TryParse(normalized, System.Globalization.NumberStyles.AllowDecimalPoint,
+            System.Globalization.CultureInfo.InvariantCulture, out double value) ? value : null;
     }
 
     private static double UnitMultiplier(string unit) => unit.ToUpperInvariant() switch

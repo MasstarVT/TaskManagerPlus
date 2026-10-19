@@ -18,13 +18,23 @@ public static class WindowsServicingService
     /// <summary>#770: `dism /online /get-packages /format:table` - every installed servicing
     /// package with its current state (Installed, Install Pending, Uninstall Pending, Superseded,
     /// Failed, ...). DISM itself can take a while to enumerate a large package store, so this is
-    /// gated behind its own explicit button rather than loaded with the rest of the tab.</summary>
-    public static async Task<List<ServicingPackageInfo>> ListPackagesAsync()
+    /// gated behind its own explicit button rather than loaded with the rest of the tab. Error is
+    /// set (and the list is empty) when DISM failed, timed out or listed nothing recognizable - a
+    /// running Windows always has packages, so an empty list is never a real answer.</summary>
+    public static async Task<(List<ServicingPackageInfo> Packages, string? Error)> ListPackagesAsync()
     {
         var result = new List<ServicingPackageInfo>();
         try
         {
-            string output = (await RunCapturedAsync("dism.exe", "/online /get-packages /format:table", 120000)).Output;
+            var (output, exitCode) = await RunCapturedAsync("dism.exe", "/online /get-packages /format:table", 120000);
+            if (exitCode != 0)
+            {
+                string? errorLine = output.Split('\n').Select(l => l.Trim())
+                    .FirstOrDefault(l => l.StartsWith("Error", StringComparison.OrdinalIgnoreCase));
+                return (result, exitCode == -1
+                    ? "DISM timed out listing the servicing packages (it may be busy with another servicing operation)."
+                    : $"DISM couldn't list the servicing packages (exit code {exitCode}){(errorLine is null ? "." : $": {errorLine}")}");
+            }
             foreach (var rawLine in output.Split('\n'))
             {
                 string line = rawLine.TrimEnd('\r').Trim();
@@ -42,12 +52,13 @@ public static class WindowsServicingService
                 result.Add(new ServicingPackageInfo { PackageIdentity = identity, State = state });
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // dism unavailable/failed/timed out - empty list, same as every other optional data
-            // source in this app degrades on failure.
+            return (new List<ServicingPackageInfo>(), $"Couldn't run DISM: {ex.Message}");
         }
-        return result;
+        return result.Count == 0
+            ? (result, "DISM finished but listed no packages in a format this app recognizes.")
+            : (result, null);
     }
 
     #region #773 - Feature update failure analysis
@@ -354,22 +365,53 @@ public static class WindowsServicingService
 
     private static readonly string WindowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
 
-    /// <summary>#779: measures the two update-related cache folders on demand (a recursive
-    /// directory walk, per CLAUDE.md's "gated behind an explicit button" rule for anything heavier
-    /// than a trivial read) - the WU download cache (wuauserv) and the Delivery Optimization cache
-    /// (DoSvc), both under SoftwareDistribution and both routinely the largest single reclaimable
-    /// chunk of space on a machine that's been running Windows Update for a while.</summary>
+    // DoSvc keeps its cache under its own service profile, not SoftwareDistribution\DeliveryOptimization
+    // (that folder doesn't exist on current Windows), so its size and its clear both go through
+    // the DeliveryOptimization module, which asks DoSvc itself.
+    private const string DeliveryOptimizationSizeArgs = "-NoProfile -NonInteractive -Command \"(Get-DeliveryOptimizationPerfSnap -ErrorAction Stop).CacheSizeBytes\"";
+    private const string DeliveryOptimizationClearArgs = "-NoProfile -NonInteractive -Command \"Delete-DeliveryOptimizationCache -Force -ErrorAction Stop\"";
+
+    /// <summary>The literal command the Clear action runs for the Delivery Optimization cache.</summary>
+    public const string DeliveryOptimizationClearCommandLine = "powershell.exe " + DeliveryOptimizationClearArgs;
+
+    private const string DeliveryOptimizationCacheLabel = "Managed by the Delivery Optimization service (DoSvc) - size as DoSvc reports it";
+
+    /// <summary>#779: measures the two update-related caches on demand (a recursive directory walk
+    /// plus one PowerShell call, per CLAUDE.md's "gated behind an explicit button" rule for anything
+    /// heavier than a trivial read) - the WU download cache (wuauserv) and the Delivery Optimization
+    /// cache (DoSvc), routinely the largest single reclaimable chunk of space on a machine that's
+    /// been running Windows Update for a while. The DO size is null (Unknown) when DoSvc couldn't
+    /// report it.</summary>
     public static UpdateCacheInfo ReadUpdateCacheSizes()
     {
         string downloadPath = Path.Combine(WindowsDirectory, "SoftwareDistribution", "Download");
-        string doPath = Path.Combine(WindowsDirectory, "SoftwareDistribution", "DeliveryOptimization");
+        var (doSize, doError) = ReadDeliveryOptimizationCacheSize();
         return new UpdateCacheInfo
         {
             DownloadCachePath = downloadPath,
             DownloadCacheSizeBytes = ComputeDirectorySize(downloadPath),
-            DeliveryOptimizationCachePath = doPath,
-            DeliveryOptimizationCacheSizeBytes = ComputeDirectorySize(doPath),
+            DeliveryOptimizationCachePath = DeliveryOptimizationCacheLabel,
+            DeliveryOptimizationCacheSizeBytes = doSize,
+            DeliveryOptimizationError = doError,
         };
+    }
+
+    private static (long? Bytes, string? Error) ReadDeliveryOptimizationCacheSize()
+    {
+        try
+        {
+            var (output, exitCode) = ToolRunner.RunCaptured("powershell.exe", DeliveryOptimizationSizeArgs, TimeSpan.FromSeconds(30));
+            if (exitCode is null) return (null, "Get-DeliveryOptimizationPerfSnap timed out.");
+            string text = output.Trim();
+            if (exitCode == 0 && long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long bytes) && bytes >= 0)
+                return (bytes, null);
+            string firstLine = text.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? string.Empty;
+            return (null, $"Get-DeliveryOptimizationPerfSnap didn't report a cache size (exit code {exitCode}){(firstLine.Length > 0 ? ": " + Truncate(firstLine, 200) : ".")}");
+        }
+        catch (Exception ex)
+        {
+            return (null, $"Couldn't run Get-DeliveryOptimizationPerfSnap: {ex.Message}");
+        }
     }
 
     private static long ComputeDirectorySize(string path)
@@ -391,10 +433,11 @@ public static class WindowsServicingService
         }
     }
 
-    /// <summary>#779: stops the owning service, clears every item directly under the cache folder,
-    /// then restarts the service - for both caches when both are requested. Confirmed by the caller
-    /// before this runs (WindowsHealthViewModel). Returns a step-by-step log, same shape as #778's
-    /// reset action, plus whether everything was cleared and the services came back up.</summary>
+    /// <summary>#779: the download cache: stops wuauserv, clears every item directly under the
+    /// folder, then restarts it. The Delivery Optimization cache: Delete-DeliveryOptimizationCache,
+    /// which DoSvc carries out itself (so DoSvc stays running). Confirmed by the caller before this
+    /// runs (WindowsHealthViewModel). Returns a step-by-step log, same shape as #778's reset action,
+    /// plus whether everything was cleared and the services came back up.</summary>
     public static async Task<(List<string> Log, bool Success)> ClearUpdateCacheAsync(bool clearDownloadCache, bool clearDeliveryOptimizationCache)
     {
         return await Task.Run(() =>
@@ -404,9 +447,31 @@ public static class WindowsServicingService
             if (clearDownloadCache)
                 ok &= ClearCacheFolder("wuauserv", Path.Combine(WindowsDirectory, "SoftwareDistribution", "Download"), log);
             if (clearDeliveryOptimizationCache)
-                ok &= ClearCacheFolder("DoSvc", Path.Combine(WindowsDirectory, "SoftwareDistribution", "DeliveryOptimization"), log);
+                ok &= ClearDeliveryOptimizationCache(log);
             return (log, ok);
         });
+    }
+
+    private static bool ClearDeliveryOptimizationCache(List<string> log)
+    {
+        try
+        {
+            var (output, exitCode) = ToolRunner.RunCaptured("powershell.exe", DeliveryOptimizationClearArgs, TimeSpan.FromMinutes(2));
+            if (exitCode == 0)
+            {
+                log.Add($"[{DateTime.Now:T}] Delivery Optimization cache cleared (Delete-DeliveryOptimizationCache).");
+                return true;
+            }
+            log.Add(exitCode is null
+                ? $"[{DateTime.Now:T}] Delete-DeliveryOptimizationCache timed out."
+                : $"[{DateTime.Now:T}] Delete-DeliveryOptimizationCache failed (exit code {exitCode}): {Truncate(output.Trim(), 300)}");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            log.Add($"[{DateTime.Now:T}] Couldn't run Delete-DeliveryOptimizationCache: {ex.Message}");
+            return false;
+        }
     }
 
     private static bool ClearCacheFolder(string serviceName, string folderPath, List<string> log)

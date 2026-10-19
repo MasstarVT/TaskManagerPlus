@@ -737,10 +737,15 @@ public sealed class StorageViewModel : ObservableObject
     private string? _driveInventoryError;
     public string? DriveInventoryError { get => _driveInventoryError; private set => SetProperty(ref _driveInventoryError, value); }
 
-    // True once the shared sensor poll has run at least once - until then an empty
-    // DriveTemperatures means "not sampled yet", not "no drive sensors".
+    // True while the shared sensor poll's latest result read at least one temperature sensor - only
+    // then does an empty DriveTemperatures mean "no drive sensors" rather than "not sampled yet",
+    // "sensor library unavailable" or "that poll failed".
     private bool _hasTemperatureSample;
     public bool HasTemperatureSample { get => _hasTemperatureSample; private set => SetProperty(ref _hasTemperatureSample, value); }
+
+    /// <summary>False when LibreHardwareMonitor couldn't open at all (fixed for the session) - the
+    /// drive-temperature card then says so instead of "no sensors detected".</summary>
+    public bool DriveSensorsAvailable { get; }
 
     // The per-volume facts card's MSFT_Volume read: false while loading or after it failed.
     private bool _volumeFilesystemFactsLoadedOk;
@@ -1482,10 +1487,14 @@ public sealed class StorageViewModel : ObservableObject
             Filter = o => o is SensorReading r && r.HardwareType == HardwareType.Storage,
         };
         DriveTemperatures = view;
-        // Every sensor poll rebuilds Temperatures (Clear, then Add), so the first change event
-        // marks "sampled" even on a machine with no sensors at all.
-        HasTemperatureSample = energyThermals.Temperatures.Count > 0;
-        energyThermals.Temperatures.CollectionChanged += (_, _) => HasTemperatureSample = true;
+        // Every sensor poll rebuilds Temperatures (Clear, then Add) - and also clears it when the
+        // sensor library is unavailable or a poll failed and returned nothing, so a change event
+        // alone doesn't mean "sampled". The rebuild runs in one dispatcher pass, so the brief false
+        // after Clear never renders.
+        DriveSensorsAvailable = energyThermals.SensorsAvailable;
+        HasTemperatureSample = DriveSensorsAvailable && energyThermals.Temperatures.Count > 0;
+        energyThermals.Temperatures.CollectionChanged += (_, _) =>
+            HasTemperatureSample = DriveSensorsAvailable && energyThermals.Temperatures.Count > 0;
 
         // #352: hidden X axis for the free-space history chart - a separate instance from
         // Performance.HiddenXAxes (used elsewhere in this file for the fixed-length CPU/RAM/Disk
@@ -1728,8 +1737,18 @@ public sealed class StorageViewModel : ObservableObject
                         }
                     }
                     _failureWatchSeeded = true;
-                    DriveInventoryError = null;
-                    IsDriveInventoryLoaded = true;
+                    // ListDisksForSmart swallows a Win32_DiskDrive failure into an empty list, and a
+                    // running Windows always has its system disk - so empty is a failed read.
+                    if (disks.Count == 0)
+                    {
+                        DriveInventoryError = "Couldn't read the disk inventory: Win32_DiskDrive returned no disks.";
+                        IsDriveInventoryLoaded = false;
+                    }
+                    else
+                    {
+                        DriveInventoryError = null;
+                        IsDriveInventoryLoaded = true;
+                    }
                 });
             }
             catch (Exception ex)

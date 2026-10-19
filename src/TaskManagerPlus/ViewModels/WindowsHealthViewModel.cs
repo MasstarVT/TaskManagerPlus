@@ -44,6 +44,11 @@ public sealed class WindowsHealthViewModel : ObservableObject
     private string? _refreshErrorText;
     public string? RefreshErrorText { get => _refreshErrorText; private set => SetProperty(ref _refreshErrorText, value); }
 
+    /// <summary>Set when the last refresh couldn't read one of the update-client logs (or the Setup
+    /// channel used for correlation) - the history list is then incomplete, not "nothing found".</summary>
+    private string? _updateHistoryReadError;
+    public string? UpdateHistoryReadError { get => _updateHistoryReadError; private set => SetProperty(ref _updateHistoryReadError, value); }
+
     public AsyncRelayCommand RefreshCommand { get; }
 
     #endregion
@@ -77,6 +82,9 @@ public sealed class WindowsHealthViewModel : ObservableObject
 
     private bool _hasLoadedPackages;
     public bool HasLoadedPackages { get => _hasLoadedPackages; private set => SetProperty(ref _hasLoadedPackages, value); }
+
+    private string? _servicingPackagesError;
+    public string? ServicingPackagesError { get => _servicingPackagesError; private set => SetProperty(ref _servicingPackagesError, value); }
 
     public AsyncRelayCommand LoadServicingPackagesCommand { get; }
 
@@ -305,6 +313,12 @@ public sealed class WindowsHealthViewModel : ObservableObject
 
     private bool _isLoadingSystemRestore;
     public bool IsLoadingSystemRestore { get => _isLoadingSystemRestore; private set => SetProperty(ref _isLoadingSystemRestore, value); }
+
+    /// <summary>Set when the snapshot found no shadow-copy storage but vssadmin's own read failed
+    /// (no output, an "Error:" line, or output not recognized on a translated Windows) - "none
+    /// allocated" and the per-volume protection guesses are then unknown, not facts.</summary>
+    private string? _shadowStorageReadError;
+    public string? ShadowStorageReadError { get => _shadowStorageReadError; private set => SetProperty(ref _shadowStorageReadError, value); }
 
     public AsyncRelayCommand LoadSystemRestoreCommand { get; }
 
@@ -555,8 +569,9 @@ public sealed class WindowsHealthViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            var wuEvents = await Task.Run(WindowsUpdateHistoryService.ReadUpdateClientHistory);
-            var setupEvents = await Task.Run(WindowsUpdateHistoryService.ReadSetupChannelEvents);
+            var readErrors = new List<string>();
+            var wuEvents = await Task.Run(() => WindowsUpdateHistoryService.ReadUpdateClientHistory(readErrors));
+            var setupEvents = await Task.Run(() => WindowsUpdateHistoryService.ReadSetupChannelEvents(readErrors));
             // #771: mutates wuEvents in place with the nearest Setup-channel failure - no new query.
             WindowsUpdateHistoryService.Correlate(wuEvents, setupEvents);
 
@@ -579,6 +594,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
             var policy = await Task.Run(WindowsUpdatePolicyService.ReadPolicySnapshot);
 
             Apply(wuEvents, setupEvents, rebootIndicators, policy);
+            UpdateHistoryReadError = readErrors.Count == 0 ? null : "Couldn't read part of the update history - " + string.Join("; ", readErrors);
             HasLoaded = true;
             RefreshErrorText = null;
         }
@@ -644,7 +660,11 @@ public sealed class WindowsHealthViewModel : ObservableObject
         IsLoadingPackages = true;
         try
         {
-            var packages = await WindowsServicingService.ListPackagesAsync();
+            var (packages, error) = await WindowsServicingService.ListPackagesAsync();
+            ServicingPackagesError = error;
+            // A failed read leaves the previous list (and the readiness card's text derived from
+            // it) alone rather than replacing them with an empty list nothing was read into.
+            if (error is not null) return;
             ServicingPackages.Clear();
             foreach (var p in packages) ServicingPackages.Add(p);
             HasLoadedPackages = true;
@@ -758,7 +778,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
         string flaggedText = flagged.Count > 0 ? string.Join(", ", flagged) : "(none currently flagged)";
 
         var confirm = MessageBox.Show(
-            "This runs `sc config <name> start= <type>` for wuauserv, BITS, CryptSvc, msiserver, TrustedInstaller, UsoSvc, WaaSMedicSvc and DoSvc, restoring each to Windows' own documented default start type.\n\n" +
+            "This runs `sc config <name> start= <default>` for each of wuauserv, BITS, CryptSvc, msiserver, TrustedInstaller, UsoSvc, WaaSMedicSvc and DoSvc that is currently Disabled, restoring it to Windows' default (UsoSvc, DoSvc, BITS: Automatic (Delayed Start); CryptSvc: Automatic; the others: Manual). Services that aren't Disabled are left as they are.\n\n" +
             $"Currently flagged as Disabled: {flaggedText}\n\nRestore defaults now?",
             "Restore update service defaults", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
@@ -819,20 +839,21 @@ public sealed class WindowsHealthViewModel : ObservableObject
         }
     }
 
-    /// <summary>#779: confirmed, with the exact folders and the services that get stopped/restarted
-    /// shown before it runs. Re-measures afterward so the reported sizes reflect the actual result.</summary>
+    /// <summary>#779: confirmed, with the exact folder, service and command shown before it runs.
+    /// Re-measures afterward so the reported sizes reflect the actual result.</summary>
     private async Task ClearUpdateCacheAsync()
     {
         if (UpdateCacheInfo is not { } info) return;
 
         bool clearDownload = info.DownloadCacheSizeBytes > 0;
-        bool clearDo = info.DeliveryOptimizationCacheSizeBytes > 0;
+        bool clearDo = info.DeliveryOptimizationCacheSizeBytes is > 0;
         var lines = new List<string>();
-        if (clearDownload) lines.Add($"- Download cache ({Formatting.FormatBytes(info.DownloadCacheSizeBytes)}) at \"{info.DownloadCachePath}\" - stops/restarts wuauserv");
-        if (clearDo) lines.Add($"- Delivery Optimization cache ({Formatting.FormatBytes(info.DeliveryOptimizationCacheSizeBytes)}) at \"{info.DeliveryOptimizationCachePath}\" - stops/restarts DoSvc");
+        if (clearDownload) lines.Add($"- Download cache ({Formatting.FormatBytes(info.DownloadCacheSizeBytes)}) at \"{info.DownloadCachePath}\": stops wuauserv, deletes everything inside, restarts it");
+        if (clearDo && info.DeliveryOptimizationCacheSizeBytes is long doBytes)
+            lines.Add($"- Delivery Optimization cache ({Formatting.FormatBytes(doBytes)}): runs {WindowsServicingService.DeliveryOptimizationClearCommandLine} (DoSvc removes its own cached files; pinned files are kept)");
 
         var confirm = MessageBox.Show(
-            "This stops the owning service, deletes everything inside, then restarts it:\n\n" +
+            "This clears:\n\n" +
             string.Join("\n", lines) +
             "\n\nBoth will simply be rebuilt over time as updates are downloaded again. Clear now?",
             "Clear update caches", MessageBoxButton.YesNo, MessageBoxImage.Warning);
@@ -847,7 +868,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
             StatusMessage = "Update cache clear finished - see the log below.";
             var cleared = new List<string>();
             if (clearDownload) cleared.Add($"\"{info.DownloadCachePath}\" (wuauserv)");
-            if (clearDo) cleared.Add($"\"{info.DeliveryOptimizationCachePath}\" (DoSvc)");
+            if (clearDo) cleared.Add("the Delivery Optimization cache (Delete-DeliveryOptimizationCache -Force)");
             JournalOneShotRun("Update caches", $"update cache clear of {string.Join(" and ", cleared)}", success);
 
             UpdateCacheInfo = await Task.Run(WindowsServicingService.ReadUpdateCacheSizes);
@@ -998,8 +1019,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
         {
             var result = await DismService.CheckHealthAsync().ConfigureAwait(true);
             CheckHealthResult = result;
-            AppendIntegrityHistory("DISM CheckHealth", result.Summary, result.Success, result.DurationSeconds,
-                result.IsRepairable == true ? new List<string> { "Component store corruption flagged (CheckHealth gives no per-file detail)" } : new List<string>());
+            AppendDismHealthHistory("DISM CheckHealth", result);
         }
         finally
         {
@@ -1020,8 +1040,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
             var progress = new Progress<int>(p => ScanHealthProgressPercent = p);
             var result = await DismService.ScanHealthAsync(progress, _scanHealthCts.Token).ConfigureAwait(true);
             ScanHealthResult = result;
-            AppendIntegrityHistory("DISM ScanHealth", result.Summary, result.Success, result.DurationSeconds,
-                result.IsRepairable == true ? new List<string> { "Component store corruption found" } : new List<string>());
+            AppendDismHealthHistory("DISM ScanHealth", result);
         }
         finally
         {
@@ -1029,6 +1048,23 @@ public sealed class WindowsHealthViewModel : ObservableObject
             _scanHealthCts = null;
             CancelScanHealthCommand.RaiseCanExecuteChanged();
         }
+    }
+
+    /// <summary>CheckHealth/ScanHealth history rows: the verdict is this app's reading of DISM's
+    /// output rather than DISM's last line ("The operation completed successfully." even when it
+    /// found corruption), and a row only counts as clean when DISM said there's no corruption.</summary>
+    private void AppendDismHealthHistory(string scanType, DismHealthScanResult result)
+    {
+        string verdict = !result.Success ? result.Summary
+            : result.CannotBeRepaired ? "Component store corruption found - DISM says it cannot be repaired."
+            : result.IsRepairable == true ? "Component store corruption found (repairable) - run RestoreHealth."
+            : result.IsRepairable == false ? "No component store corruption found."
+            : "Result not recognized - DISM finished, but its output didn't say whether the component store is corrupt.";
+        var findings = result.CannotBeRepaired ? new List<string> { "corruption - not repairable" }
+            : result.IsRepairable == true ? new List<string> { "corruption found" }
+            : result.VerdictUnrecognized ? new List<string> { "result not recognized" }
+            : new List<string>();
+        AppendIntegrityHistory(scanType, verdict, result.Success && result.IsRepairable == false, result.DurationSeconds, findings);
     }
 
     /// <summary>#784/#785: RestoreHealth - attempts an actual repair, optionally against the
@@ -1201,7 +1237,18 @@ public sealed class WindowsHealthViewModel : ObservableObject
         IsLoadingSystemRestore = true;
         try
         {
-            SystemRestoreSnapshot = await SystemRestoreService.ReadSnapshotAsync().ConfigureAwait(true);
+            var snapshot = await SystemRestoreService.ReadSnapshotAsync().ConfigureAwait(true);
+            // The snapshot's own shadow-storage parse can't tell "none allocated" from a failed or
+            // translated vssadmin read; VssService's read can, so it decides when the list is empty.
+            string? shadowError = null;
+            if (snapshot.ShadowStorage.Count == 0)
+            {
+                var errors = new List<string>();
+                await VssService.ReadShadowStorageAsync(errors).ConfigureAwait(true);
+                if (errors.Count > 0) shadowError = string.Join("; ", errors);
+            }
+            ShadowStorageReadError = shadowError;
+            SystemRestoreSnapshot = snapshot;
         }
         finally
         {

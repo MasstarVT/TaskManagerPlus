@@ -11,11 +11,12 @@ namespace TaskManagerPlus.Services;
 /// Win32_QuickFixEngineering (already read for the System tab's "Recently installed updates" card
 /// - see SystemSpecsService.ReadRecentHotfixes) only ever sees CBS-installed hotfixes; it misses
 /// driver updates, definition updates, and feature updates entirely, and it never records a
-/// *failed* install at all. Microsoft-Windows-WindowsUpdateClient/Operational is the actual source
-/// Windows' own Update history page reads from, and covers all of those plus errors.
+/// *failed* install at all. The Microsoft-Windows-WindowsUpdateClient provider covers all of those
+/// plus errors, split across two logs by its manifest: install/restart events go to System, scan/
+/// download events to its own Operational channel.
 ///
 /// #771 correlates a failed WU-client event against the Setup channel's own failure events
-/// (provider Microsoft-Windows-Servicing, events 3/4) within a short time window, so a failed KB
+/// (provider Microsoft-Windows-Servicing, events 3/6) within a short time window, so a failed KB
 /// shows both "what the WU client reported" and "what servicing itself said went wrong with which
 /// package" in one place - the two logs are written by different components and neither one alone
 /// tells the whole story for a failed install.
@@ -27,9 +28,14 @@ public static class WindowsUpdateHistoryService
     // 30-day window would show nothing at all for exactly the case this tab exists to explain.
     private const int LookbackDays = 180;
 
-    private const string WuClientLog = "Microsoft-Windows-WindowsUpdateClient/Operational";
-    private static readonly int[] WuClientEventIds = { 19, 20, 21, 25, 31, 43, 44 };
-    private static readonly HashSet<int> WuFailureEventIds = new() { 20, 25 };
+    // Event IDs and their logs per the provider manifest (`Get-WinEvent -ListProvider
+    // Microsoft-Windows-WindowsUpdateClient`, each event's LogLink): 19/20/21/22/43/44 are written to
+    // System, 25/31/41 to the Operational channel. Reading only Operational missed every install.
+    private const string WuClientProvider = "Microsoft-Windows-WindowsUpdateClient";
+    private const string WuClientOperationalLog = "Microsoft-Windows-WindowsUpdateClient/Operational";
+    private static readonly int[] WuSystemLogEventIds = { 19, 20, 21, 22, 43, 44 };
+    private static readonly int[] WuOperationalEventIds = { 25, 31, 41 };
+    private static readonly HashSet<int> WuFailureEventIds = new() { 20, 25, 31 };
 
     // Not anchored to the word "error" - Setup-channel failure messages phrase this a few
     // different ways ("... with error 0x...", "HRESULT = 0x...", "Error: 0x..."), and an 8-digit
@@ -37,26 +43,38 @@ public static class WindowsUpdateHistoryService
     // message templates.
     private static readonly Regex ErrorCodeRegex = new(@"(0x[0-9A-Fa-f]{7,8})\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// <summary>#769: reads Microsoft-Windows-WindowsUpdateClient/Operational for install-success
-    /// (19), install-failure (20), download-success (21), download-failure (25), reboot-required
-    /// (31), install-started (43) and download-started (44) events. Degrades to an empty list when
-    /// the channel is unavailable/access denied, same as every other event-log read in this app.</summary>
-    public static List<WindowsUpdateEvent> ReadUpdateClientHistory()
+    /// <summary>#769: install succeeded/failed/started (19/20/43), restart required (21/22) and
+    /// download started (44) from the System log, plus scan failed (25), download failed (31) and
+    /// downloaded (41) from the Operational channel. A log that can't be read is reported through
+    /// <paramref name="errors"/> (the other log's events are still returned), so the caller can show
+    /// "couldn't read" instead of "no update history".</summary>
+    public static List<WindowsUpdateEvent> ReadUpdateClientHistory(ICollection<string>? errors)
     {
         var result = new List<WindowsUpdateEvent>();
+        ReadUpdateClientLog("System", $"Provider[@Name='{WuClientProvider}'] and ", WuSystemLogEventIds, result, errors);
+        ReadUpdateClientLog(WuClientOperationalLog, string.Empty, WuOperationalEventIds, result, errors);
+        return result.OrderByDescending(e => e.TimeCreated).ToList();
+    }
+
+    /// <summary>Parameterless form for callers that only correlate (StabilityViewModel's #781 flags).</summary>
+    public static List<WindowsUpdateEvent> ReadUpdateClientHistory() => ReadUpdateClientHistory(null);
+
+    private static void ReadUpdateClientLog(string logName, string providerClause, int[] eventIds,
+        List<WindowsUpdateEvent> into, ICollection<string>? errors)
+    {
         try
         {
             long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
-            string idFilter = string.Join(" or ", WuClientEventIds.Select(id => $"EventID={id}"));
-            var query = new EventLogQuery(WuClientLog, PathType.LogName,
-                $"*[System[({idFilter}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            string idFilter = string.Join(" or ", eventIds.Select(id => $"EventID={id}"));
+            var query = new EventLogQuery(logName, PathType.LogName,
+                $"*[System[{providerClause}({idFilter}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
             {
                 ReverseDirection = true,
             };
 
             using var reader = new EventLogReader(query);
             int count = 0;
-            const int maxEvents = 500;
+            const int maxEvents = 500; // per log, newest first
             while (count < maxEvents && reader.ReadEvent() is { } record)
             {
                 using (record)
@@ -68,7 +86,7 @@ public static class WindowsUpdateHistoryService
                     try { message = record.FormatDescription() ?? string.Empty; }
                     catch { message = string.Empty; } // provider's message file isn't registered - a known, common gap
 
-                    result.Add(new WindowsUpdateEvent
+                    into.Add(new WindowsUpdateEvent
                     {
                         TimeCreated = record.TimeCreated.Value,
                         EventId = record.Id,
@@ -81,20 +99,21 @@ public static class WindowsUpdateHistoryService
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Channel unavailable/access denied - degrade to "no update history found".
+            // Channel missing/disabled/access denied - reported, not shown as "no history".
+            errors?.Add($"{logName}: {ex.Message}");
         }
-        return result.OrderByDescending(e => e.TimeCreated).ToList();
     }
 
     private static string KindLabel(int eventId) => eventId switch
     {
         19 => "Install succeeded",
         20 => "Install failed",
-        21 => "Download succeeded",
-        25 => "Download failed",
-        31 => "Reboot required",
+        21 or 22 => "Restart required",
+        25 => "Scan failed",
+        31 => "Download failed",
+        41 => "Downloaded",
         43 => "Install started",
         44 => "Download started",
         _ => $"Event {eventId}",
@@ -104,8 +123,10 @@ public static class WindowsUpdateHistoryService
 
     private const string SetupLog = "Setup";
     private const string ServicingProvider = "Microsoft-Windows-Servicing";
-    private static readonly int[] SetupEventIds = { 1, 2, 3, 4 };
-    private static readonly HashSet<int> SetupFailureEventIds = new() { 3, 4 };
+    // Manifest: 3 "failed to be changed" and 6 "failed ... and is now partially installed" are the
+    // failures; 4 is "a reboot is necessary before package ... can be changed", not a failure.
+    private static readonly int[] SetupEventIds = { 1, 2, 3, 4, 6 };
+    private static readonly HashSet<int> SetupFailureEventIds = new() { 3, 6 };
 
     // Every observed Microsoft-Windows-Servicing message names the affected package right after
     // the word "package" - the same "extract from the rendered message, not an unverified indexed
@@ -114,11 +135,11 @@ public static class WindowsUpdateHistoryService
     private static readonly Regex PackageNameRegex = new(@"package\s+([^\s,;]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>#771: reads the Setup channel (provider Microsoft-Windows-Servicing) for change-
-    /// initiated (1), state-changed (2), and failure (3/4) events. Degrades to an empty list the
-    /// same way every other event-log read in this service does - the Setup channel is enabled by
-    /// default on a stock Windows install, unlike Task Scheduler's operational log, so no
-    /// enable-prompt is needed here.</summary>
-    public static List<ServicingChannelEvent> ReadSetupChannelEvents()
+    /// initiated (1), state-changed (2), reboot-needed (4) and failure (3/6) events. A failed read
+    /// is reported through <paramref name="errors"/> - the Setup channel is enabled by default on a
+    /// stock Windows install, unlike Task Scheduler's operational log, so no enable-prompt is
+    /// needed here.</summary>
+    public static List<ServicingChannelEvent> ReadSetupChannelEvents(ICollection<string>? errors)
     {
         var result = new List<ServicingChannelEvent>();
         try
@@ -159,12 +180,15 @@ public static class WindowsUpdateHistoryService
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Log/provider unavailable/access denied - degrade to "no servicing history found".
+            // Log/provider unavailable/access denied - reported, not shown as "no servicing history".
+            errors?.Add($"{SetupLog}: {ex.Message}");
         }
         return result.OrderByDescending(e => e.TimeCreated).ToList();
     }
+
+    public static List<ServicingChannelEvent> ReadSetupChannelEvents() => ReadSetupChannelEvents(null);
 
     /// <summary>#771: mutates each failed WU-client event's ServicingCorrelationText in place with
     /// the nearest Setup-channel failure within a 15-minute window (both logs are written within

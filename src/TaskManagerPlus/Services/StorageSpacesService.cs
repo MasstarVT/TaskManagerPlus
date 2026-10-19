@@ -74,9 +74,9 @@ public static class StorageSpacesService
                 int health = 0;
                 try { health = Convert.ToInt32(vdisk["HealthStatus"] ?? 0); } catch { /* leave 0 (Healthy) */ }
 
-                long size = 0, allocatedSize = 0;
+                long size = 0;
                 try { size = Convert.ToInt64(vdisk["Size"] ?? 0L); } catch { /* leave 0 */ }
-                try { allocatedSize = Convert.ToInt64(vdisk["AllocatedSize"] ?? 0L); } catch { /* leave 0 */ }
+                long? allocatedSize = ReadOptionalInt64(vdisk, "AllocatedSize");
 
                 int provisioningType = 0;
                 try { provisioningType = Convert.ToInt32(vdisk["ProvisioningType"] ?? 0); } catch { /* leave 0 */ }
@@ -209,9 +209,9 @@ public static class StorageSpacesService
 
                 var opCodes = (phys["OperationalStatus"] as ushort[]) ?? Array.Empty<ushort>();
 
-                long size = 0, allocated = 0;
+                long size = 0;
                 try { size = Convert.ToInt64(phys["Size"] ?? 0L); } catch { /* leave 0 */ }
-                try { allocated = Convert.ToInt64(phys["AllocatedSize"] ?? 0L); } catch { /* leave 0 */ }
+                long? allocated = ReadOptionalInt64(phys, "AllocatedSize");
 
                 members.Add(new PoolMemberDiskInfo
                 {
@@ -325,6 +325,14 @@ public static class StorageSpacesService
             return $"Pool is {physicalUsedPercent:0}% physically allocated ({Formatting.FormatBytes(poolAllocated)} of {Formatting.FormatBytes(poolSize)}) with thin provisioning in use - worth watching before it fills.{thresholdText}";
         }
         return string.Empty;
+    }
+
+    /// <summary>Null (shown as Unknown) when a provider leaves the property unset or it doesn't
+    /// convert - a third-party Storage Management Provider needn't populate AllocatedSize.</summary>
+    private static long? ReadOptionalInt64(ManagementObject obj, string property)
+    {
+        try { return obj[property] is { } v ? Convert.ToInt64(v) : null; }
+        catch { return null; }
     }
 
     private static string? ReadOwningPoolName(ManagementObject vdisk)

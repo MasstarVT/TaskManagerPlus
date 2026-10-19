@@ -21,11 +21,9 @@ public partial class WindowsHealthView : UserControl
             // Filter to the flagged service when there's exactly one (any of the update-stack
             // services, not always wuauserv); several can't share one text filter, so clear it.
             var flagged = mainViewModel.WindowsHealth.UpdateServiceStackHealth.Where(s => s.IsFlagged).ToList();
-            var services = mainViewModel.Services;
-            // The jump lands in the services grid, so neither sub-view may be hiding it.
-            services.ShowDrivers = false;
-            services.ShowSvcHostGroups = false;
-            services.FilterText = flagged.Count == 1 ? flagged[0].ServiceName : string.Empty;
+            // ShowService also clears the sub-views and the checkbox filters (ANDed with the name),
+            // which would otherwise leave the grid empty.
+            mainViewModel.Services.ShowService(flagged.Count == 1 ? flagged[0].ServiceName : string.Empty);
         }
         window.SelectTabByName("Services");
     }

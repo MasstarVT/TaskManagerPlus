@@ -46,7 +46,8 @@ public sealed class StorageSpaceInfo : ObservableObject
     public string RepairStatusText { get => _repairStatusText; set => SetProperty(ref _repairStatusText, value); }
 
     // ---- #388: thin provisioning ------------------------------------------------------------
-    public long AllocatedSizeBytes { get; init; }
+    /// <summary>Null when the provider left AllocatedSize unset or it didn't convert.</summary>
+    public long? AllocatedSizeBytes { get; init; }
     public string ProvisioningTypeText { get; init; } = "Unknown";
 
     /// <summary>Empty when this virtual disk's pool has no thin virtual disk at all (#388's brief:
@@ -56,5 +57,5 @@ public sealed class StorageSpaceInfo : ObservableObject
     public bool ShowThinProvisioningWarning => ThinProvisioningWarningText.Length > 0;
 
     public string SizeText => Formatting.FormatBytes(SizeBytes);
-    public string AllocatedSizeText => Formatting.FormatBytesMeasured(AllocatedSizeBytes);
+    public string AllocatedSizeText => AllocatedSizeBytes is { } b ? Formatting.FormatBytesMeasured(b) : "Unknown";
 }

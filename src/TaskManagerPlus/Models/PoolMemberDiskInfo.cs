@@ -21,8 +21,9 @@ public sealed class PoolMemberDiskInfo
     public bool IsUnhealthy { get; init; }
 
     public long SizeBytes { get; init; }
-    public long AllocatedSizeBytes { get; init; }
+    /// <summary>Null when the provider left AllocatedSize unset or it didn't convert.</summary>
+    public long? AllocatedSizeBytes { get; init; }
 
     public string SizeText => Formatting.FormatBytes(SizeBytes);
-    public string AllocatedText => Formatting.FormatBytesMeasured(AllocatedSizeBytes);
+    public string AllocatedText => AllocatedSizeBytes is { } b ? Formatting.FormatBytesMeasured(b) : "Unknown";
 }
