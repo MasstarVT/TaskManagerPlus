@@ -204,5 +204,5 @@ public static class DriverInstallLogService
             System.Globalization.DateTimeStyles.None, out var parsed) ? parsed : null;
     }
 
-    private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "â€¦";
+    private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
 }

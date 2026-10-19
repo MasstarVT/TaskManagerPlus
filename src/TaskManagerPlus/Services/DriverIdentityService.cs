@@ -88,6 +88,9 @@ public static class DriverIdentityService
         int idxModule = header.FindIndex(h => h.Equals("Module Name", StringComparison.OrdinalIgnoreCase));
         int idxDisplay = header.FindIndex(h => h.Equals("Display Name", StringComparison.OrdinalIgnoreCase));
         int idxLinkDate = header.FindIndex(h => h.Equals("Link Date", StringComparison.OrdinalIgnoreCase));
+        // The header is localized (driverquery.exe.mui), but `/v /fo csv` always emits the same 15
+        // columns in the same order - fall back to their positions.
+        if (idxModule < 0 && header.Count == 15) (idxModule, idxDisplay, idxLinkDate) = (0, 1, 12);
         if (idxModule < 0) return rows;
 
         foreach (var line in lines.Skip(1))

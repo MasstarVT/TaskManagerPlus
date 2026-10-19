@@ -107,7 +107,9 @@ public sealed class CrashTimelineRowViewModel : ObservableObject
         IsLoadingLogCorrelation = true;
         try
         {
-            var result = await CrashCorrelationService.BuildLogCorrelationAsync(Row.Timestamp);
+            // Minidump write times and Kernel-Power 41 are stamped during the next boot.
+            bool stampedAfterReboot = Row.SourceType is CrashTimelineSourceType.Bugcheck or CrashTimelineSourceType.UnexpectedShutdown;
+            var result = await CrashCorrelationService.BuildLogCorrelationAsync(Row.Timestamp, stampedAfterReboot);
             LogCorrelation = result;
 
             if (result.HasCoverage)

@@ -51,10 +51,12 @@ public static class CpuFeatureService
         try
         {
             using var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\CentralProcessor\0");
-            if (key?.GetValue("Update Revision") is byte[] bytes && bytes.Length >= 8)
+            if (key?.GetValue("Update Revision") is byte[] bytes)
             {
-                uint revision = BitConverter.ToUInt32(bytes, 4);
-                return $"0x{revision:X8}";
+                // Intel stores 8 bytes with the revision in the high DWORD; AMD stores just the
+                // 4-byte revision.
+                if (bytes.Length >= 8) return $"0x{BitConverter.ToUInt32(bytes, 4):X8}";
+                if (bytes.Length >= 4) return $"0x{BitConverter.ToUInt32(bytes, 0):X8}";
             }
         }
         catch

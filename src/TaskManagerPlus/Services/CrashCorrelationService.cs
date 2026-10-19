@@ -837,7 +837,14 @@ public static class CrashCorrelationService
 
     private const int LogCorrelationWindowMinutes = 2;
 
-    public static Task<CrashLogCorrelationResult> BuildLogCorrelationAsync(DateTime crashTimestamp) => Task.Run(() =>
+    // How far back from a next-boot timestamp the crash itself can plausibly be (crash, dump write,
+    // reboot, logon) when looking for the last sample the log recorded before it.
+    private const int RebootGapMaxMinutes = 60;
+
+    /// <param name="stampedAfterReboot">The row's time comes from the following boot (a minidump's
+    /// write time, Kernel-Power 41) - the window is then anchored at the last sample the log
+    /// recorded before that time, not at the timestamp itself (which falls in the reboot gap).</param>
+    public static Task<CrashLogCorrelationResult> BuildLogCorrelationAsync(DateTime crashTimestamp, bool stampedAfterReboot = false) => Task.Run(() =>
     {
         var windowStart = crashTimestamp.AddMinutes(-LogCorrelationWindowMinutes);
         string logsDir = AppPaths.GetPath("Logs");
@@ -871,14 +878,27 @@ public static class CrashCorrelationService
         {
             var (result, _) = LogReplayService.Parse(path);
             if (result is null || result.Timestamps.Count == 0) continue;
+
+            DateTime fileWindowEnd = crashTimestamp, fileWindowStart = windowStart;
+            if (stampedAfterReboot)
+            {
+                // Last sample at or before the next-boot timestamp, if it's within the reboot gap.
+                DateTime? lastBefore = null;
+                foreach (var ts in result.Timestamps) if (ts <= crashTimestamp) lastBefore = ts; else break;
+                if (lastBefore is { } anchor && crashTimestamp - anchor <= TimeSpan.FromMinutes(RebootGapMaxMinutes))
+                {
+                    fileWindowEnd = anchor;
+                    fileWindowStart = anchor.AddMinutes(-LogCorrelationWindowMinutes);
+                }
+            }
             // Quick reject: this file's own time range doesn't even touch the crash window.
-            if (result.Timestamps[0] > crashTimestamp || result.Timestamps[^1] < windowStart) continue;
+            if (result.Timestamps[0] > fileWindowEnd || result.Timestamps[^1] < fileWindowStart) continue;
 
             var points = new List<CrashLogCorrelationPoint>();
             for (int i = 0; i < result.Timestamps.Count; i++)
             {
                 var ts = result.Timestamps[i];
-                if (ts < windowStart || ts > crashTimestamp) continue;
+                if (ts < fileWindowStart || ts > fileWindowEnd) continue;
                 points.Add(new CrashLogCorrelationPoint
                 {
                     Timestamp = ts,
@@ -900,7 +920,9 @@ public static class CrashCorrelationService
                     HasCoverage = points.Count > 0,
                     SourceFileName = Path.GetFileName(path),
                     Points = points,
-                    StatusText = $"{points.Count} sample(s) from {Path.GetFileName(path)}, covering the {LogCorrelationWindowMinutes} minute(s) before this event.",
+                    StatusText = fileWindowEnd < crashTimestamp
+                        ? $"{points.Count} sample(s) from {Path.GetFileName(path)}: the last {LogCorrelationWindowMinutes} minute(s) it recorded before the restart this event was logged after."
+                        : $"{points.Count} sample(s) from {Path.GetFileName(path)}, covering the {LogCorrelationWindowMinutes} minute(s) before this event.",
                 };
             }
         }

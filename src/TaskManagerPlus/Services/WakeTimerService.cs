@@ -44,6 +44,7 @@ public static class WakeTimerService
             return (new List<WakeSourceRow>(), "No active wake timers.");
 
         var rows = new List<WakeSourceRow>();
+        bool anyTagged = false;
         string? pendingName = null;
         var detailLines = new List<string>();
 
@@ -63,6 +64,7 @@ public static class WakeTimerService
             var sourceMatch = SourceTagRegex.Match(line);
             if (sourceMatch.Success)
             {
+                anyTagged = true;
                 Flush();
                 pendingName = sourceMatch.Groups[2].Value.Trim();
                 if (sourceMatch.Groups[3].Success) detailLines.Add($"Expires at {sourceMatch.Groups[3].Value.Trim()}.");
@@ -78,6 +80,9 @@ public static class WakeTimerService
         }
         Flush();
 
+        // A successful run with no [PROCESS]/[SERVICE]/[DRIVER] entry at all is the "none" message -
+        // localized on a non-English install, so it can't be matched by its English text above.
+        if (!anyTagged) return (new List<WakeSourceRow>(), "No active wake timers.");
         return (rows, rows.Count == 0 ? "No active wake timers." : $"{rows.Count} active wake timer(s).");
     }
 
