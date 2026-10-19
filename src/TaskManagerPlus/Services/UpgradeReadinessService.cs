@@ -93,10 +93,14 @@ public static class UpgradeReadinessService
         else if (security.TpmPresent == true && security.TpmReady == false) blockers.Add("A TPM is present but not activated/enabled/owned.");
 
         // Windows 11 requires UEFI firmware that is Secure Boot capable - not Secure Boot turned
-        // on - so off-on-UEFI is advisory; legacy BIOS boot is the real blocker.
+        // on - so off-on-UEFI is advisory; legacy BIOS boot is the real blocker. Only a confirmed
+        // GetFirmwareType answer blocks - the registry-fallback "Legacy BIOS (assumed ...)" guess
+        // is advisory.
         var advisories = new List<string>();
-        if (firmwareDisk.FirmwareType.StartsWith("Legacy BIOS", StringComparison.OrdinalIgnoreCase))
+        if (firmwareDisk.FirmwareType.Equals("Legacy BIOS", StringComparison.OrdinalIgnoreCase))
             blockers.Add("This PC boots in legacy BIOS mode (Windows 11 needs UEFI firmware with Secure Boot capability).");
+        else if (firmwareDisk.FirmwareType.StartsWith("Legacy BIOS", StringComparison.OrdinalIgnoreCase))
+            advisories.Add("This PC looks like it boots in legacy BIOS mode (inferred - the firmware type couldn't be read directly). Windows 11 needs UEFI with Secure Boot capability; worth checking in the firmware settings.");
         else if (security.SecureBootEnabled == false)
             advisories.Add("Secure Boot is off. Windows 11 only needs a Secure Boot-capable PC, but turning it on in the firmware settings is recommended.");
         if (firmwareDisk.IsHardBlocker) blockers.Add("The system disk is MBR-partitioned (needs GPT for UEFI/Secure Boot).");
