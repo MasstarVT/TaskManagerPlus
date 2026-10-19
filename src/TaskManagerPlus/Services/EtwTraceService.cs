@@ -108,6 +108,12 @@ public static class EtwTraceService
         {
             var (output, exitCode) = await RunCapturedAsync("logman.exe", $"query \"{sessionName}\" -ets", 15000, ct);
             row.RawDetailText = output;
+            // A timeout's placeholder text isn't session detail - parsing it would mark the row loaded with no data.
+            if (exitCode is null)
+            {
+                row.DetailError = "Timed out reading session detail.";
+                return row;
+            }
             if (string.IsNullOrWhiteSpace(output) || (exitCode is not null && exitCode != 0 && !LooksLikeSessionDetail(output)))
             {
                 row.DetailError = "Couldn't read session detail (access denied, or the session ended before this ran).";
@@ -564,6 +570,15 @@ public static class EtwTraceService
         return success ? (true, "Capture cancelled.") : (false, ExplainWprError(output));
     }
 
+    /// <summary>Synchronous, bounded `wpr -cancel` for app shutdown: a WPR session keeps recording
+    /// in the kernel after this process exits, and a -filemode one keeps growing its file on disk.
+    /// Stopping (merging) can take minutes, so exit discards instead of saving.</summary>
+    public static void CancelCaptureBlocking()
+    {
+        try { ToolRunner.RunCaptured("wpr.exe", "-cancel", TimeSpan.FromSeconds(10)); }
+        catch { /* best-effort - nothing more to do at exit */ }
+    }
+
     /// <summary>#152's status card (`wpr -status profiles collectors -details`). The idle sentinel
     /// text ("WPR is not recording") is verified live and stable; the active-recording shape wasn't
     /// verified against a live capture while building this (starting one here requires the
@@ -576,8 +591,15 @@ public static class EtwTraceService
         var result = new WprStatusResult();
         try
         {
-            var (output, _) = await RunCapturedAsync("wpr.exe", "-status profiles collectors -details", 15000, ct);
+            var (output, exitCode) = await RunCapturedAsync("wpr.exe", "-status profiles collectors -details", 15000, ct);
             result.RawText = output;
+            // Timed out: the recording state is unknown, not "recording" - the timeout placeholder
+            // text isn't the idle sentinel, so the check below would otherwise read it as active.
+            if (exitCode is null)
+            {
+                result.ErrorMessage = "wpr -status timed out - recording state unknown.";
+                return result;
+            }
             result.IsRecording = !output.Contains("is not recording", StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(output);
 
@@ -728,7 +750,12 @@ public static class EtwTraceService
             string reportPath = Path.Combine(scratchDir, "report.html");
 
             string args = $"\"{etlPath}\" -o \"{dumpPath}\" -of XML -summary \"{summaryPath}\" -report \"{reportPath}\" -f HTML -y";
-            var (output, _) = await RunCapturedAsync("tracerpt.exe", args, 300000, ct); // a large/verbose trace can take minutes to process
+            var (output, exitCode) = await RunCapturedAsync("tracerpt.exe", args, 300000, ct); // a large/verbose trace can take minutes to process
+            if (exitCode is null)
+            {
+                result.ErrorMessage = "tracerpt timed out after 5 minutes - the trace may be too large to summarize here; open it in WPA instead.";
+                return result;
+            }
 
             if (!File.Exists(summaryPath))
             {
@@ -863,7 +890,7 @@ public static class EtwTraceService
 
         var (createOutput, createExit) = await RunCapturedAsync(
             "logman.exe", $"create trace {sessionName} -rt -p \"{providerName}\" 0xffffffffffffffff 5", 15000, ct);
-        if (createExit is not null && createExit != 0 && !createOutput.Contains(sessionName, StringComparison.OrdinalIgnoreCase))
+        if (createExit is null || (createExit != 0 && !createOutput.Contains(sessionName, StringComparison.OrdinalIgnoreCase)))
         {
             return (null, string.IsNullOrWhiteSpace(createOutput)
                 ? "Couldn't create the real-time session (logman create trace failed)."
@@ -971,7 +998,11 @@ public static class EtwTraceService
         {
             Directory.CreateDirectory(scratchDir);
             string args = $"\"{etlPath}\" -of CSV -o \"{rawCsvPath}\" -y";
-            var (output, _) = await RunCapturedAsync("tracerpt.exe", args, 300000, ct); // a large/verbose trace can take minutes to re-parse
+            var (output, exitCode) = await RunCapturedAsync("tracerpt.exe", args, 300000, ct); // a large/verbose trace can take minutes to re-parse
+
+            // Killed at the timeout, tracerpt leaves a truncated raw.csv behind - not a complete export.
+            if (exitCode is null)
+                return (false, "tracerpt timed out after 5 minutes - the trace is too large to export here; open it in WPA instead.", 0);
 
             if (!File.Exists(rawCsvPath))
             {

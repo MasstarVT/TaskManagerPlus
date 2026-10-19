@@ -4,22 +4,27 @@ using System.IO;
 namespace TaskManagerPlus.Services;
 
 /// <summary>
-/// #465: best-effort NT Kernel Logger capture (via logman.exe, the same "known Windows tool over
-/// raw ETW consumption" tradeoff this app takes everywhere else) of kernel image-load events, to
-/// catch drivers/modules loading and unloading at runtime. This codebase has no TraceEvent-style
+/// #465: best-effort ETW capture (via logman.exe, the same "known Windows tool over raw ETW
+/// consumption" tradeoff this app takes everywhere else) of image-load events, to catch
+/// drivers/modules loading and unloading at runtime. This codebase has no TraceEvent-style
 /// ETL parser (confirmed by the earlier "hard-fault attribution" #433 chunk - see
 /// PageFaultTraceService's own remarks, whose exact Start/Stop/logman shape this duplicates), so
 /// the payoff here is strictly "here's a real .etl trace, open it in Windows Performance Analyzer" -
 /// full in-app ETW event consumption is out of scope without a new heavy dependency.
 ///
-/// IMAGE_LOAD is the NT Kernel Logger keyword for image (driver/DLL) load/unload events; PROC_THREAD
-/// is included alongside it the same way PageFaultTraceService pairs its own keywords with
-/// PROC_THREAD, so loaded images can at least be correlated with the process that triggered the
-/// load when inspecting the trace in WPA.
+/// The provider is the manifest-based Microsoft-Windows-Kernel-Process, not the classic "Windows
+/// Kernel Trace": that one only runs under the reserved, system-wide "NT Kernel Logger" session
+/// name (any other name is rejected - see DpcLatencyService's remarks), which the Responsiveness
+/// tab's DPC/ISR sampling stops and restarts every few seconds. Kernel-Process takes an ordinary
+/// session name. Its keywords (`logman query providers Microsoft-Windows-Kernel-Process`):
+/// 0x40 image (events 5/6, ImageLoad/ImageUnload), plus 0x10 process and 0x20 thread so loaded
+/// images can be correlated with the process that triggered the load when inspecting in WPA.
 /// </summary>
 public static class DriverLoadTraceService
 {
     private const string SessionName = "TaskManagerPlusDriverLoadTrace";
+    private const string Provider = "Microsoft-Windows-Kernel-Process";
+    private const string Keywords = "0x70";
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(15);
 
     /// <summary>Starts the trace session, writing to a fresh file under
@@ -38,10 +43,10 @@ public static class DriverLoadTraceService
         await RunLogmanAsync($"stop {SessionName} -ets");
 
         var (success, _, error) = await RunLogmanAsync(
-            $"start {SessionName} -p \"Windows Kernel Trace\" (PROC_THREAD,IMAGE_LOAD) -o \"{filePath}\" -ets");
+            $"start {SessionName} -p \"{Provider}\" {Keywords} 5 -o \"{filePath}\" -ets");
 
         return success
-            ? (true, filePath, "Kernel image-load trace capture started - driver/module loads and unloads are being recorded to the .etl file until you stop the capture.")
+            ? (true, filePath, "Image-load trace capture started - driver/module loads and unloads are being recorded to the .etl file until you stop the capture.")
             : (false, null, string.IsNullOrWhiteSpace(error) ? "logman couldn't start the trace session." : error);
     }
 

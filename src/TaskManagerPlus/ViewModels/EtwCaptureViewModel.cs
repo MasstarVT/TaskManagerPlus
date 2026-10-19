@@ -270,6 +270,10 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
 
     private EtwTraceService.EtwRealtimeTailHandle? _tailHandle;
 
+    // The previous tail's teardown (logman stop + delete, two blocking shell-outs) runs off the UI
+    // thread; a restart reuses the same session name, so it waits for this first.
+    private Task _tailTeardown = Task.CompletedTask;
+
     public AsyncRelayCommand StartTailCommand { get; }
     public RelayCommand StopTailCommand { get; }
     public RelayCommand ClearTailOutputCommand { get; }
@@ -283,16 +287,23 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         TailStatusText = "Starting real-time session...";
         _tailBuffer.Clear();
         TailOutputText = string.Empty;
+        await _tailTeardown;
 
+        EtwTraceService.EtwRealtimeTailHandle? started = null;
         var (handle, message) = await EtwTraceService.StartRealtimeTailAsync(
             provider,
             onLine: line => Application.Current?.Dispatcher.BeginInvoke(() => AppendTailLine(line)),
             onExited: msg => Application.Current?.Dispatcher.BeginInvoke(() =>
             {
+                // Also fires when StopTail's own kill ends tracerpt - only act for the tail still current.
+                if (started is null || !ReferenceEquals(_tailHandle, started)) return;
                 TailStatusText = msg;
                 IsTailing = false;
                 _tailHandle = null;
+                // tracerpt exiting on its own doesn't end the logman session - the handle's teardown does.
+                _tailTeardown = Task.Run(started.Dispose);
             }));
+        started = handle;
 
         if (handle is null)
         {
@@ -318,10 +329,11 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
     /// same way an explicit Stop click does.</summary>
     private void StopTail()
     {
-        _tailHandle?.Dispose();
+        var handle = _tailHandle;
         _tailHandle = null;
         IsTailing = false;
         TailStatusText = "Real-time tail stopped.";
+        if (handle is not null) _tailTeardown = Task.Run(handle.Dispose);
     }
 
     private void ClearTailOutput()
@@ -1131,8 +1143,8 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         GenerateNotesCommand = new AsyncRelayCommand(GenerateNotesAsync, () => !IsGeneratingNotes && LastEtlPath is not null);
 
         ArmBootTraceCommand = new RelayCommand(_ => ArmBootTrace(), _ => !IsBootTraceBusy && !IsBootTracePending && !ReadOnlyModeService.IsReadOnly);
-        CollectBootTraceCommand = new AsyncRelayCommand(CollectBootTraceAsync, () => !IsBootTraceBusy && IsBootTracePending);
-        CancelBootTraceCommand = new AsyncRelayCommand(CancelBootTraceAsync, () => !IsBootTraceBusy && IsBootTracePending);
+        CollectBootTraceCommand = new AsyncRelayCommand(CollectBootTraceAsync, () => !IsBootTraceBusy && IsBootTracePending && !ReadOnlyModeService.IsReadOnly);
+        CancelBootTraceCommand = new AsyncRelayCommand(CancelBootTraceAsync, () => !IsBootTraceBusy && IsBootTracePending && !ReadOnlyModeService.IsReadOnly);
         DismissBootTraceBannerCommand = new RelayCommand(_ => DismissBootTraceBanner());
 
         RefreshWprStatusCommand = new AsyncRelayCommand(RefreshWprStatusAsync, () => !IsStatusLoading);
@@ -1157,5 +1169,11 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         // EventsViewModel.Dispose disposing its own live watchers/handles.
         _tailHandle?.Dispose();
         _tailHandle = null;
+        // A Stop clicked just before exit: let its background teardown finish rather than be cut off.
+        try { _tailTeardown.Wait(TimeSpan.FromSeconds(20)); } catch { /* best-effort */ }
+
+        // A capture started here outlives the process (and a -filemode one keeps filling the disk)
+        // unless it is ended - the async Stop path can't run once the dispatcher has shut down.
+        if (IsCapturing) EtwTraceService.CancelCaptureBlocking();
     }
 }

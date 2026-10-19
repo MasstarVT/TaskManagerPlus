@@ -51,8 +51,9 @@ public static class WprCaptureService
         // A WPR session outlives the process that started it (until reboot), so one this app armed
         // and never tore down - a crash or kill - makes every later -start fail. The marker file
         // says exactly that happened, so only then is it cancelled first; an unrelated WPR session
-        // (another tab's capture, the user's own) is left alone.
-        if (File.Exists(ArmedMarkerPath))
+        // (another tab's capture, the user's own) is left alone. The marker is shared with
+        // CaptureAsync's file-mode session, so a file-mode capture in flight right now isn't one.
+        if (File.Exists(ArmedMarkerPath) && !IsFileCaptureRunning)
             await RunAsync(WprPath, "-cancel", TimeSpan.FromSeconds(10), CancellationToken.None, ignoreExitCode: true);
 
         var (startOk, startMsg) = await RunAsync(WprPath, "-start GeneralProfile", TimeSpan.FromSeconds(30), ct);
@@ -70,7 +71,11 @@ public static class WprCaptureService
         return (true, "ETW circular capture running (in-memory buffer, nothing written to disk yet).");
     }
 
+    // Present while a WPR session this app started (circular or CaptureAsync's file-mode one) may
+    // still be running; the file name predates the file-mode use.
     private static string ArmedMarkerPath => AppPaths.GetPath("wpr-circular-armed.marker");
+
+    private static bool IsFileCaptureRunning { get; set; }
 
     private static void ClearArmedMarker()
     {
@@ -116,6 +121,7 @@ public static class WprCaptureService
         try { ToolRunner.RunCaptured(WprPath, "-cancel", TimeSpan.FromSeconds(5)); }
         catch { /* best-effort */ }
         IsCircularCaptureRunning = false;
+        IsFileCaptureRunning = false;
         ClearArmedMarker();
     }
 
@@ -131,17 +137,21 @@ public static class WprCaptureService
         string etl = Path.Combine(dir, $"capture_{DateTime.Now:yyyyMMdd_HHmmss}.etl");
         string report = Path.ChangeExtension(etl, ".report.html");
 
-        // Best-effort: cancel any stale WPR session left over from a previous crashed/killed run.
-        // Known limitation: only one WPR session is allowed per user, so this also cancels a #298
-        // circular capture if one happens to be armed at the same moment - a genuine collision
-        // between the two capture modes, left as-is for this chunk rather than adding session
-        // hand-off logic between two independently-triggered capture paths.
-        if (!IsCircularCaptureRunning)
+        // Cancel first only a stale session this app's own crashed/killed run left behind (the
+        // marker) - a blind `wpr -cancel` would also end the ETW panel's capture or the user's own
+        // WPR recording. Any other session already running makes -start below fail instead.
+        if (!IsCircularCaptureRunning && File.Exists(ArmedMarkerPath))
+        {
             await RunAsync(WprPath, "-cancel", TimeSpan.FromSeconds(10), CancellationToken.None, ignoreExitCode: true);
+            ClearArmedMarker();
+        }
 
         var (startOk, startMsg) = await RunAsync(WprPath, "-start GeneralProfile -filemode", TimeSpan.FromSeconds(30), ct);
         if (!startOk)
             return (false, $"Couldn't start the WPR capture: {startMsg}", null, null);
+
+        IsFileCaptureRunning = true;
+        try { File.WriteAllText(ArmedMarkerPath, DateTime.UtcNow.ToString("o")); } catch { /* best-effort */ }
 
         try
         {
@@ -150,10 +160,14 @@ public static class WprCaptureService
         catch (OperationCanceledException)
         {
             await RunAsync(WprPath, "-cancel", TimeSpan.FromSeconds(10), CancellationToken.None, ignoreExitCode: true);
+            IsFileCaptureRunning = false;
+            ClearArmedMarker();
             throw;
         }
 
         var (stopOk, stopMsg) = await RunAsync(WprPath, $"-stop \"{etl}\"", TimeSpan.FromSeconds(60), CancellationToken.None);
+        IsFileCaptureRunning = false;
+        ClearArmedMarker();
         if (!stopOk || !File.Exists(etl))
             return (false, $"Couldn't stop/save the WPR capture: {stopMsg}", null, null);
 

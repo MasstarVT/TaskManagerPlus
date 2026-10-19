@@ -195,6 +195,11 @@ public sealed class DpcLatencyService
 
         try
         {
+            // The Memory tab's page-fault capture holds this same singleton logger; the stop below
+            // would end that trace silently.
+            if (PageFaultTraceService.IsCapturing)
+                return (false, "The kernel logger is in use by the Memory tab's page-fault trace capture (about 30 seconds) - start the measurement again once it finishes.", 0);
+
             // Best-effort cleanup of a stale session left over from a previous crashed/killed run -
             // errors ignored, and deliberately not tied to the caller's token so it always runs.
             await RunProcessAsync(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(15), CancellationToken.None, ignoreExitCode: true);
@@ -224,7 +229,10 @@ public sealed class DpcLatencyService
             if (!convOk || !File.Exists(xml))
                 return (false, $"tracerpt couldn't convert the trace: {convErr}", 0);
 
-            int parsed = ParseAndIngest(xml);
+            // Loading a multi-MB trace XML and building a field map per event stays off the UI
+            // thread; only the ingest, which mutates state the view model reads, runs back here.
+            var events = await Task.Run(() => ParseEvents(xml));
+            int parsed = Ingest(events);
             SampleSequence++;
             string message = parsed == 0
                 ? "Trace captured, but no recognizable DPC/ISR events could be parsed from it on this Windows build."
@@ -255,15 +263,24 @@ public sealed class DpcLatencyService
         return string.IsNullOrWhiteSpace(raw) ? "Couldn't start the kernel trace." : $"Couldn't start the kernel trace: {raw}";
     }
 
-    private int ParseAndIngest(string xmlPath)
+    private readonly record struct ParsedEvent(bool IsDpc, string DriverName, double DurationUs, bool IsTimer);
+
+    private int Ingest(List<ParsedEvent> events)
     {
         LastSampleMaxDpcUs = 0;
+        foreach (var e in events) IngestOne(e.IsDpc, e.DriverName, e.DurationUs, e.IsTimer);
+        return events.Count;
+    }
+
+    /// <summary>Pure parse - no instance state touched, so it can run on the thread pool.</summary>
+    private static List<ParsedEvent> ParseEvents(string xmlPath)
+    {
+        var events = new List<ParsedEvent>();
         XDocument doc;
         try { doc = XDocument.Load(xmlPath); }
-        catch { return 0; }
+        catch { return events; }
 
         var moduleMap = DpcModuleMapService.GetModuleMap();
-        int parsed = 0;
 
         foreach (var fields in ExtractEventFields(doc))
         {
@@ -294,11 +311,10 @@ public sealed class DpcLatencyService
             string driverName = DpcModuleMapService.ResolveDriverName(moduleMap, addr) ?? $"0x{addr:X} (unresolved)";
             bool isTimer = fields.TryGetValue("Type", out var typeVal) && typeVal.Contains("Timer", StringComparison.OrdinalIgnoreCase);
 
-            IngestOne(isDpc, driverName, durationUs.Value, isTimer);
-            parsed++;
+            events.Add(new ParsedEvent(isDpc, driverName, durationUs.Value, isTimer));
         }
 
-        return parsed;
+        return events;
     }
 
     private void IngestOne(bool isDpc, string driverName, double durationUs, bool isTimer)

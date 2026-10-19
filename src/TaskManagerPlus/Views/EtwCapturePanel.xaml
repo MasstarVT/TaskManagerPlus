@@ -308,9 +308,9 @@
                                     </StackPanel>
                                 </Border>
                             </WrapPanel>
-                            <Border Background="{DynamicResource DangerBrush}" Opacity="0.85" CornerRadius="6" Padding="8,4"
+                            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}" BorderThickness="1" CornerRadius="6" Padding="8,4"
                                      Visibility="{Binding CaptureSpaceWarningText, Converter={StaticResource NullToVisibilityConverter}}">
-                                <TextBlock Text="{Binding CaptureSpaceWarningText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="White" />
+                                <TextBlock Text="{Binding CaptureSpaceWarningText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextPrimaryBrush}" />
                             </Border>
                         </StackPanel>
 
