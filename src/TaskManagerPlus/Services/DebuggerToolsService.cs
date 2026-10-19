@@ -109,7 +109,7 @@ public static class DebuggerToolsService
         string? exe = availability.WindbgPath ?? availability.CdbPath;
         if (exe is null) return "no debugger was found";
         string symbols = SymbolArguments(exe, symbolCacheFolder);
-        return SafeLaunchService.StartTrustedExecutable(exe, $"{symbols} -z \"{dumpPath}\"");
+        return SafeLaunchService.StartTrustedExecutable(exe, $"{symbols} -z \"{dumpPath}\"", stripDebuggerEnvironment: true);
     }
 
     /// <summary>`-y "srv*&lt;cache&gt;*https://msdl..."` from the validated cache folder (the

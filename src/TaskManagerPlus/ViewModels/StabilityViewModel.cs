@@ -2233,7 +2233,9 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         GpuHangEvents.Clear();
         foreach (var h in hangs) GpuHangEvents.Add(h);
 
-        GpuResetHistoryStatusText = summary.TdrEvents.Count == 0 && summary.DeviceRemovedEvents.Count == 0 && hangs.Count == 0
+        GpuResetHistoryStatusText = summary.ReadFailed
+            ? "Some GPU event-log reads failed - the list below may be incomplete."
+            : summary.TdrEvents.Count == 0 && summary.DeviceRemovedEvents.Count == 0 && hangs.Count == 0
             ? "No GPU resets or pre-TDR hangs found."
             : string.Empty;
     }

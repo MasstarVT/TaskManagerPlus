@@ -1030,7 +1030,8 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
             "This runs \"verifier /reset\". The change only takes effect after the next restart - if the machine is " +
             "currently bugchecking on every normal boot because of Driver Verifier, boot into Safe Mode first (see the " +
             "\"Force Safe Mode boot\" toggle below, or hold Shift while restarting / interrupt boot 3 times), run this " +
-            "reset from there, then restart normally.",
+            "reset from there, then restart normally.\n\n" +
+            (DriverVerifierService.DescribePendingPoolTagRestore() ?? "PoolTag isn't touched (this app hasn't changed it)."),
             "Reset Driver Verifier",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);

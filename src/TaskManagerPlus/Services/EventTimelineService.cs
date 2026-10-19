@@ -131,7 +131,9 @@ public sealed class EventTimelineService
                         ? $"Faulting module {mod}{(w.ExceptionCode is { Length: > 0 } code ? $", exception {code}" : string.Empty)} ({(w.IsArchived ? "archived" : "queued")})."
                         : $"WER report ({(w.IsArchived ? "archived" : "queued")}).",
                     SourceLabel = "WER report",
-                    IsCrash = true,
+                    // Hang, non-critical and live-kernel reports land in the same folders - only
+                    // a real crash report is a crash marker.
+                    IsCrash = WerReportService.IsCrashReport(w),
                 });
             }
         }

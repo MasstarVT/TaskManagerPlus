@@ -110,8 +110,10 @@ public static class SafeLaunchService
 
     /// <summary>Starts a third-party executable (WinDbg, WPA, ...) only when it and every folder
     /// above it can be modified by SYSTEM/Administrators/TrustedInstaller alone. Null on success,
-    /// otherwise the reason it was refused.</summary>
-    public static string? StartTrustedExecutable(string exePath, string? arguments = null)
+    /// otherwise the reason it was refused. <paramref name="stripDebuggerEnvironment"/> removes
+    /// the _NT_* / DBGHELP_* variables (symbol and extension paths the user can set without
+    /// elevation, which a debugger would otherwise load DLLs and symbols from) from its environment.</summary>
+    public static string? StartTrustedExecutable(string exePath, string? arguments = null, bool stripDebuggerEnvironment = false)
     {
         try
         {
@@ -120,7 +122,17 @@ public static class SafeLaunchService
             if (!full.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) return $"{full} isn't an .exe";
             string? writable = UnattendedScanService.FindNonAdminWriteAccess(full);
             if (writable is not null) return $"refused to start it elevated: {writable}";
-            using var _ = Process.Start(new ProcessStartInfo(full, arguments ?? string.Empty) { UseShellExecute = false });
+            var psi = new ProcessStartInfo(full, arguments ?? string.Empty) { UseShellExecute = false };
+            if (stripDebuggerEnvironment)
+            {
+                foreach (string key in psi.Environment.Keys.ToList())
+                {
+                    if (key.StartsWith("_NT_", StringComparison.OrdinalIgnoreCase)
+                        || key.StartsWith("DBGHELP_", StringComparison.OrdinalIgnoreCase))
+                        psi.Environment.Remove(key);
+                }
+            }
+            using var _ = Process.Start(psi);
             return null;
         }
         catch (Exception ex)

@@ -3160,7 +3160,7 @@
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Text="{Binding FamilyName}" />
                                                     <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}">
-                                                        <Run Text="{Binding TotalCount, Mode=OneWay}" /><Run Text="× · last " />
+                                                        <Run Text="{Binding TotalCountText, Mode=OneWay}" /><Run Text="× · last " />
                                                         <Run Text="{Binding LastSeen, StringFormat={}{0:g}, Mode=OneWay}" />
                                                     </TextBlock>
                                                 </Grid>
