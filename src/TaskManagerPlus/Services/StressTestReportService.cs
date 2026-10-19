@@ -51,13 +51,14 @@ public static class StressTestReportService
         Line($"# Task Manager Plus stress test report - {DescribeType(result.TestType)}");
         Line($"Run started {result.StartedAt:F} — duration {FormatDuration(result.ActualDuration)} (requested {FormatDuration(result.RequestedDuration)}).");
         Line();
-        Line($"**Result: {(result.Passed ? "PASS" : "FAIL")}**" + (result.Criteria.Aborted ? $" — aborted: {result.Criteria.AbortReason}" : string.Empty));
+        Line($"**Result: {ResultWord(result)}**" + (result.Criteria.Aborted ? $" — aborted: {result.Criteria.AbortReason}" : string.Empty)
+             + (result.Criteria.Skipped ? $" — {result.Criteria.SkipReason ?? "the workload did not run"}" : string.Empty));
         Line();
 
         Line("## Pass/fail criteria");
         Line("| Criterion | Result |");
         Line("|---|---|");
-        Line($"| Computation correct (no checksum mismatch) | {CriterionText(result.Criteria.ComputationChecked, result.Criteria.ComputationOk)} |");
+        Line($"| Computation correct (no checksum mismatch) | {(result.Criteria.Skipped ? "Not run (skipped)" : CriterionText(result.Criteria.ComputationChecked, result.Criteria.ComputationOk))} |");
         Line($"| No WHEA corrected-error delta | {(result.Criteria.NoWheaDelta ? "Pass" : "Fail")} |");
         Line($"| No display-driver reset (TDR) | {(result.Criteria.NoTdr ? "Pass" : "Fail")} |");
         Line($"| Sustained clock at/above rated base | {result.Criteria.ClockResultText} |");
@@ -130,11 +131,12 @@ public static class StressTestReportService
         Line(DiagnosticReportFormatting.HtmlDocumentOpen($"Stress test report - {DescribeType(result.TestType)} - {result.StartedAt:F}"));
         Line($"<h1>Task Manager Plus stress test report — {Esc(DescribeType(result.TestType))}</h1>");
         Line($"<p class=\"muted\">Run started {Esc(result.StartedAt.ToString("F"))} — duration {Esc(FormatDuration(result.ActualDuration))} (requested {Esc(FormatDuration(result.RequestedDuration))})</p>");
-        Line($"<p class=\"{(result.Passed ? "ok" : "crit")}\"><b>Result: {(result.Passed ? "PASS" : "FAIL")}</b>" +
-             (result.Criteria.Aborted ? $" — aborted: {Esc(result.Criteria.AbortReason ?? string.Empty)}" : string.Empty) + "</p>");
+        Line($"<p class=\"{(result.Passed ? "ok" : result.Criteria.Skipped ? "warn" : "crit")}\"><b>Result: {ResultWord(result)}</b>" +
+             (result.Criteria.Aborted ? $" — aborted: {Esc(result.Criteria.AbortReason ?? string.Empty)}" : string.Empty) +
+             (result.Criteria.Skipped ? $" — {Esc(result.Criteria.SkipReason ?? "the workload did not run")}" : string.Empty) + "</p>");
 
         Line("<h2>Pass/fail criteria</h2><table>");
-        Line($"<tr><td>Computation correct</td><td>{CriterionText(result.Criteria.ComputationChecked, result.Criteria.ComputationOk)}</td></tr>");
+        Line($"<tr><td>Computation correct</td><td>{(result.Criteria.Skipped ? "Not run (skipped)" : CriterionText(result.Criteria.ComputationChecked, result.Criteria.ComputationOk))}</td></tr>");
         Line($"<tr><td>No WHEA corrected-error delta</td><td>{(result.Criteria.NoWheaDelta ? "Pass" : "Fail")}</td></tr>");
         Line($"<tr><td>No display-driver reset (TDR)</td><td>{(result.Criteria.NoTdr ? "Pass" : "Fail")}</td></tr>");
         Line($"<tr><td>Sustained clock at/above base</td><td>{result.Criteria.ClockResultText}</td></tr>");
@@ -224,6 +226,10 @@ public static class StressTestReportService
         if (age.TotalDays >= 1) return "a day ago";
         return "earlier today";
     }
+
+    // A skipped workload tested nothing, so it is neither a pass nor a failure.
+    private static string ResultWord(StressTestRunResult result) =>
+        result.Passed ? "PASS" : result.Criteria.Skipped ? "SKIPPED" : "FAIL";
 
     private static string CriterionText(bool checked_, bool ok) => checked_ ? (ok ? "Pass" : "Fail") : "N/A (not applicable to this test type)";
 

@@ -74,7 +74,9 @@ public sealed class SensorReading
     public float? HistoricalMaxRpm { get; init; }
 
     /// <summary>#614: true when this session's max RPM for this fan is 20%+ below
-    /// HistoricalMaxRpm - see the field's remarks. Null (not false) for any non-fan reading.</summary>
+    /// HistoricalMaxRpm - see the field's remarks. Null (not false) for any non-fan reading, and
+    /// until this session has run hot long enough to have driven the fan toward its ceiling (an
+    /// idle session's max says nothing about a lost speed step).</summary>
     public bool? StepLossDetected { get; init; }
 
     /// <summary>#616: true when this fan channel's name matched a pump/AIO hint ("Pump", "AIO",

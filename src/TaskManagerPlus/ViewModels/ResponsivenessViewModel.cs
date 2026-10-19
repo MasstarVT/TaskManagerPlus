@@ -1990,8 +1990,11 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     {
         if (!_bitsLoadedOnce)
             return new BackgroundActivityRow { Key = "bits", Name = "BITS Transfers", State = BackgroundActivityState.Unknown, CostText = "Not loaded yet", HasDetail = true };
-        var state = BitsTransfers.Count > 0 ? BackgroundActivityState.Active : BackgroundActivityState.Inactive;
-        return new BackgroundActivityRow { Key = "bits", Name = "BITS Transfers", State = state, CostText = BitsTransfers.Count > 0 ? $"{BitsTransfers.Count} transfer(s)" : "No active transfers", HasDetail = true };
+        // Finished (TRANSFERRED) jobs stay in the list until their owner acknowledges them; only
+        // jobs still moving data count as background activity.
+        int active = BitsTransfers.Count(BitsTransferService.IsInProgress);
+        var state = active > 0 ? BackgroundActivityState.Active : BackgroundActivityState.Inactive;
+        return new BackgroundActivityRow { Key = "bits", Name = "BITS Transfers", State = state, CostText = active > 0 ? $"{active} active transfer(s)" : "No active transfers", HasDetail = true };
     }
 
     private BackgroundActivityRow BuildScheduledTasksRow()
