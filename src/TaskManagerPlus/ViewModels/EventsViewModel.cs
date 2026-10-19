@@ -194,6 +194,9 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     // Bumped on every start/stop: watcher callbacks are posted (BeginInvoke), so one queued just
     // before a stop can still run afterwards and must be dropped rather than land in a new list.
     private int _followGeneration;
+    // Set while Follow stays on across a reload: the new watcher is armed before the page is read,
+    // so a record written in between can arrive from both - each side skips the ids the other added.
+    private HashSet<long>? _followSeenRecordIds;
     private bool _isFollowing;
     public bool IsFollowing
     {
@@ -858,24 +861,34 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         var channel = SelectedChannel;
         if (channel is null || channel.IsGroup || !channel.IsAccessible) return;
 
-        bool resumeFollow = false;
+        bool resumedFollow = false;
         int followGeneration = 0;
         if (reset)
         {
             // A live tail of the previous query would keep inserting its rows into the new list;
             // stopping it here also drops any of its callbacks still queued.
-            if (IsFollowing)
-            {
-                StopFollow();
-                resumeFollow = true;
-                followGeneration = _followGeneration;
-            }
+            bool wasFollowing = IsFollowing;
+            if (wasFollowing) StopFollow();
             Events.Clear();
             _pageBookmark = null;
             _lastQueriedChannel = channel.Name;
             _lastQueriedXPath = string.IsNullOrWhiteSpace(RawXPathText) ? "*" : RawXPathText;
             _lastQueriedKeyword = KeywordText;
             _lastQueriedIsFilePath = channel.IsFilePath;
+
+            // Re-arm against the new query BEFORE reading: a watcher started after the read only
+            // delivers records written after it, so anything logged while the page loads would be
+            // in neither list. Its callbacks run on this thread, so none lands before the set exists.
+            if (wasFollowing)
+            {
+                IsFollowing = true;
+                if (_isFollowing)
+                {
+                    _followSeenRecordIds = new HashSet<long>();
+                    resumedFollow = true;
+                    followGeneration = _followGeneration;
+                }
+            }
         }
         else if (!string.Equals(_lastQueriedChannel, channel.Name, StringComparison.OrdinalIgnoreCase))
         {
@@ -891,8 +904,13 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             string keyword = _lastQueriedKeyword;
             var pathType = _lastQueriedIsFilePath ? PathType.FilePath : PathType.LogName;
             var result = await Task.Run(() => _service.ReadPage(_lastQueriedChannel, _lastQueriedXPath, reset ? null : _pageBookmark, pathType: pathType));
+            // Follow stopped or restarted meanwhile (tab left, channel changed, toggle clicked)
+            // bumps the generation; the watcher armed above is then no longer this load's.
+            bool stillFollowing = resumedFollow && followGeneration == _followGeneration;
             if (result.ErrorText is not null)
             {
+                // The live tail would be the only rows under an unread page.
+                if (stillFollowing) StopFollow();
                 StatusText = $"Couldn't read \"{_lastQueriedChannel}\": {result.ErrorText}";
                 HasMore = false;
                 return;
@@ -901,21 +919,22 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             var rows = string.IsNullOrWhiteSpace(keyword)
                 ? result.Rows
                 : result.Rows.Where(r => r.Message.Contains(keyword, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (stillFollowing && _followSeenRecordIds is { } seen)
+                rows = rows.Where(r => r.RecordId is not { } id || seen.Add(id)).ToList();
 
             RegisterKbCoverage(rows);
             foreach (var row in rows) Events.Add(row);
             _pageBookmark = result.Bookmark;
             HasMore = result.HasMore;
-            StatusText = Events.Count == 0 ? "No matching events found." : $"{Events.Count} event(s) loaded.";
+            StatusText = Events.Count == 0 ? "No matching events found."
+                : stillFollowing ? $"{Events.Count} event(s) loaded (following live)."
+                : $"{Events.Count} event(s) loaded.";
             UpdateHiddenNoiseText();
             if (ShowBurstCollapsedView) RecomputeCollapsedBursts();
-            // Re-arm the live tail against the query just loaded - unless Follow was stopped or
-            // started again meanwhile (tab left, channel changed, toggle clicked), which bumps the generation.
-            if (resumeFollow && followGeneration == _followGeneration && ReferenceEquals(SelectedChannel, channel))
-                IsFollowing = true;
         }
         catch (Exception ex)
         {
+            if (resumedFollow && followGeneration == _followGeneration) StopFollow();
             StatusText = $"Couldn't read events: {ex.Message}";
         }
         finally
@@ -1286,6 +1305,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             {
                 if (generation != _followGeneration) return;
                 if (!string.IsNullOrWhiteSpace(keyword) && !row.Message.Contains(keyword, StringComparison.OrdinalIgnoreCase)) return;
+                if (row.RecordId is { } id && _followSeenRecordIds is { } seen && !seen.Add(id)) return;
                 RegisterKbCoverage(new[] { row });
                 Events.Insert(0, row);
                 StatusText = $"{Events.Count} event(s) loaded (following live).";
@@ -1320,6 +1340,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     private void DisposeWatch()
     {
         _followGeneration++;
+        _followSeenRecordIds = null;
         _watchHandle?.Dispose();
         _watchHandle = null;
     }

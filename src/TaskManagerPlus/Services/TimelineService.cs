@@ -146,9 +146,13 @@ public static class TimelineService
                 if (hotfix.Length == 0) continue;
                 string description = (mo["Description"] as string ?? string.Empty).Trim();
                 string installedOnRaw = (mo["InstalledOn"] as string ?? string.Empty).Trim();
-                // WMI emits InstalledOn as an invariant M/d/yyyy string regardless of locale.
-                if (!DateTime.TryParseExact(installedOnRaw, "M/d/yyyy", System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.None, out var installedOn)) continue; // no usable date on this entry
+                // InstalledOn is a plain date string, M/d/yyyy on the builds checked; the current
+                // culture is the fallback (same order as SystemSpecsService.ReadRecentHotfixes) so a
+                // provider that writes the local short date isn't dropped from the lane.
+                if (!DateTime.TryParse(installedOnRaw, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out var installedOn)
+                    && !DateTime.TryParse(installedOnRaw, System.Globalization.CultureInfo.CurrentCulture,
+                        System.Globalization.DateTimeStyles.None, out installedOn)) continue; // no usable date on this entry
 
                 events.Add(new TimelineEvent
                 {

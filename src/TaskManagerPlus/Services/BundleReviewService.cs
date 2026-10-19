@@ -26,23 +26,37 @@ public sealed class LoadedBundle
 /// still worth reviewing.
 ///
 /// A bundle is someone else's file, opened by an elevated process: only those few JSON entries are
-/// read, straight out of the archive and each under a size cap - nothing is extracted to disk, so
-/// a crafted entry name or a zip bomb has nowhere to write.
+/// read, straight out of the archive under a per-entry and a whole-bundle size cap (plus a cap on
+/// the number of baseline files) - nothing is extracted to disk, so a crafted entry name or a zip
+/// bomb has nowhere to write, and a bundle over a cap is refused rather than shown in part.
 /// </summary>
 public static class BundleReviewService
 {
     // findings/timeline JSON from a real bundle is a few MB at most.
     private const long MaxEntryBytes = 64L * 1024 * 1024;
+    // Across every entry read: per-entry caps alone still let thousands of small, highly
+    // compressed entries each expand to just under MaxEntryBytes.
+    private const long MaxTotalBytes = 256L * 1024 * 1024;
+    // The app keeps at most 100 baselines (MaxBaselinesKept), so a real bundle never has more.
+    private const int MaxBaselineEntries = 200;
+
+    private sealed class ReadBudget
+    {
+        public long RemainingBytes = MaxTotalBytes;
+        public bool Exhausted;
+    }
 
     public static LoadedBundle Load(string zipPath)
     {
         using var zip = ZipFile.OpenRead(zipPath);
+        var budget = new ReadBudget();
 
-        var manifest = ReadJson<EvidenceBundleManifest>(zip, "manifest.json") ?? new EvidenceBundleManifest();
-        var findings = ReadJson<List<HealthIssue>>(zip, "AppData/findings.json") ?? new List<HealthIssue>();
-        var timeline = ReadJson<List<TimelineEvent>>(zip, "AppData/timeline.json") ?? new List<TimelineEvent>();
+        var manifest = ReadJson<EvidenceBundleManifest>(zip, "manifest.json", budget) ?? new EvidenceBundleManifest();
+        var findings = ReadJson<List<HealthIssue>>(zip, "AppData/findings.json", budget) ?? new List<HealthIssue>();
+        var timeline = ReadJson<List<TimelineEvent>>(zip, "AppData/timeline.json", budget) ?? new List<TimelineEvent>();
 
         var baselines = new List<PerformanceBaseline>();
+        int baselineEntries = 0;
         try
         {
             foreach (var entry in zip.Entries)
@@ -52,11 +66,18 @@ public static class BundleReviewService
                     || !name.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
                     || name.IndexOf('/', "AppData/Baselines/".Length) >= 0)
                     continue;
-                var b = ReadJson<PerformanceBaseline>(entry);
+                if (++baselineEntries > MaxBaselineEntries || budget.Exhausted) break;
+                var b = ReadJson<PerformanceBaseline>(entry, budget);
                 if (b is not null) baselines.Add(BaselineService.Sanitize(b));
             }
         }
         catch { /* best-effort - see class remarks */ }
+
+        // Thrown outside the per-entry catches so the caller shows it instead of a partial bundle.
+        if (baselineEntries > MaxBaselineEntries)
+            throw new InvalidDataException($"this bundle has more than {MaxBaselineEntries} baseline files - more than this app ever exports, so it wasn't opened.");
+        if (budget.Exhausted)
+            throw new InvalidDataException($"this bundle's data expands to more than {MaxTotalBytes / (1024 * 1024)} MB - too large to be one this app exported, so it wasn't opened.");
 
         // A bundle is foreign data: null array elements would throw in the sort below or reach the
         // review grids as null rows.
@@ -84,17 +105,17 @@ public static class BundleReviewService
     // Bundles written on Windows may use either separator in entry names.
     private static string NormalizeName(string entryName) => entryName.Replace('\\', '/').TrimStart('/');
 
-    private static T? ReadJson<T>(ZipArchive zip, string name) where T : class
+    private static T? ReadJson<T>(ZipArchive zip, string name, ReadBudget budget) where T : class
     {
         var entry = zip.Entries.FirstOrDefault(e => NormalizeName(e.FullName).Equals(name, StringComparison.OrdinalIgnoreCase));
-        return entry is null ? null : ReadJson<T>(entry);
+        return entry is null ? null : ReadJson<T>(entry, budget);
     }
 
-    private static T? ReadJson<T>(ZipArchiveEntry entry) where T : class
+    private static T? ReadJson<T>(ZipArchiveEntry entry, ReadBudget budget) where T : class
     {
         try
         {
-            if (entry.Length > MaxEntryBytes) return null;
+            if (budget.Exhausted || entry.Length > MaxEntryBytes) return null;
             using var stream = entry.Open();
             // Length is the archive's own claim - cap what is actually decompressed as well.
             using var buffer = new MemoryStream();
@@ -103,6 +124,8 @@ public static class BundleReviewService
             while ((read = stream.Read(chunk, 0, chunk.Length)) > 0)
             {
                 if (buffer.Length + read > MaxEntryBytes) return null;
+                budget.RemainingBytes -= read;
+                if (budget.RemainingBytes < 0) { budget.Exhausted = true; return null; }
                 buffer.Write(chunk, 0, read);
             }
             buffer.Position = 0;

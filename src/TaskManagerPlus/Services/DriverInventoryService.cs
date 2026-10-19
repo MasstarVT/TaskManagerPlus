@@ -81,9 +81,11 @@ public static class DriverInventoryService
     });
 
     /// <summary>#459: every file a driver package installed - Win32_PnPSignedDriverCIMDataFile is
-    /// an association class linking one Win32_PnPSignedDriver to each Win32_CIMLogicalFile
-    /// (.sys/.dll/.inf/...) it registered; ManagementObject.GetRelated walks that association
-    /// without needing a hand-built WQL association-path string.</summary>
+    /// an association class linking one Win32_PnPSignedDriver to each CIM_DataFile (.sys/.dll/.inf/...)
+    /// it registered. Win32_PnPSignedDriver has no key property, so its instances carry an empty
+    /// __PATH and GetRelated / ASSOCIATORS OF can't walk from one; this reads the association's own
+    /// reference pairs instead (one pass over every driver's files, well under a second) and keeps
+    /// this device's. A failed WMI read throws, so the caller reports it rather than "no files".</summary>
     public static Task<List<DriverFileInfo>> ListDriverFilesAsync(string? pnpDeviceId)
     {
         if (string.IsNullOrEmpty(pnpDeviceId)) return Task.FromResult(new List<DriverFileInfo>());
@@ -93,42 +95,61 @@ public static class DriverInventoryService
     private static List<DriverFileInfo> ListDriverFiles(string pnpDeviceId)
     {
         var files = new List<DriverFileInfo>();
-        try
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var searcher = new ManagementObjectSearcher("SELECT Antecedent, Dependent FROM Win32_PnPSignedDriverCIMDataFile");
+        foreach (ManagementBaseObject assoc in searcher.Get())
         {
-            string escaped = pnpDeviceId.Replace("'", "''");
-            using var searcher = new ManagementObjectSearcher($"SELECT * FROM Win32_PnPSignedDriver WHERE DeviceID = '{escaped}'");
-            foreach (ManagementObject driver in searcher.Get())
+            using (assoc)
             {
-                using (driver)
+                // e.g. \\HOST\ROOT\cimv2:Win32_PnPSignedDriver.DeviceID="PCI\\VEN_8086&..."
+                string? deviceId = ReadReferenceKey(assoc["Antecedent"] as string, "DeviceID");
+                if (!string.Equals(deviceId, pnpDeviceId, StringComparison.OrdinalIgnoreCase)) continue;
+                string path = (ReadReferenceKey(assoc["Dependent"] as string, "Name") ?? string.Empty).Trim();
+                if (path.Length == 0 || !seen.Add(path)) continue;
+
+                long? size = null;
+                string? version = null;
+                try
                 {
-                    foreach (ManagementBaseObject related in driver.GetRelated("CIM_DataFile"))
+                    var info = new FileInfo(path);
+                    if (info.Exists)
                     {
-                        using var file = (ManagementObject)related;
-                        string path = (file["Name"] as string ?? string.Empty).Trim();
-                        if (path.Length == 0) continue;
-
-                        long? size = null;
-                        try { if (file["FileSize"] is { } fs) size = Convert.ToInt64(fs); } catch { /* leave null */ }
-
-                        string? version = (file["Version"] as string)?.Trim();
-
-                        files.Add(new DriverFileInfo
-                        {
-                            FileName = Path.GetFileName(path),
-                            FilePath = path,
-                            Version = string.IsNullOrEmpty(version) ? null : version,
-                            SizeBytes = size,
-                        });
+                        size = info.Length;
+                        version = FileVersionInfo.GetVersionInfo(path).FileVersion?.Trim();
                     }
                 }
-                break; // DeviceID is unique - only one Win32_PnPSignedDriver instance can match.
+                catch { /* leave size/version unknown */ }
+
+                files.Add(new DriverFileInfo
+                {
+                    FileName = Path.GetFileName(path),
+                    FilePath = path,
+                    Version = string.IsNullOrEmpty(version) ? null : version,
+                    SizeBytes = size,
+                });
             }
         }
-        catch
-        {
-            // Device removed since the inventory was loaded, WMI hiccup, ... - empty list.
-        }
         return files.OrderBy(f => f.FileName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>The value of <paramref name="key"/> in a WMI object path such as
+    /// <c>...:CIM_DataFile.Name="c:\\windows\\inf\\x.inf"</c>, with the path's backslash escapes
+    /// undone; null when the key isn't there.</summary>
+    private static string? ReadReferenceKey(string? objectPath, string key)
+    {
+        if (string.IsNullOrEmpty(objectPath)) return null;
+        string marker = "." + key + "=\"";
+        int start = objectPath.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (start < 0) return null;
+        var sb = new StringBuilder();
+        for (int i = start + marker.Length; i < objectPath.Length; i++)
+        {
+            char c = objectPath[i];
+            if (c == '\\' && i + 1 < objectPath.Length) { sb.Append(objectPath[++i]); continue; }
+            if (c == '"') return sb.ToString();
+            sb.Append(c);
+        }
+        return null;
     }
 
     // Locale-neutral running state (driverquery's State column is localized text).

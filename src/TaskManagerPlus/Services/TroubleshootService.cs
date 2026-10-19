@@ -283,35 +283,52 @@ public static class TroubleshootService
 
     private static readonly string[] BackgroundMaintenanceProcessNames = { "MsMpEng", "TiWorker", "SearchIndexer" };
 
-    /// <summary>Presence of Windows Defender's scan engine, the servicing worker, and the search
-    /// indexer - all legitimate, all capable of a real (if temporary) slowdown while active.
-    /// Checks the already-sampled Processes list first (has live CPU/memory figures); falls back
-    /// to a raw Process.GetProcessesByName lookup for a process that hasn't been sampled yet.</summary>
+    // Defender's engine and the search indexer run permanently on a stock install, so only real
+    // activity counts for them; TiWorker exists only while servicing work is under way.
+    private static bool IsAlwaysRunningMaintenanceProcess(string name) =>
+        name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase) || name.Equals("SearchIndexer", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Windows Defender's scan engine, the servicing worker, and the search indexer - all
+    /// legitimate, all capable of a real (if temporary) slowdown while active. Defender and the
+    /// indexer count only when the already-sampled Processes list shows them busy (half a logical
+    /// core of 10-second CPU, or 5 MB/s of disk); a process that hasn't been sampled yet is found
+    /// with Process.GetProcessesByName and listed as evidence only, since there are no figures.</summary>
     public static DiagnosticStepResult CheckBackgroundMaintenanceProcesses(IReadOnlyList<ProcessRow> processes)
     {
         try
         {
-            var found = new List<string>();
+            double busyCpuPercent = 100.0 / Math.Max(1, Environment.ProcessorCount) * 0.5;
+            var busy = new List<string>();
+            var evidence = new List<string>();
             foreach (var name in BackgroundMaintenanceProcessNames)
             {
                 var row = processes.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
                 if (row is not null)
                 {
-                    found.Add($"{row.Name}.exe (PID {row.Pid}): {row.CpuPercent10sAvg:0.#}% CPU, {row.MemoryMb:0} MB");
+                    string line = $"{row.Name}.exe (PID {row.Pid}): {row.CpuPercent10sAvg:0.#}% CPU, {Formatting.FormatByteRate(row.DiskBytesPerSec)} disk, {row.MemoryMb:0} MB";
+                    evidence.Add(line);
+                    if (!IsAlwaysRunningMaintenanceProcess(name)
+                        || row.CpuPercent10sAvg >= busyCpuPercent || row.DiskBytesPerSec >= 5 * 1024 * 1024)
+                        busy.Add(line);
                     continue;
                 }
                 try
                 {
                     var procs = Process.GetProcessesByName(name);
-                    if (procs.Length > 0) found.Add($"{name}.exe is running");
+                    if (procs.Length > 0)
+                    {
+                        string line = $"{name}.exe is running (not sampled yet - no CPU/disk figures)";
+                        evidence.Add(line);
+                        if (!IsAlwaysRunningMaintenanceProcess(name)) busy.Add(line);
+                    }
                     foreach (var p in procs) p.Dispose();
                 }
                 catch { /* best-effort */ }
             }
 
-            if (found.Count == 0)
-                return DiagnosticStepResult.Pass("Windows Defender scan, servicing worker, and search indexer are not currently running.");
-            return DiagnosticStepResult.Warn("Background maintenance work is currently running - can cause a temporary slowdown on its own.", found);
+            if (busy.Count == 0)
+                return DiagnosticStepResult.Pass("No Windows Defender scan, servicing work, or search indexing looks busy right now.", evidence);
+            return DiagnosticStepResult.Warn("Background maintenance work is currently active - can cause a temporary slowdown on its own.", evidence);
         }
         catch (Exception ex)
         {
@@ -622,11 +639,22 @@ public static class TroubleshootService
             if (exitCode is null) return DiagnosticStepResult.Skip("powercfg /waketimers timed out.");
 
             string trimmed = output.Trim();
+            var lines = trimmed.Replace("\r\n", "\n").Split('\n').Where(l => l.Trim().Length > 0).ToList();
+            // A failed run prints its error (e.g. the administrator-privileges message) - not a timer.
+            if (exitCode != 0)
+                return DiagnosticStepResult.Skip($"Couldn't read wake timers (powercfg /waketimers exited with {exitCode}).", lines);
+
             if (trimmed.Length == 0 || trimmed.Contains("no active wake timers", StringComparison.OrdinalIgnoreCase) ||
                 trimmed.Contains("There are no wake timers", StringComparison.OrdinalIgnoreCase))
                 return DiagnosticStepResult.Pass("No active wake timers.");
 
-            var lines = trimmed.Replace("\r\n", "\n").Split('\n').Where(l => l.Trim().Length > 0).ToList();
+            // Every timer names its setter as [PROCESS]/[SERVICE]/[DRIVER]; the "none" sentence is
+            // translated on a localized Windows, so output without any tag means no timers.
+            bool anyTimer = lines.Any(l => l.Contains("[PROCESS]", StringComparison.OrdinalIgnoreCase)
+                || l.Contains("[SERVICE]", StringComparison.OrdinalIgnoreCase)
+                || l.Contains("[DRIVER]", StringComparison.OrdinalIgnoreCase));
+            if (!anyTimer)
+                return DiagnosticStepResult.Pass("No active wake timers listed.", lines);
             return DiagnosticStepResult.Warn("Active wake timer(s) found - one of these can wake the PC on its own.", lines);
         }
         catch (Exception ex)
@@ -634,6 +662,9 @@ public static class TroubleshootService
             return DiagnosticStepResult.Skip($"Couldn't run powercfg /waketimers: {ex.Message}");
         }
     }
+
+    // Same pattern as WakeHistoryService's.
+    private static readonly Regex WakeSourceCountRegex = new(@"Wake Source Count\s*-\s*(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>`powercfg /lastwake` - what woke the system last (a device, a timer, or unknown).</summary>
     public static async Task<DiagnosticStepResult> CheckLastWakeAsync()
@@ -647,7 +678,16 @@ public static class TroubleshootService
             if (trimmed.Length == 0) return DiagnosticStepResult.Skip("No output from powercfg /lastwake.");
 
             var lines = trimmed.Replace("\r\n", "\n").Split('\n').Where(l => l.Trim().Length > 0).ToList();
-            bool unknown = trimmed.Contains("Unknown", StringComparison.OrdinalIgnoreCase);
+            if (exitCode != 0)
+                return DiagnosticStepResult.Skip($"Couldn't read the last wake source (powercfg /lastwake exited with {exitCode}).", lines);
+
+            // "Wake Source Count - 0" (the usual shape for a wake Windows couldn't attribute) names
+            // no source and carries no "Unknown" either.
+            var sourceCounts = WakeSourceCountRegex.Matches(trimmed)
+                .Select(m => int.TryParse(m.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) ? n : -1)
+                .ToList();
+            bool unknown = trimmed.Contains("Unknown", StringComparison.OrdinalIgnoreCase)
+                || (sourceCounts.Count > 0 && sourceCounts.All(n => n == 0));
             string summary = unknown
                 ? "The last wake source couldn't be identified by Windows itself."
                 : "Last wake source recorded - see evidence.";
@@ -1312,8 +1352,9 @@ public static class TroubleshootService
             return DiagnosticStepResult.Skip("wpr.exe and/or tracerpt.exe aren't available on this system - can't run the capture.");
 
         // wpr/tracerpt run elevated: their output goes in a fresh admin-only folder, deleted once
-        // summarized, never a predictable %TEMP% path a same-user process could redirect.
-        var dir = AdminDataPaths.CreatePrivateTempDirectory("dpccapture", out string? dirError);
+        // summarized, never a predictable %TEMP% path a same-user process could redirect. Readable
+        // by this user only: a kernel trace names every account's processes and files.
+        var dir = AdminDataPaths.CreatePrivateTempDirectory("dpccapture", out string? dirError, ownerReadableOnly: true);
         if (dir is null) return DiagnosticStepResult.Skip($"Couldn't create a private folder for the capture: {dirError}");
         string etlPath = Path.Combine(dir.FullName, "dpc-capture.etl");
         string summaryPath = Path.Combine(dir.FullName, "dpc-summary.txt");
@@ -1411,11 +1452,20 @@ public static class TroubleshootService
             if (exitCode is null) return DiagnosticStepResult.Skip("netsh wlan show interfaces timed out.");
 
             bool none = output.Contains("no wireless interface", StringComparison.OrdinalIgnoreCase);
-            bool hasAdapter = !none && output.Contains("Name", StringComparison.OrdinalIgnoreCase);
+            bool hasAdapter = !none && exitCode == 0 && output.Contains("Name", StringComparison.OrdinalIgnoreCase);
             if (!ct.IsCancellationRequested) ctx.HasWirelessAdapter = hasAdapter;
 
-            if (!hasAdapter)
+            if (none)
                 return DiagnosticStepResult.Skip(NoWirelessAdapterSummary);
+            // Anything else without an adapter - e.g. "The Wireless AutoConfig Service (wlansvc) is
+            // not running." (exit 1) - means the check couldn't run, not that there's no adapter.
+            if (!hasAdapter)
+            {
+                string text = output.Trim();
+                return DiagnosticStepResult.Skip(text.Length > 0
+                    ? $"Couldn't check for a wireless adapter: {text}"
+                    : $"Couldn't check for a wireless adapter (netsh exited with {exitCode}).");
+            }
             return DiagnosticStepResult.Pass("A wireless adapter was found.", new[] { output.Trim() });
         }
         catch (Exception ex)
@@ -1701,34 +1751,50 @@ public static class TroubleshootService
     }
 
     /// <summary>Whether Windows Search (a standalone process, so directly attributable) or the
-    /// SysMain/Superfetch service (hosted inside a shared svchost.exe, so its own I/O can't be
-    /// cleanly isolated per-process the way SearchIndexer's can - flagged by running state only,
-    /// with that limitation stated explicitly) look like the top writer right now.</summary>
+    /// SysMain/Superfetch service look like the top writer right now. SysMain runs on every stock
+    /// install, so running alone is evidence, not a finding; it counts only when it has an
+    /// svchost.exe to itself (the default with enough RAM) and that process is measurably busy - in a
+    /// shared host its I/O can't be told apart from the other services'.</summary>
     public static DiagnosticStepResult CheckBackgroundWriter(IReadOnlyList<ProcessRow> processes)
     {
         try
         {
+            const double HeavyDiskBytesPerSec = 5 * 1024 * 1024;
             var evidence = new List<string>();
             var searchIndexer = processes.FirstOrDefault(p => p.Name.Equals("SearchIndexer", StringComparison.OrdinalIgnoreCase));
-            bool searchHigh = searchIndexer is not null && searchIndexer.DiskBytesPerSec >= 5 * 1024 * 1024;
+            bool searchHigh = searchIndexer is not null && searchIndexer.DiskBytesPerSec >= HeavyDiskBytesPerSec;
             if (searchIndexer is not null)
                 evidence.Add($"SearchIndexer.exe (PID {searchIndexer.Pid}): {Formatting.FormatByteRate(searchIndexer.DiskBytesPerSec)}");
 
-            bool sysMainRunning = false;
+            ProcessRow? sysMainHost = null;
             try
             {
                 var services = new ServiceControlService().Sample();
                 var sysMain = services.FirstOrDefault(s => s.ServiceName.Equals("SysMain", StringComparison.OrdinalIgnoreCase));
-                sysMainRunning = sysMain?.Status == System.ServiceProcess.ServiceControllerStatus.Running;
                 if (sysMain is not null)
-                    evidence.Add($"SysMain (Superfetch) service: {sysMain.Status} - runs inside a shared svchost.exe, so its own I/O can't be isolated per-process here.");
+                {
+                    bool running = sysMain.Status == System.ServiceProcess.ServiceControllerStatus.Running;
+                    bool ownHost = running && sysMain.ProcessId > 0 && services.Count(s => s.ProcessId == sysMain.ProcessId) == 1;
+                    var host = ownHost ? processes.FirstOrDefault(p => p.Pid == sysMain.ProcessId) : null;
+                    if (host is not null)
+                    {
+                        evidence.Add($"SysMain (Superfetch) service: Running in its own svchost.exe (PID {host.Pid}): {Formatting.FormatByteRate(host.DiskBytesPerSec)}");
+                        if (host.DiskBytesPerSec >= HeavyDiskBytesPerSec) sysMainHost = host;
+                    }
+                    else
+                    {
+                        evidence.Add(running
+                            ? "SysMain (Superfetch) service: Running - shares its svchost.exe (or it isn't sampled yet), so its own I/O can't be isolated here."
+                            : $"SysMain (Superfetch) service: {sysMain.Status}");
+                    }
+                }
             }
             catch { /* service list unavailable - evidence just won't mention it */ }
 
             if (searchHigh)
                 return DiagnosticStepResult.Warn("Windows Search indexing is currently writing heavily to disk.", evidence);
-            if (sysMainRunning)
-                return DiagnosticStepResult.Warn("SysMain (Superfetch) is running - a plausible (but not directly measurable per-process) contributor to background disk activity, especially just after boot or an app update.", evidence);
+            if (sysMainHost is not null)
+                return DiagnosticStepResult.Warn($"SysMain (Superfetch) is busy on disk ({Formatting.FormatByteRate(sysMainHost.DiskBytesPerSec)}) - common just after boot or an app update, and usually temporary.", evidence);
             return DiagnosticStepResult.Pass("Windows Search and SysMain don't look like the current source of disk activity.", evidence);
         }
         catch (Exception ex)
@@ -1831,8 +1897,9 @@ public static class TroubleshootService
     /// its absence as a check failure - the summary explicitly says so per this round's spec.</summary>
     public static async Task<DiagnosticStepResult> CheckSrumEnergyAsync()
     {
-        // Elevated tool output: a fresh admin-only folder, deleted once parsed (see AdminDataPaths).
-        var dir = AdminDataPaths.CreatePrivateTempDirectory("srum", out string? dirError);
+        // Elevated tool output: a fresh admin-only folder, deleted once parsed (see AdminDataPaths);
+        // readable by this user only, since the SRUM dump covers every account's app usage.
+        var dir = AdminDataPaths.CreatePrivateTempDirectory("srum", out string? dirError, ownerReadableOnly: true);
         if (dir is null) return DiagnosticStepResult.Skip($"Couldn't create a private folder for the SRUM export: {dirError}");
         string xmlPath = Path.Combine(dir.FullName, "srum.xml");
         try

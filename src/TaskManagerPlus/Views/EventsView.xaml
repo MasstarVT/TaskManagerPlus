@@ -762,6 +762,7 @@
                     <DataGrid x:Name="EventsGrid" ItemsSource="{Binding EventsView}" SelectedItem="{Binding SelectedEvent}"
                                Margin="4,10,4,0"
                                VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                               VirtualizingPanel.IsVirtualizingWhenGrouping="True"
                                EnableRowVirtualization="True" ScrollViewer.CanContentScroll="True">
                         <DataGrid.Style>
                             <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">

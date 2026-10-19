@@ -1798,43 +1798,56 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
 
     private async Task ExportDriversAsync()
     {
-        var exportsDir = AppPaths.GetPath("DriverExports");
-        try { Directory.CreateDirectory(exportsDir); } catch { /* the folder picker still works without a pre-created folder */ }
-
+        // Not the settings folder: a folder a same-user process already knows about is the wrong
+        // default for an elevated export.
         var dialog = new OpenFolderDialog
         {
             Title = "Choose a folder to export driver packages to",
-            InitialDirectory = exportsDir,
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         };
         if (dialog.ShowDialog() != true) return;
         string folder = dialog.FolderName;
 
         IsExportingDrivers = true;
         ExportDriversStatusText = "Exporting driver packages...";
+        DirectoryInfo? staging = null;
         try
         {
-            var (success, message) = await PnpUtilService.ExportDriversAsync(folder);
+            if (IsLinkedFolder(folder))
+            {
+                ExportDriversStatusText = $"Export refused: \"{folder}\" is a junction or symbolic link - choose the real folder.";
+                return;
+            }
+
+            // pnputil writes one subfolder per package, named after its driver-store folder (which
+            // any user can list), so exporting straight into a user-writable folder would let a
+            // pre-planted junction there redirect the elevated write. pnputil exports into an
+            // admin-only staging folder instead (it needs that much free space on the system drive),
+            // and the copy out creates every folder fresh and never overwrites a file.
+            staging = AdminDataPaths.CreatePrivateTempDirectory("DriverExport", out string? stagingError);
+            if (staging is null)
+            {
+                ExportDriversStatusText = $"Export refused: {stagingError}";
+                return;
+            }
+            string stagingPath = staging.FullName;
+
+            var (success, message) = await PnpUtilService.ExportDriversAsync(stagingPath);
             if (!success)
             {
                 ExportDriversStatusText = $"Export failed: {message}";
                 return;
             }
 
-            // pnputil /export-driver writes one subfolder per exported package - a cheap best-
-            // effort summary (package count + total size), not something pnputil itself reports.
-            int packageCount = 0;
-            long totalBytes = 0;
-            try
-            {
-                var subDirs = Directory.EnumerateDirectories(folder).ToList();
-                packageCount = subDirs.Count;
-                foreach (var dir in subDirs)
-                foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
-                    try { totalBytes += new FileInfo(file).Length; } catch { /* skip an unreadable file */ }
-            }
-            catch { /* best-effort summary only - the export itself already succeeded */ }
+            ExportDriversStatusText = "Copying the exported packages to the chosen folder...";
+            var copied = await Task.Run(() => CopyExportedPackages(stagingPath, folder));
 
-            ExportDriversStatusText = $"Exported {packageCount} driver package(s) to \"{folder}\" ({Formatting.FormatBytes(totalBytes)}).";
+            string text = $"Exported {copied.Packages} driver package(s) to \"{folder}\" ({Formatting.FormatBytes(copied.Bytes)}).";
+            if (copied.Skipped > 0)
+                text += $" {copied.Skipped} already existed there and were left as they were.";
+            if (copied.Errors.Count > 0)
+                text += $" {copied.Errors.Count} couldn't be copied: {string.Join("; ", copied.Errors.Take(3))}";
+            ExportDriversStatusText = text;
         }
         catch (Exception ex)
         {
@@ -1842,9 +1855,74 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         }
         finally
         {
+            AdminDataPaths.TryDelete(staging);
             IsExportingDrivers = false;
         }
     }
+
+    private sealed record ExportCopyResult(int Packages, int Skipped, long Bytes, List<string> Errors);
+
+    /// <summary>Copies pnputil's staged export into the user's folder. A package folder whose name
+    /// already exists there (an earlier export, or something planted) is skipped rather than merged
+    /// into; each folder is re-checked after it's created, and files are copied without overwrite, so
+    /// a junction swapped in can't make this elevated copy replace an existing file.</summary>
+    private static ExportCopyResult CopyExportedPackages(string staging, string destination)
+    {
+        int packages = 0, skipped = 0;
+        long bytes = 0;
+        var errors = new List<string>();
+        foreach (var source in Directory.EnumerateDirectories(staging))
+        {
+            string name = Path.GetFileName(source);
+            string target = Path.Combine(destination, name);
+            if (Directory.Exists(target) || File.Exists(target)) { skipped++; continue; }
+            try
+            {
+                bytes += CopyTreeNoOverwrite(source, target);
+                packages++;
+            }
+            catch (Exception ex) { errors.Add($"{name}: {ex.Message}"); }
+        }
+        foreach (var source in Directory.EnumerateFiles(staging))
+        {
+            string name = Path.GetFileName(source);
+            string target = Path.Combine(destination, name);
+            if (Directory.Exists(target) || File.Exists(target)) { skipped++; continue; }
+            try
+            {
+                File.Copy(source, target, overwrite: false);
+                bytes += new FileInfo(source).Length;
+            }
+            catch (Exception ex) { errors.Add($"{name}: {ex.Message}"); }
+        }
+        return new ExportCopyResult(packages, skipped, bytes, errors);
+    }
+
+    private static long CopyTreeNoOverwrite(string source, string target)
+    {
+        Directory.CreateDirectory(target);
+        if (IsLinkedFolder(target))
+            throw new IOException($"\"{target}\" turned into a junction or symbolic link - stopped copying into it");
+
+        long bytes = 0;
+        foreach (var file in Directory.EnumerateFiles(source))
+        {
+            File.Copy(file, Path.Combine(target, Path.GetFileName(file)), overwrite: false);
+            bytes += new FileInfo(file).Length;
+        }
+        foreach (var dir in Directory.EnumerateDirectories(source))
+        {
+            string sub = Path.Combine(target, Path.GetFileName(dir));
+            if (Directory.Exists(sub) || File.Exists(sub))
+                throw new IOException($"\"{sub}\" already exists in a folder this export just created");
+            bytes += CopyTreeNoOverwrite(dir, sub);
+        }
+        return bytes;
+    }
+
+    /// <summary>Junctions and symbolic links only - OneDrive's cloud-file folders are reparse
+    /// points too, and are fine to export into.</summary>
+    private static bool IsLinkedFolder(string path) => new DirectoryInfo(path).LinkTarget is not null;
 
     // ------------------------------------------------------------------------------------------
     // #485: install every .inf found under a user-chosen folder.
