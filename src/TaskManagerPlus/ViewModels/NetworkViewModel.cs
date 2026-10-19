@@ -3628,7 +3628,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             _allFirewallRules = ruleSet.Rules;
             ApplyFirewallRuleFilter();
             FirewallRulesStatusText = $"{_allFirewallRules.Count} rule(s) loaded" +
-                (ruleSet.PolicyOnlyCount > 0 ? $", {ruleSet.PolicyOnlyCount} of them only in the active (Group Policy/MDM) policy." : ".") +
+                (ruleSet.PolicyOnlyCount > 0 ? $", {ruleSet.PolicyOnlyCount} of them only in the active policy, not the local store (see Source)." : ".") +
                 (ruleSet.ActivePolicyNote is { } note ? $" {note}" : string.Empty);
         }
         catch (Exception ex)

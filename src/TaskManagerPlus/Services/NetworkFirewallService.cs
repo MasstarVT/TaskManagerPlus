@@ -117,7 +117,7 @@ public static class NetworkFirewallService
         {
             string why = activeExit is null ? $"timed out after {RulesTimeoutMs / 1000} s" : $"netsh exited with code {activeExit}";
             return new NetworkFirewallRuleSet(rules, 0,
-                $"The active-policy rule list couldn't be read ({why}) - rules deployed by Group Policy or MDM may be missing.");
+                $"The active-policy rule list couldn't be read ({why}) - rules that aren't in the local store (e.g. Group Policy or MDM) may be missing.");
         }
 
         // Source isn't part of the key: the Local store's own rules print "Local Setting" there.

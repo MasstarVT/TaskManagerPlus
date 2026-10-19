@@ -169,9 +169,9 @@ public sealed class LatencyMonitorService : IDisposable
         {
             foreach (var (tier, host) in fresh)
             {
-                // A tier whose target changed (or vanished) starts a fresh window, so the matrix
-                // never shows one host's stats next to another host - or next to no host at all.
-                if (!string.Equals(_targetHosts[tier], host, StringComparison.OrdinalIgnoreCase))
+                // A tier whose target vanished stops being probed - drop its old window so the
+                // matrix doesn't keep showing frozen stats next to no host at all.
+                if (!string.IsNullOrEmpty(_targetHosts[tier]) && string.IsNullOrEmpty(host))
                 {
                     _windows[tier].Clear();
                     _ttlHistory[tier].Clear();
