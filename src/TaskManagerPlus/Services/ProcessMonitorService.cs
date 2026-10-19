@@ -783,7 +783,8 @@ public sealed class ProcessMonitorService : IDisposable
         try
         {
             using var proc = Process.GetProcessById(pid);
-            proc.Kill(entireProcessTree: true);
+            // Just this process - EndProcessTree below is the "and its children" variant.
+            proc.Kill();
             return (true, null);
         }
         catch (Exception ex)
