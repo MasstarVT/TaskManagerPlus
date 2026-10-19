@@ -641,8 +641,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     private bool _canRevertLocalDumps;
     public bool CanRevertLocalDumps { get => _canRevertLocalDumps; private set => SetProperty(ref _canRevertLocalDumps, value); }
 
-    /// <summary>Why Revert is unavailable although a backup file exists (unverified, or an older
-    /// version's copy in the settings folder), or null.</summary>
+    /// <summary>Why a backup file isn't used for Revert (unverified, or an older version's copy in
+    /// the settings folder, listed while it exists), or null.</summary>
     private string? _localDumpsBackupNote;
     public string? LocalDumpsBackupNote { get => _localDumpsBackupNote; private set => SetProperty(ref _localDumpsBackupNote, value); }
 
@@ -2977,7 +2977,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     {
         var backup = ReliabilityMonitorService.LoadBackup(out var problem);
         CanRevertReliabilityAnalysis = backup is not null;
-        ReliabilityBackupNote = problem ?? (backup is null ? ReliabilityMonitorService.LegacyBackupNote() : null);
+        // The older copy stays listed while it exists - it may hold the true original state.
+        ReliabilityBackupNote = problem ?? ReliabilityMonitorService.LegacyBackupNote();
         return backup;
     }
 
@@ -3079,7 +3080,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     {
         var backup = WerReportService.LoadBackup(out var problem);
         CanRevertLocalDumps = backup is not null;
-        LocalDumpsBackupNote = problem ?? (backup is null ? WerReportService.LegacyBackupNote() : null);
+        // The older copy stays listed while it exists - it may hold the true original state.
+        LocalDumpsBackupNote = problem ?? WerReportService.LegacyBackupNote();
         return backup;
     }
 

@@ -367,16 +367,18 @@ public static class DriverVerifierService
     public static string? DescribePendingPoolTagRestore()
     {
         var backup = LoadPoolTagBackup(out var problem);
+        // An older version's copy is named while it exists - it may hold the true original value.
+        string? legacy = RevertBackupStore.LegacyNote(PoolTagBackupFileName);
         if (backup is null)
         {
-            string? legacy = RevertBackupStore.LegacyNote(PoolTagBackupFileName);
             return problem is not null ? $"PoolTag is left as it is: {problem}"
                 : legacy is not null ? $"PoolTag is left as it is. {legacy}"
                 : null;
         }
-        return backup.PreviousValue is { } p
+        string restore = backup.PreviousValue is { } p
             ? $"The Special Pool tag (PoolTag) is set back to '{UnpackPoolTag(p)}' (DWORD 0x{p:X8})."
             : "The PoolTag value this app set is removed (there was none before).";
+        return legacy is null ? restore : $"{restore} {legacy}";
     }
 
     /// <summary>Puts PoolTag back to what it was before this app first set it - deleting it when
