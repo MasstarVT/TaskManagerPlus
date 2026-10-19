@@ -3017,7 +3017,10 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
                 : result.Parsed.Count == 0
                     ? (result.RegistryKeyPresent
                         ? "No servers reported by netsh, though at least one interface has a DoH registry key present."
-                        : "No DNS-over-HTTPS configuration found - resolvers are used in plaintext.")
+                        // Current builds print Windows' known DoH server templates ("Encryption settings
+                        // for <IP>"), not which interfaces use them, so an empty parse is not evidence of
+                        // plaintext DNS.
+                        : "No per-interface DNS-over-HTTPS configuration found in netsh's output - whether your resolvers use encrypted DNS is unknown.")
                     : $"{result.Parsed.Count(s => s.EncryptionStatus.Contains("Yes", StringComparison.OrdinalIgnoreCase))}/{result.Parsed.Count} server(s) reporting encrypted DNS.";
         }
         catch (Exception ex)
@@ -3154,7 +3157,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         _ = RunDhcpActionAsync(DhcpAddressingService.RegisterDnsAsync, "Register DNS", "ipconfig /registerdns");
     }
 
-    private async Task RunDhcpActionAsync(Func<Task<string>> action, string label, string commandLine)
+    private async Task RunDhcpActionAsync(Func<Task<(string Output, bool Succeeded)>> action, string label, string commandLine)
     {
         if (IsRunningDhcpAction) return;
         IsRunningDhcpAction = true;
@@ -3162,9 +3165,9 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         bool success = false;
         try
         {
-            string output = await action();
-            success = !LooksLikeRunFailure(output);
-            DhcpActionStatusText = $"{label}: {output}";
+            var (output, succeeded) = await action();
+            success = succeeded;
+            DhcpActionStatusText = succeeded ? $"{label}: {output}" : $"{label} failed: {output}";
         }
         catch (Exception ex)
         {

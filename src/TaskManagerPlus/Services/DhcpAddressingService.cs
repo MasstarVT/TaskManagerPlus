@@ -261,16 +261,18 @@ public static class DhcpAddressingService
 
     // ---- #529: release / renew / register-DNS, each a plain ipconfig.exe shell-out -----------
 
-    public static Task<string> ReleaseAsync(string adapterName) => RunIpconfigAsync($"/release \"{adapterName}\"");
+    public static Task<(string Output, bool Succeeded)> ReleaseAsync(string adapterName) => RunIpconfigAsync($"/release \"{adapterName}\"");
 
-    public static Task<string> RenewAsync(string adapterName) => RunIpconfigAsync($"/renew \"{adapterName}\"");
+    public static Task<(string Output, bool Succeeded)> RenewAsync(string adapterName) => RunIpconfigAsync($"/renew \"{adapterName}\"");
 
     /// <summary>ipconfig.exe has no per-adapter switch for /registerdns - it always re-registers
     /// every adapter's records with its configured DNS server(s), so this deliberately takes no
     /// adapter parameter rather than pretending to scope something ipconfig itself can't scope.</summary>
-    public static Task<string> RegisterDnsAsync() => RunIpconfigAsync("/registerdns");
+    public static Task<(string Output, bool Succeeded)> RegisterDnsAsync() => RunIpconfigAsync("/registerdns");
 
-    private static async Task<string> RunIpconfigAsync(string args)
+    // Succeeded is ipconfig's own exit code: a renew that couldn't reach a DHCP server prints an
+    // error and exits non-zero, which the text alone doesn't mark as a failure.
+    private static async Task<(string Output, bool Succeeded)> RunIpconfigAsync(string args)
     {
         try
         {
@@ -282,7 +284,7 @@ public static class DhcpAddressingService
                 CreateNoWindow = true,
             };
             using var proc = Process.Start(psi);
-            if (proc is null) return "Couldn't start ipconfig.exe.";
+            if (proc is null) return ("Couldn't start ipconfig.exe.", false);
 
             var outputTask = proc.StandardOutput.ReadToEndAsync();
             var errorTask = proc.StandardError.ReadToEndAsync();
@@ -294,15 +296,15 @@ public static class DhcpAddressingService
             catch (OperationCanceledException)
             {
                 try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-                return "ipconfig.exe timed out.";
+                return ("ipconfig.exe timed out.", false);
             }
 
             string output = (await outputTask) + (await errorTask);
-            return string.IsNullOrWhiteSpace(output) ? "Done." : output.Trim();
+            return (string.IsNullOrWhiteSpace(output) ? "Done." : output.Trim(), proc.ExitCode == 0);
         }
         catch (Exception ex)
         {
-            return $"Failed: {ex.Message}";
+            return ($"Failed: {ex.Message}", false);
         }
     }
 }
