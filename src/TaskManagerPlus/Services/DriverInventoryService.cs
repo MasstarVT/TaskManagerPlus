@@ -31,6 +31,7 @@ public static class DriverInventoryService
     {
         var driverQueryRows = await ReadDriverQueryAsync();
         var pnpByService = ReadPnpSignedDriversByService();
+        var runningDrivers = ReadRunningDriverServices();
 
         var rows = new List<DriverInventoryRow>();
         foreach (var (serviceName, dq) in driverQueryRows)
@@ -57,6 +58,7 @@ public static class DriverInventoryService
                 DriverType = dq.DriverType,
                 StartModeText = dq.StartModeText,
                 State = dq.State,
+                IsRunning = runningDrivers.Contains(serviceName),
                 FilePath = dq.FilePath,
                 Provider = pnp?.Provider ?? "Unknown",
                 InfName = pnp?.InfName ?? string.Empty,
@@ -129,6 +131,28 @@ public static class DriverInventoryService
         return files.OrderBy(f => f.FileName, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    // Locale-neutral running state (driverquery's State column is localized text).
+    private static HashSet<string> ReadRunningDriverServices()
+    {
+        var running = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var sc in System.ServiceProcess.ServiceController.GetDevices())
+            {
+                using (sc)
+                {
+                    try
+                    {
+                        if (sc.Status == System.ServiceProcess.ServiceControllerStatus.Running) running.Add(sc.ServiceName);
+                    }
+                    catch { /* one unreadable driver service doesn't hide the rest */ }
+                }
+            }
+        }
+        catch { /* leave empty - the State text still shows */ }
+        return running;
+    }
+
     private static async Task<Dictionary<string, DriverQueryRow>> ReadDriverQueryAsync()
     {
         var result = new Dictionary<string, DriverQueryRow>(StringComparer.OrdinalIgnoreCase);
@@ -142,6 +166,10 @@ public static class DriverInventoryService
             int Idx(string name) => header.FindIndex(h => h.Equals(name, StringComparison.OrdinalIgnoreCase));
             int iModule = Idx("Module Name"), iDisplay = Idx("Display Name"), iDesc = Idx("Description"),
                 iType = Idx("Driver Type"), iStart = Idx("Start Mode"), iState = Idx("State"), iPath = Idx("Path");
+            // The header text is localized (driverquery.exe.mui), but `/v /fo csv` always
+            // emits the same 15 columns in the same order - fall back to their positions.
+            if (iModule < 0 && header.Count == 15)
+                (iModule, iDisplay, iDesc, iType, iStart, iState, iPath) = (0, 1, 2, 3, 4, 5, 13);
             if (iModule < 0) return result;
 
             for (int i = 1; i < lines.Count; i++)
@@ -149,7 +177,7 @@ public static class DriverInventoryService
                 var fields = CsvLine.Split(lines[i]);
                 if (fields.Count <= iModule) continue;
                 string module = fields[iModule].Trim();
-                if (module.Length == 0 || module.Equals("Module Name", StringComparison.OrdinalIgnoreCase)) continue;
+                if (module.Length == 0 || module.Equals(header[iModule], StringComparison.OrdinalIgnoreCase)) continue;
 
                 result[module] = new DriverQueryRow(
                     At(fields, iDisplay), At(fields, iDesc), At(fields, iType),

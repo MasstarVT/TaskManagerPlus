@@ -29,6 +29,8 @@ public sealed class DriverInventoryRow : ObservableObject
     public string DriverType { get; init; } = string.Empty;
     public string StartModeText { get; init; } = string.Empty;
     public string State { get; init; } = string.Empty;
+    /// <summary>From the service controller, not driverquery's localized State text.</summary>
+    public bool IsRunning { get; init; }
     public string FilePath { get; init; } = string.Empty;
 
     // --- from Win32_PnPSignedDriver, joined via the Enum\<DeviceID>\Service registry value

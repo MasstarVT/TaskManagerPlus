@@ -273,7 +273,7 @@
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding State}" Value="Running">
+                                                <DataTrigger Binding="{Binding IsRunning}" Value="True">
                                                     <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
                                                 </DataTrigger>
                                             </Style.Triggers>

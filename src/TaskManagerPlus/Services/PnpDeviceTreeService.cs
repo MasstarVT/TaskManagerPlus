@@ -104,13 +104,16 @@ public static class PnpDeviceTreeService
                     string manufacturer = GetDeviceRegistryPropertyString(deviceInfoSet, ref devInfoData, SPDRP_MFG) ?? "Unknown";
                     string[] hardwareIds = GetDeviceRegistryPropertyMultiString(deviceInfoSet, ref devInfoData, SPDRP_HARDWAREID) ?? Array.Empty<string>();
 
-                    int errorCode = 0;
+                    // A devnode that answers CM_Get_DevNode_Status is in the live tree - present after
+                    // all (plugged in since ListPresent ran, or matched under a different ID form) - so
+                    // it must not be offered as a "not present" ghost to remove. A ghost has no
+                    // live status and no problem code to report.
                     try
                     {
-                        if (CM_Get_DevNode_Status(out _, out uint problem, devInfoData.DevInst, 0) == CR_SUCCESS)
-                            errorCode = (int)problem;
+                        if (CM_Get_DevNode_Status(out _, out _, devInfoData.DevInst, 0) == CR_SUCCESS) continue;
                     }
-                    catch { /* leave 0 - "no problem reported" is the safe degrade here */ }
+                    catch { /* status unavailable - treat as not present, the usual case here */ }
+                    const int errorCode = 0;
 
                     results.Add(new PnpDeviceNode
                     {
