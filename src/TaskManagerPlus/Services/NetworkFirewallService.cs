@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 
 namespace TaskManagerPlus.Services;
@@ -56,14 +55,28 @@ public static class NetworkFirewallService
 
     public static async Task<List<NetworkFirewallProfileStatus>> ReadProfileStatusAsync()
     {
-        string output = await RunNetshAsync("advfirewall show allprofiles", TimeoutMs);
-        return ParseProfiles(output);
+        // A failed/timed-out read leaves output empty, which ParseProfiles turns into Unknown rows.
+        var (output, exitCode) = await RunNetshAsync("advfirewall show allprofiles", TimeoutMs);
+        return ParseProfiles(exitCode == 0 ? output : string.Empty);
     }
 
+    /// <summary>Throws when the rule set couldn't be read (timeout, non-zero exit, or output with
+    /// no parseable rule block) - an empty list here must mean "netsh listed no rules", never
+    /// "netsh failed", since both callers present the count as a fact.</summary>
     public static async Task<List<NetworkFirewallRuleInfo>> ReadRulesAsync()
     {
-        string output = await RunNetshAsync("advfirewall firewall show rule name=all verbose", RulesTimeoutMs);
-        return ParseRules(output);
+        var (output, exitCode) = await RunNetshAsync("advfirewall firewall show rule name=all verbose", RulesTimeoutMs);
+        if (exitCode is null)
+            throw new InvalidOperationException($"netsh timed out after {RulesTimeoutMs / 1000} s.");
+        var rules = ParseRules(output);
+        if (rules.Count == 0)
+        {
+            string text = output.Trim();
+            throw new InvalidOperationException(exitCode != 0
+                ? (text.Length > 0 ? text : $"netsh exited with code {exitCode}.")
+                : "netsh printed no rule this parser recognizes (non-English netsh output isn't supported).");
+        }
+        return rules;
     }
 
     /// <summary>#567: the filter box (free-text over name/program/protocol/grouping) and the
@@ -113,7 +126,8 @@ public static class NetworkFirewallService
             string inbound = parts.Length > 0 && parts[0].Length > 0 ? parts[0] : "Unknown";
             string outbound = parts.Length > 1 && parts[1].Length > 0 ? parts[1] : "Unknown";
 
-            bool flagged = enabled == false || !outbound.Equals("AllowOutbound", StringComparison.OrdinalIgnoreCase);
+            bool flagged = enabled == false ||
+                (!outbound.Equals("AllowOutbound", StringComparison.OrdinalIgnoreCase) && outbound != "Unknown");
             string? reason = enabled == false
                 ? "This profile is turned off - no filtering applies while it's active."
                 : !outbound.Equals("AllowOutbound", StringComparison.OrdinalIgnoreCase) && outbound != "Unknown"
@@ -203,38 +217,16 @@ public static class NetworkFirewallService
         return rules;
     }
 
-    private static async Task<string> RunNetshAsync(string arguments, int timeoutMs)
+    /// <summary>ExitCode null = timed out (Output empty); a start failure reads as exit code -1.</summary>
+    private static async Task<(string Output, int? ExitCode)> RunNetshAsync(string arguments, int timeoutMs)
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", arguments)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return string.Empty;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-                return string.Empty;
-            }
-
-            return (await outputTask) + (await errorTask);
+            return await ToolRunner.RunCapturedAsync("netsh.exe", arguments, timeoutMs, timeoutOutput: string.Empty);
         }
-        catch
+        catch (Exception ex)
         {
-            return string.Empty;
+            return ($"Couldn't run netsh.exe: {ex.Message}", -1);
         }
     }
 }

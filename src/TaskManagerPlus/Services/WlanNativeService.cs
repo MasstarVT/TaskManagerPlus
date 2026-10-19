@@ -58,9 +58,9 @@ public sealed record WifiRadioSnapshot(
 /// way WifiChannelScanService's netsh-driven neighbour scan does, so unlike that scan this is safe
 /// to poll continuously (see WifiSignalMonitorService).
 ///
-/// The client handle is opened once and kept for the life of this instance (Dispose closes it)
-/// rather than reopened per call, since WlanOpenHandle/WlanCloseHandle are the more expensive half
-/// of a query and this is meant to be called every couple of seconds. Every public entry point is
+/// The client handle is opened once and kept until Dispose (or until the service stops recognizing
+/// it - see ResetHandle) rather than reopened per call, since WlanOpenHandle/WlanCloseHandle are the
+/// more expensive half of a query and this is meant to be called every couple of seconds. Every public entry point is
 /// wrapped to degrade to null on any failure - no WLAN AutoConfig service, no Wi-Fi adapter, a
 /// disconnected interface, or an unsupported opcode all look the same to callers: "nothing to show
 /// right now", never a thrown exception and never a fabricated reading.
@@ -70,7 +70,14 @@ public sealed class WlanNativeService : IDisposable
     private const uint ClientVersion = 2; // WLAN_API_VERSION_2_0 (Vista+) - every OS this app targets supports it.
 
     private IntPtr _clientHandle = IntPtr.Zero;
-    private bool _openFailed;
+    // WLAN AutoConfig can be stopped when this app starts and started later, or restarted under a
+    // live handle - so a failed open is retried with backoff instead of latched for the session.
+    // Only a missing wlanapi.dll (no WLAN stack installed at all) is treated as permanent.
+    private bool _apiUnavailable;
+    private DateTime _nextOpenAttemptUtc = DateTime.MinValue;
+    private TimeSpan _openBackoff = InitialOpenBackoff;
+    private static readonly TimeSpan InitialOpenBackoff = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan MaxOpenBackoff = TimeSpan.FromMinutes(5);
     private readonly object _lock = new();
 
     public WifiRadioSnapshot? GetSnapshot()
@@ -136,31 +143,57 @@ public sealed class WlanNativeService : IDisposable
     private bool EnsureOpen()
     {
         if (_clientHandle != IntPtr.Zero) return true;
-        if (_openFailed) return false;
+        if (_apiUnavailable) return false;
+        var now = DateTime.UtcNow;
+        if (now < _nextOpenAttemptUtc) return false;
         try
         {
             int result = WlanOpenHandle(ClientVersion, IntPtr.Zero, out _, out var handle);
             if (result != 0 || handle == IntPtr.Zero)
             {
-                _openFailed = true;
+                ScheduleOpenRetry(now); // typically wlansvc not running right now
                 return false;
             }
             _clientHandle = handle;
+            _openBackoff = InitialOpenBackoff;
             return true;
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+            // wlanapi.dll missing (Server Core, WLAN feature not installed) - the whole Wi-Fi
+            // card degrades to hidden, same as "no Wi-Fi adapter".
+            _apiUnavailable = true;
+            return false;
         }
         catch
         {
-            // wlanapi.dll missing (Server Core, WLAN AutoConfig service not installed) - the
-            // whole Wi-Fi card degrades to hidden, same as "no Wi-Fi adapter".
-            _openFailed = true;
+            ScheduleOpenRetry(now);
             return false;
         }
     }
 
+    private void ScheduleOpenRetry(DateTime now)
+    {
+        _nextOpenAttemptUtc = now + _openBackoff;
+        _openBackoff = TimeSpan.FromTicks(Math.Min(_openBackoff.Ticks * 2, MaxOpenBackoff.Ticks));
+    }
+
+    /// <summary>Drops a handle the service no longer recognizes (wlansvc restarted, so calls on it
+    /// fail with ERROR_INVALID_HANDLE or an RPC error) - the next call reopens a fresh one.</summary>
+    private void ResetHandle()
+    {
+        try { WlanCloseHandle(_clientHandle, IntPtr.Zero); } catch { /* best-effort - it's already dead */ }
+        _clientHandle = IntPtr.Zero;
+    }
+
     private Guid? FindConnectedInterfaceGuid()
     {
-        if (WlanEnumInterfaces(_clientHandle, IntPtr.Zero, out IntPtr listPtr) != 0 || listPtr == IntPtr.Zero)
+        if (WlanEnumInterfaces(_clientHandle, IntPtr.Zero, out IntPtr listPtr) != 0)
+        {
+            ResetHandle();
             return null;
+        }
+        if (listPtr == IntPtr.Zero) return null;
         try
         {
             uint count = (uint)Marshal.ReadInt32(listPtr, 0);

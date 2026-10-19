@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net.NetworkInformation;
 using System.ServiceProcess;
 
@@ -58,48 +57,45 @@ public static class OrphanedAdapterService
         "for", "the", "and", "service", "connection", "interface",
     };
 
+    /// <summary>Throws (rather than returning an empty list) when the inputs can't be read - an
+    /// unreadable Driver Store would otherwise make every candidate without a matching service name
+    /// look orphaned, and a failed adapter enumeration would read as "none found".</summary>
     public static async Task<List<OrphanedAdapterInfo>> FindOrphansAsync()
     {
         var results = new List<OrphanedAdapterInfo>();
-        try
-        {
-            var candidates = NetworkInterface.GetAllNetworkInterfaces()
-                .Where(ni => ni.NetworkInterfaceType is not NetworkInterfaceType.Loopback)
-                .Where(LooksLikeVirtualClientAdapter)
-                .ToList();
-            if (candidates.Count == 0) return results;
+        var candidates = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(ni => ni.NetworkInterfaceType is not NetworkInterfaceType.Loopback)
+            .Where(LooksLikeVirtualClientAdapter)
+            .ToList();
+        if (candidates.Count == 0) return results;
 
-            var serviceTokenSets = ServiceController.GetServices()
-                .Select(s =>
-                {
-                    HashSet<string> tokens;
-                    try { tokens = Tokenize(s.ServiceName).Concat(Tokenize(s.DisplayName)).ToHashSet(StringComparer.OrdinalIgnoreCase); }
-                    catch { tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase); }
-                    return tokens;
-                })
-                .ToList();
-
-            var driverPackages = await ReadAllDriverPackagesAsync();
-            var driverTokenSets = driverPackages
-                .Select(p => Tokenize(p.ProviderName).Concat(Tokenize(p.OriginalName)).Concat(Tokenize(p.PublishedName)).ToHashSet(StringComparer.OrdinalIgnoreCase))
-                .ToList();
-
-            foreach (var ni in candidates)
+        var serviceTokenSets = ServiceController.GetServices()
+            .Select(s =>
             {
-                var nameTokens = Tokenize(ni.Name).Concat(Tokenize(ni.Description)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                if (nameTokens.Count == 0) continue; // nothing distinctive enough to match against - don't flag on no information
+                HashSet<string> tokens;
+                try { tokens = Tokenize(s.ServiceName).Concat(Tokenize(s.DisplayName)).ToHashSet(StringComparer.OrdinalIgnoreCase); }
+                catch { tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase); }
+                return tokens;
+            })
+            .ToList();
 
-                bool hasService = serviceTokenSets.Any(t => t.Overlaps(nameTokens));
-                bool hasDriver = driverTokenSets.Any(t => t.Overlaps(nameTokens));
-                if (hasService || hasDriver) continue;
+        var driverPackages = await ReadAllDriverPackagesAsync()
+            ?? throw new InvalidOperationException("couldn't read the Driver Store (pnputil /enum-drivers failed, timed out, or printed output this parser doesn't recognize) - nothing was flagged, since an adapter can't be called orphaned without it.");
+        var driverTokenSets = driverPackages
+            .Select(p => Tokenize(p.ProviderName).Concat(Tokenize(p.OriginalName)).Concat(Tokenize(p.PublishedName)).ToHashSet(StringComparer.OrdinalIgnoreCase))
+            .ToList();
 
-                results.Add(new OrphanedAdapterInfo(ni.Name, ni.Description,
-                    "No installed service or Driver Store package name matches this adapter - it may be left over from an uninstalled VPN/virtual-adapter client. Name-based matching only - quick flag, not a verdict."));
-            }
-        }
-        catch
+        foreach (var ni in candidates)
         {
-            // Best-effort - a partial/empty result just means fewer orphans surfaced, never a crash.
+            var nameTokens = Tokenize(ni.Name).Concat(Tokenize(ni.Description)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (nameTokens.Count == 0) continue; // nothing distinctive enough to match against - don't flag on no information
+
+            bool hasService = serviceTokenSets.Any(t => t.Overlaps(nameTokens));
+            bool hasDriver = driverTokenSets.Any(t => t.Overlaps(nameTokens));
+            if (hasService || hasDriver) continue;
+
+            results.Add(new OrphanedAdapterInfo(ni.Name, ni.Description,
+                "No installed service or Driver Store package name matches this adapter - it may be left over from an uninstalled VPN/virtual-adapter client. Name-based matching only - quick flag, not a verdict."));
         }
         return results;
     }
@@ -126,34 +122,15 @@ public static class OrphanedAdapterService
         }
     }
 
-    private static async Task<List<(string ProviderName, string OriginalName, string PublishedName)>> ReadAllDriverPackagesAsync()
+    /// <summary>Null when the Driver Store couldn't be read: pnputil failed to start, timed out,
+    /// exited non-zero, or printed no block with a "Published Name" (non-English output).</summary>
+    private static async Task<List<(string ProviderName, string OriginalName, string PublishedName)>?> ReadAllDriverPackagesAsync()
     {
         var packages = new List<(string, string, string)>();
         try
         {
-            var psi = new ProcessStartInfo("pnputil.exe", "/enum-drivers")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return packages;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(20000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-                return packages;
-            }
-            string output = (await outputTask) + (await errorTask);
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("pnputil.exe", "/enum-drivers", 20000, includeStderr: false);
+            if (exitCode != 0) return null;
 
             var block = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             void Flush()
@@ -180,8 +157,8 @@ public static class OrphanedAdapterService
         }
         catch
         {
-            // Best-effort.
+            return null;
         }
-        return packages;
+        return packages.Any(p => p.Item3.Length > 0) ? packages : null;
     }
 }

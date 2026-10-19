@@ -100,6 +100,12 @@ public sealed class NetworkTroubleshootReport
 {
     public string Query { get; init; } = string.Empty;
     public List<NetworkFirewallRuleInfo> MatchingFirewallRules { get; init; } = new();
+    /// <summary>Non-null when the rule set couldn't be read - the view then says so instead of
+    /// "No matching firewall rules found".</summary>
+    public string? FirewallRulesError { get; init; }
+    public string FirewallRulesEmptyText => FirewallRulesError is null
+        ? "No matching firewall rules found."
+        : $"Couldn't read the firewall rules: {FirewallRulesError}";
     public List<WfpDropEvent> MatchingWfpDrops { get; init; } = new();
     public bool WfpChannelAvailable { get; init; }
     public string ProxyApplicability { get; init; } = string.Empty;
@@ -275,6 +281,10 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             {
                 _latencyMonitor.Stop();
                 _latencyMonitor.Start(clamped);
+                // #526's DNS monitor shares this toggle and interval - restart it too, or it keeps
+                // probing at the old cadence until the next Stop/Start.
+                _dnsResponseMonitor.Stop();
+                StartDnsResponseMonitor();
             }
         }
     }
@@ -513,7 +523,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     private bool _isScanningDnsFailures;
     public bool IsScanningDnsFailures { get => _isScanningDnsFailures; private set => SetProperty(ref _isScanningDnsFailures, value); }
 
-    private string _dnsScanStatusText = "Not scanned yet - the DNS-Client Operational log is disabled by default on most machines.";
+    private string _dnsScanStatusText = "Not scanned yet - reads DNS Client name-resolution timeout events from the System log.";
     public string DnsScanStatusText { get => _dnsScanStatusText; private set => SetProperty(ref _dnsScanStatusText, value); }
 
     public ObservableCollection<DnsFailureGroup> DnsFailuresByName { get; } = new();
@@ -541,7 +551,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     // (#532/#533) - plus a new section on the existing #513 Routing card (#535). #527/#528/#534 all
     // read one Win32_NetworkAdapterConfiguration sweep (DhcpAddressingService.ReadAll); #529 shells
     // out to ipconfig.exe scoped to whichever adapter is selected below; #530/#531's event-log scans
-    // and #531's gratuitous-ARP probe are on-demand, per CLAUDE.md's event-log-scan convention.
+    // and #531's duplicate-address-detection read are on-demand, per CLAUDE.md's event-log-scan convention.
 
     // #527/#528/#529/#534: per-adapter lease detail, APIPA flag, and the addressing sanity checklist.
     public ObservableCollection<AdapterAddressInfo> Addressing { get; } = new();
@@ -583,7 +593,8 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     public ObservableCollection<DhcpClientEvent> DhcpEvents { get; } = new();
     public AsyncRelayCommand ScanDhcpEventsCommand { get; }
 
-    // #531: System-log Tcpip 4198/4199 correlation, plus the active gratuitous-ARP probe.
+    // #531: System-log Tcpip 4198/4199 correlation, plus a read of Windows' own duplicate-address-
+    // detection result (not a live ARP probe - see IpConflictService's remarks).
     private double _ipConflictScanWindowHours = 24.0;
     public double IpConflictScanWindowHours { get => _ipConflictScanWindowHours; set => SetProperty(ref _ipConflictScanWindowHours, Math.Clamp(value, 1.0, 720.0)); }
 
@@ -828,7 +839,9 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     // other chart in the app, reusing LatencyLineOf/NewLatencyHistory below rather than duplicating
     // the pairing helper for one more chart. IPv6 isn't separately charted (most machines carry
     // little-to-no IPv6 TCP traffic today), but its own numbers are still in TcpHealthSamples above.
-    public ObservableCollection<double> TcpRetransmitRateHistory { get; } = NewLatencyHistory();
+    // Starts empty and only grows on real readings - a zero-filled window would draw a measured-
+    // looking 0% line before the first sample, or whenever the counters are unavailable.
+    public ObservableCollection<double> TcpRetransmitRateHistory { get; } = new();
     private readonly LineSeries<double> _tcpRetransmitGlow, _tcpRetransmitCore;
     public ISeries[] TcpRetransmitSeries { get; }
     public Axis[] TcpRetransmitPercentYAxes { get; }
@@ -1220,7 +1233,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     private bool _isScanningSmbEvents;
     public bool IsScanningSmbEvents { get => _isScanningSmbEvents; private set => SetProperty(ref _isScanningSmbEvents, value); }
 
-    private string _smbEventScanStatusText = "Not scanned yet - the SMBClient Connectivity/Operational logs are disabled by default on most machines.";
+    private string _smbEventScanStatusText = "Not scanned yet - reads the SMBClient Connectivity and Operational logs.";
     public string SmbEventScanStatusText { get => _smbEventScanStatusText; private set => SetProperty(ref _smbEventScanStatusText, value); }
 
     public ObservableCollection<SmbClientEvent> SmbClientEvents { get; } = new();
@@ -1695,9 +1708,10 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             if (e.PropertyName is nameof(PerformanceViewModel.NetworkReceiveBps) or nameof(PerformanceViewModel.NetworkSendBps))
             {
                 RecomputeLinkUtilization();
-                // #597: reposition the Throughput chart's own event markers on the same 1s tick
-                // that chart itself scrolls on.
-                RecomputeEventMarkers(ThroughputEventMarkers, ThroughputHistoryLength, 1.0, SKColors.OrangeRed);
+                // #597: reposition the Throughput chart's own event markers on the same tick that
+                // chart itself scrolls on - one sample per shared-sampler poll interval, which is
+                // user-configurable, not a fixed 1s.
+                RecomputeEventMarkers(ThroughputEventMarkers, ThroughputHistoryLength, Performance.PollIntervalSeconds, SKColors.OrangeRed);
             }
         };
         RecomputeLinkUtilization();
@@ -1711,13 +1725,14 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         ScanSmbEventsCommand = new AsyncRelayCommand(ScanSmbEventsAsync, () => !IsScanningSmbEvents);
         _ = RefreshNetworkDrivesAsync();
 
-        // #591-595: IPv6/NCSI card wiring - both read-only snapshots, loaded once at startup plus
-        // an explicit Refresh, same shape #552/#563's own one-time reads already use.
+        // #591-595: IPv6/NCSI card wiring. The IPv6 snapshot is a local read, loaded once at
+        // startup plus an explicit Refresh. The NCSI check makes outbound probes (a DNS lookup and
+        // an HTTP GET), so it runs only from its button - NetworkActivityCatalogService discloses
+        // it as "never automatic".
         RefreshIpv6Command = new AsyncRelayCommand(RefreshIpv6Async, () => !IsLoadingIpv6);
         RunDualStackTestCommand = new AsyncRelayCommand(RunDualStackTestAsync, () => !IsRunningDualStackTest && !string.IsNullOrWhiteSpace(DualStackHostname));
         RunNcsiCheckCommand = new AsyncRelayCommand(RunNcsiCheckAsync, () => !IsCheckingNcsi);
         _ = RefreshIpv6Async();
-        _ = RunNcsiCheckAsync();
 
         // #596-600: Network events panel, diagnostic report and black-box recorder wiring.
         ScanNetworkEventsCommand = new AsyncRelayCommand(ScanNetworkEventsAsync, () => !IsScanningNetworkEvents);
@@ -1726,7 +1741,9 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         ToggleBlackBoxRecordingCommand = new RelayCommand(_ => ToggleBlackBoxRecording());
         OpenBlackBoxIncidentsFolderCommand = new RelayCommand(_ => OpenBlackBoxIncidentsFolder());
 
-        foreach (var incident in NetworkBlackBoxRecorderService.LoadIncidentHistory().OrderByDescending(i => i.TriggeredAtUtc))
+        // Null-filtered here too: this runs in the constructor, so a null row from a hand-edited
+        // incidents file would otherwise stop the main window from opening.
+        foreach (var incident in NetworkBlackBoxRecorderService.LoadIncidentHistory().Where(i => i is not null).OrderByDescending(i => i.TriggeredAtUtc))
             BlackBoxIncidents.Add(incident);
     }
     /// <summary>#221: reads each adapter's interrupt-moderation/RSS registry settings and flags an
@@ -1870,8 +1887,11 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
             var ipv4Health = tcpHealth.FirstOrDefault(h => h.AddressFamily == "IPv4");
             double retransmitPercent = ipv4Health is { IsAvailable: true } ? ipv4Health.RetransmitRatePercent : 0;
-            TcpRetransmitRateHistory.Add(retransmitPercent);
-            if (TcpRetransmitRateHistory.Count > LatencyHistoryLength) TcpRetransmitRateHistory.RemoveAt(0);
+            if (ipv4Health is { IsAvailable: true })
+            {
+                TcpRetransmitRateHistory.Add(retransmitPercent);
+                if (TcpRetransmitRateHistory.Count > LatencyHistoryLength) TcpRetransmitRateHistory.RemoveAt(0);
+            }
             TcpHealthStatusText = ipv4Health is not { IsAvailable: true }
                 ? "TCP health counters unavailable on this machine."
                 : retransmitPercent > RetransmitRateFlagPercent
@@ -2157,9 +2177,14 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         if (IsRestartingAdapter) return;
         IsRestartingAdapter = true;
         RestartAdapterStatusText = $"Restarting \"{adapterName}\"...";
+        bool success = false;
         try
         {
             string output = await AdapterRestartService.RestartAsync(adapterName);
+            // RestartAsync reports both of its failure modes in text: "Couldn't disable ..." and
+            // "... re-enabling it failed ...".
+            success = !output.StartsWith("Couldn't", StringComparison.Ordinal) &&
+                      !output.Contains("re-enabling it failed", StringComparison.Ordinal);
             RestartAdapterStatusText = output;
         }
         catch (Exception ex)
@@ -2170,6 +2195,8 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         {
             IsRestartingAdapter = false;
         }
+        JournalOneShotRun("Restart network adapter",
+            $"netsh interface set interface \"{adapterName}\" admin=disable, then admin=enable", success);
     }
 
     /// <summary>#46: opens the hosts file in Notepad for DNS override troubleshooting - explicitly
@@ -2982,7 +3009,9 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             foreach (var s in result.Parsed) DohStatuses.Add(s);
             DohRawOutput = result.RawOutput;
 
-            DohSummaryText = !result.CommandSupported
+            DohSummaryText = result.ErrorMessage is not null
+                ? $"Couldn't read DoH configuration: {result.ErrorMessage}"
+                : !result.CommandSupported
                 ? "`netsh dns show encryption` isn't available on this Windows version - encrypted-DNS status can't be read."
                 : result.Parsed.Count == 0
                     ? (result.RegistryKeyPresent
@@ -3092,10 +3121,10 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             "Release IP address", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
-        _ = RunDhcpActionAsync(() => DhcpAddressingService.ReleaseAsync(target.AdapterName), "Release");
+        _ = RunDhcpActionAsync(() => DhcpAddressingService.ReleaseAsync(target.AdapterName), "Release",
+            $"ipconfig /release \"{target.AdapterName}\"");
     }
 
-    /// <summary>#529: renew - same confirm-first pattern as Release above.</summary>
     /// <summary>#529 (also used directly by #528's own per-adapter banner button via
     /// <see cref="RenewApipaAdapterCommand"/>) - same confirm-first pattern as Release.</summary>
     private void RenewAdapter(AdapterAddressInfo? target)
@@ -3107,7 +3136,8 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             "Renew IP address", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
-        _ = RunDhcpActionAsync(() => DhcpAddressingService.RenewAsync(target.AdapterName), "Renew");
+        _ = RunDhcpActionAsync(() => DhcpAddressingService.RenewAsync(target.AdapterName), "Renew",
+            $"ipconfig /renew \"{target.AdapterName}\"");
     }
 
     /// <summary>#529: register DNS - ipconfig.exe has no per-adapter scope for this (see
@@ -3120,17 +3150,19 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             "Register DNS", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
-        _ = RunDhcpActionAsync(DhcpAddressingService.RegisterDnsAsync, "Register DNS");
+        _ = RunDhcpActionAsync(DhcpAddressingService.RegisterDnsAsync, "Register DNS", "ipconfig /registerdns");
     }
 
-    private async Task RunDhcpActionAsync(Func<Task<string>> action, string label)
+    private async Task RunDhcpActionAsync(Func<Task<string>> action, string label, string commandLine)
     {
         if (IsRunningDhcpAction) return;
         IsRunningDhcpAction = true;
         DhcpActionStatusText = $"Running {label}...";
+        bool success = false;
         try
         {
             string output = await action();
+            success = !LooksLikeRunFailure(output);
             DhcpActionStatusText = $"{label}: {output}";
         }
         catch (Exception ex)
@@ -3140,8 +3172,9 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         finally
         {
             IsRunningDhcpAction = false;
-            await RefreshAddressingAsync();
         }
+        JournalOneShotRun(label == "Register DNS" ? label : $"{label} IP address", commandLine, success);
+        await RefreshAddressingAsync();
     }
 
     /// <summary>#530: scans the DHCP-Client Admin + Operational logs over the chosen lookback
@@ -3366,6 +3399,19 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             Fill(AirspaceOccupancy5, "5 GHz");
             Fill(AirspaceOccupancy6, "6 GHz");
 
+            if (result.ErrorMessage is not null)
+            {
+                // A failed scan is not an empty airspace - no "channel 1 is clear" verdicts.
+                AirspaceRecommendation24 = null;
+                AirspaceRecommendation5 = null;
+                AirspaceRecommendation6 = null;
+                WifiOverlapText = null;
+                WifiMeshGroups.Clear();
+                WifiBandSteeringHintText = null;
+                AirspaceStatusText = $"Scan failed: {result.ErrorMessage}";
+                return;
+            }
+
             AirspaceRecommendation24 = WifiChannelScanService.RecommendChannelText(result.Occupancy, "2.4 GHz");
             AirspaceRecommendation5 = result.Occupancy.Any(o => o.Band == "5 GHz") ? WifiChannelScanService.RecommendChannelText(result.Occupancy, "5 GHz") : null;
             AirspaceRecommendation6 = result.Occupancy.Any(o => o.Band == "6 GHz") ? WifiChannelScanService.RecommendChannelText(result.Occupancy, "6 GHz") : null;
@@ -3505,9 +3551,11 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
         IsLoadingWifiProfiles = true;
         WifiProfilesStatusText = $"Deleting \"{target.Name}\"...";
+        bool ran = false;
         try
         {
             await WifiProfileService.DeleteProfileAsync(target.Name, target.InterfaceName);
+            ran = true;
         }
         catch (Exception ex)
         {
@@ -3518,6 +3566,15 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             IsLoadingWifiProfiles = false;
         }
         await RefreshWifiProfilesAsync();
+
+        // netsh's reply is localized text, so success is judged by the profile actually being gone.
+        bool gone = ran && !WifiProfiles.Any(p => string.Equals(p.Name, target.Name, StringComparison.Ordinal) &&
+                                                  string.Equals(p.InterfaceName, target.InterfaceName, StringComparison.OrdinalIgnoreCase));
+        JournalOneShotRun("Delete saved Wi-Fi profile",
+            target.InterfaceName is null
+                ? $"netsh wlan delete profile name=\"{target.Name}\""
+                : $"netsh wlan delete profile name=\"{target.Name}\" interface=\"{target.InterfaceName}\"",
+            gone);
     }
 
     // ---- #566-571 helpers (Firewall card) ------------------------------------------------------
@@ -3557,6 +3614,8 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
+            _allFirewallRules = new();
+            ApplyFirewallRuleFilter();
             FirewallRulesStatusText = $"Couldn't load firewall rules: {ex.Message}";
         }
         finally
@@ -3607,9 +3666,11 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
         IsLoadingFirewallLog = true;
         FirewallLogStatusText = "Enabling...";
+        bool success = false;
         try
         {
             FirewallLogStatusText = await FirewallLogService.EnableDroppedConnectionLoggingAsync();
+            success = !LooksLikeRunFailure(FirewallLogStatusText);
         }
         catch (Exception ex)
         {
@@ -3619,6 +3680,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         {
             IsLoadingFirewallLog = false;
         }
+        JournalOneShotRun("Enable dropped-packet logging", "netsh advfirewall set allprofiles logging droppedconnections enable", success);
     }
 
     /// <summary>#569: behind an explicit Yes/No confirm since this is a persistent audit-policy
@@ -3632,9 +3694,13 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
         IsEnablingWfpAuditing = true;
         WfpAuditStatusText = "Enabling...";
+        bool success = false;
         try
         {
-            WfpAuditStatusText = await WfpAuditService.EnableAuditingAsync();
+            string text = await WfpAuditService.EnableAuditingAsync();
+            WfpAuditStatusText = text;
+            // Two auditpol runs folded into one string - either one's failure sentinel fails both.
+            success = !text.Contains("Failed:", StringComparison.Ordinal) && !text.Contains("timed out.", StringComparison.Ordinal);
         }
         catch (Exception ex)
         {
@@ -3644,6 +3710,8 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         {
             IsEnablingWfpAuditing = false;
         }
+        JournalOneShotRun("Enable WFP drop auditing",
+            "auditpol /set /subcategory:\"Filtering Platform Packet Drop\" and \"Filtering Platform Connection\" /success:enable /failure:enable", success);
     }
 
     private async Task ScanWfpDropsAsync()
@@ -3722,8 +3790,19 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         WizardStatusText = "Gathering signals...";
         try
         {
-            var rules = await NetworkFirewallService.ReadRulesAsync();
-            var matchingRules = NetworkFirewallService.FilterRules(rules, query, executableOnly: true);
+            List<NetworkFirewallRuleInfo> matchingRules;
+            string? rulesError = null;
+            try
+            {
+                var rules = await NetworkFirewallService.ReadRulesAsync();
+                matchingRules = NetworkFirewallService.FilterRules(rules, query, executableOnly: true);
+            }
+            catch (Exception ex)
+            {
+                // One unreadable signal shouldn't sink the whole diagnosis - report it as unknown.
+                matchingRules = new();
+                rulesError = ex.Message;
+            }
 
             var wfpScan = await WfpAuditService.ScanAsync(TimeSpan.FromHours(24));
             var matchingDrops = wfpScan.Events
@@ -3746,6 +3825,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             {
                 Query = query,
                 MatchingFirewallRules = matchingRules,
+                FirewallRulesError = rulesError,
                 MatchingWfpDrops = matchingDrops,
                 WfpChannelAvailable = wfpScan.ChannelAvailable,
                 ProxyApplicability = proxyText,
@@ -3753,7 +3833,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
                 MatchingConnections = matchingConnections,
             };
 
-            WizardStatusText = $"{matchingRules.Count} firewall rule(s), {matchingDrops.Count} WFP drop(s), {matchingConnections.Count} current connection(s) matching \"{query}\".";
+            WizardStatusText = $"{(rulesError is null ? $"{matchingRules.Count} firewall rule(s)" : "firewall rules unreadable")}, {matchingDrops.Count} WFP drop(s), {matchingConnections.Count} current connection(s) matching \"{query}\".";
         }
         catch (Exception ex)
         {
@@ -3943,6 +4023,14 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         });
     }
 
+    /// <summary>The action services behind these buttons return the tool's own text or one of
+    /// their failure sentinels ("Failed: ...", "Couldn't start ...", "... timed out.") rather than
+    /// an exit code - this reads the sentinel so a failed run isn't journaled as a success.</summary>
+    private static bool LooksLikeRunFailure(string output) =>
+        output.StartsWith("Failed:", StringComparison.Ordinal) ||
+        output.StartsWith("Couldn't", StringComparison.Ordinal) ||
+        output.EndsWith("timed out.", StringComparison.Ordinal);
+
     // ---- #577 helper (VPN tunnel/DNS-leak check) -----------------------------------------------
 
     private async Task RunVpnTunnelCheckAsync()
@@ -3982,6 +4070,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
+            OrphanedAdapters.Clear(); // a previous scan's flags aren't this scan's result
             OrphanedAdapterStatusText = $"Scan failed: {ex.Message}";
         }
         finally
@@ -4239,6 +4328,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         NetworkDrivesStatusText = $"Disconnecting {drive.DriveLetter}...";
         string output = await SmbShareService.DisconnectAsync(drive.DriveLetter);
         NetworkDrivesStatusText = output;
+        JournalOneShotRun("Disconnect network drive", $"net use {drive.DriveLetter} /delete /y", !LooksLikeRunFailure(output));
         await RefreshNetworkDrivesAsync();
     }
 
@@ -4254,7 +4344,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             foreach (var e in result.Events) SmbClientEvents.Add(e);
 
             SmbEventScanStatusText = !result.ConnectivityChannelAvailable && !result.OperationalChannelAvailable
-                ? "Neither SMBClient log channel could be read (both are disabled by default on most machines, or access was denied)."
+                ? "Neither SMBClient log channel could be read (disabled by policy, missing, or access was denied)."
                 : $"{result.Events.Count} event(s) in the last {SmbEventScanWindowHours:0.#}h.";
         }
         catch (Exception ex)
@@ -4365,7 +4455,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             // #597: reposition both charts' markers immediately with the fresh scan rather than
             // waiting for their own next tick.
             RecomputeEventMarkers(LatencyEventMarkers, LatencyHistoryLength, LatencyIntervalSeconds, SKColors.OrangeRed);
-            RecomputeEventMarkers(ThroughputEventMarkers, ThroughputHistoryLength, 1.0, SKColors.OrangeRed);
+            RecomputeEventMarkers(ThroughputEventMarkers, ThroughputHistoryLength, Performance.PollIntervalSeconds, SKColors.OrangeRed);
         }
         catch (Exception ex)
         {

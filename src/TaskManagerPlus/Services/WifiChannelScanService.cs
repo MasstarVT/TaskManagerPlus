@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace TaskManagerPlus.Services;
 
 /// <summary>One BSSID row from a `netsh wlan show networks mode=bssid` scan (#538/#546).</summary>
@@ -12,8 +10,10 @@ public sealed record WifiChannelOccupancy(string Band, int Channel, int ApCount,
 /// <summary>#546: every BSSID sharing one SSID, strongest signal first - the "mesh/extender" view.</summary>
 public sealed record WifiSsidGroup(string Ssid, List<WifiScanNetwork> Bssids);
 
-/// <summary>#538's full scan result.</summary>
-public sealed record WifiScanResult(List<WifiScanNetwork> Networks, List<WifiChannelOccupancy> Occupancy, DateTime ScannedAtUtc);
+/// <summary>#538's full scan result. <see cref="ErrorMessage"/> is non-null when the scan produced
+/// nothing usable (netsh failed or timed out, or no BSSID with a channel could be parsed) - callers
+/// must then show it instead of a channel recommendation, since an empty scan isn't a clear one.</summary>
+public sealed record WifiScanResult(List<WifiScanNetwork> Networks, List<WifiChannelOccupancy> Occupancy, DateTime ScannedAtUtc, string? ErrorMessage = null);
 
 /// <summary>
 /// Item #538 (plus #539/#546, which are both read off the same scan rather than a second one):
@@ -33,10 +33,24 @@ public static class WifiChannelScanService
 
     public static async Task<WifiScanResult> ScanAsync(string? connectedBssid)
     {
-        string output = await RunNetshAsync("wlan show networks mode=bssid");
+        var (output, exitCode) = await ToolRunner.RunCapturedAsync("netsh", "wlan show networks mode=bssid", TimeoutMs, timeoutOutput: string.Empty);
         var networks = ParseNetworks(output, connectedBssid);
         var occupancy = ComputeOccupancy(networks);
-        return new WifiScanResult(networks, occupancy, DateTime.UtcNow);
+
+        string? error = null;
+        if (exitCode is null)
+            error = $"netsh timed out after {TimeoutMs / 1000} s.";
+        else if (exitCode != 0 || networks.Count == 0 || occupancy.Count == 0)
+        {
+            // netsh's own message (e.g. "The Wireless AutoConfig Service (wlansvc) is not running.")
+            // explains a failure better than anything this app could guess.
+            string netshText = string.Join(" ", output.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0));
+            if (netshText.Length > 300) netshText = netshText[..300] + "…";
+            error = networks.Count > 0 && exitCode == 0
+                ? "netsh listed networks but no channel numbers could be read (non-English netsh output isn't supported)."
+                : netshText.Length > 0 ? netshText : $"netsh returned no networks (exit code {exitCode}).";
+        }
+        return new WifiScanResult(networks, occupancy, DateTime.UtcNow, error);
     }
 
     /// <summary>#538: AP count and summed signal per (band, channel) - the two series every
@@ -192,39 +206,5 @@ public static class WifiChannelScanService
             (radioType.Contains("ax", StringComparison.OrdinalIgnoreCase) || radioType.Contains("be", StringComparison.OrdinalIgnoreCase));
         if (likelyAxOrBe && channel is >= 1 and <= 233) return "6 GHz";
         return "Unknown";
-    }
-
-    /// <summary>Same shelling-out shape WifiDiagnosticsService.ReadCurrentWifiAsync already
-    /// establishes (concurrent async reads, bounded WaitForExitAsync, Kill()-on-timeout) -
-    /// duplicated rather than shared since that method is private to a different class and this
-    /// scan needs a much longer timeout (an active multi-band scan takes longer than a plain
-    /// `show interfaces` read).</summary>
-    private static async Task<string> RunNetshAsync(string arguments)
-    {
-        var psi = new ProcessStartInfo("netsh", arguments)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi);
-        if (proc is null) return string.Empty;
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(TimeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            return string.Empty;
-        }
-
-        return (await outputTask) + (await errorTask);
     }
 }

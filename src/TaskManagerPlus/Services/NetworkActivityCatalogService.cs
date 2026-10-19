@@ -30,9 +30,10 @@ namespace TaskManagerPlus.Services;
 ///     runs only from its own button or toggle - except the PAC script fetch, which the proxy card
 ///     also runs once at startup when Windows has a PAC URL configured.
 ///   - Other tabs' on-demand checks: the symbol-server test (plus the symbol downloads cdb.exe
-///     itself makes during dump analysis), the WSUS server reachability check and the Troubleshoot
-///     "No internet" TCP connect. Each runs only from its own button, and each exists to test
-///     whether that one connection works.
+///     itself makes during dump analysis), the WSUS server reachability check, the Troubleshoot
+///     "No internet" TCP connect and the Security tab's certificate revocation check. Each runs
+///     only from its own button, and each exists to test whether that one connection works (or,
+///     for revocation, needs the network to answer at all).
 /// </summary>
 public static class NetworkActivityCatalogService
 {
@@ -127,6 +128,13 @@ public static class NetworkActivityCatalogService
             Name = "Symbol server test and dump analysis",
             Trigger = "Settings → Crash analysis → \"Test symbol server\" button, and Stability tab → \"Analyse (!analyze -v)\" button (never automatic)",
             Destination = "https://msdl.microsoft.com/download/symbols/ (the test's HTTPS GET); during analysis cdb.exe itself downloads symbols from whatever server its symbol path names",
+            GatedByOfflineMode = false,
+        },
+        new()
+        {
+            Name = "Certificate revocation check",
+            Trigger = "Security tab → \"Check revocation\" button for the selected entry (never automatic; scans and the process list never check revocation)",
+            Destination = "The CRL / OCSP addresses named in that file's signing certificate chain, fetched by Windows' own certificate-chain engine",
             GatedByOfflineMode = false,
         },
         new()

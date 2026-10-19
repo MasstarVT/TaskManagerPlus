@@ -89,12 +89,21 @@ public static class FirewallLogService
     /// the Enable button as already-satisfied, without needing to touch the log file itself.
     /// Crude (checks whether *any* profile reports LogDroppedConnections as Enable) since the log
     /// file itself doesn't distinguish per-profile, and this app enables/disables all profiles
-    /// together anyway (see EnableDroppedConnectionLoggingAsync below).</summary>
+    /// together anyway (see EnableDroppedConnectionLoggingAsync below).
+    /// Null (unknown) when netsh failed, timed out, or printed no LogDroppedConnections line at all -
+    /// RunNetshAsync's failure text must never read as "not enabled".</summary>
     public static async Task<bool?> IsLoggingEnabledAsync()
     {
-        string output = await RunNetshAsync("advfirewall show allprofiles");
-        if (string.IsNullOrWhiteSpace(output)) return null;
-        return Regex.IsMatch(output, @"LogDroppedConnections\s+Enable", RegexOptions.IgnoreCase);
+        try
+        {
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("netsh.exe", "advfirewall show allprofiles", TimeoutMs, timeoutOutput: string.Empty);
+            if (exitCode != 0 || !Regex.IsMatch(output, @"LogDroppedConnections\s", RegexOptions.IgnoreCase)) return null;
+            return Regex.IsMatch(output, @"LogDroppedConnections\s+Enable", RegexOptions.IgnoreCase);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>#568's own action: `netsh advfirewall set allprofiles logging droppedconnections

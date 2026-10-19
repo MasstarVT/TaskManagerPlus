@@ -46,17 +46,22 @@ public static class SpeedTestService
     public static async Task<SpeedTestResult> RunDownloadAsync(string url, CancellationToken ct = default)
     {
         var startedAt = DateTime.UtcNow;
+        // With ResponseHeadersRead, HttpClient.Timeout stops at the headers - the body reads below
+        // need their own deadline, or a server that stalls mid-body hangs the test forever.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(TimeoutSeconds));
+        var token = timeoutCts.Token;
         try
         {
             var sw = Stopwatch.StartNew();
-            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token);
             response.EnsureSuccessStatusCode();
 
             long total = 0;
-            await using var stream = await response.Content.ReadAsStreamAsync(ct);
+            await using var stream = await response.Content.ReadAsStreamAsync(token);
             var buffer = new byte[81920];
             int read;
-            while ((read = await stream.ReadAsync(buffer, ct)) > 0)
+            while ((read = await stream.ReadAsync(buffer, token)) > 0)
                 total += read;
             sw.Stop();
 
@@ -70,7 +75,7 @@ public static class SpeedTestService
         }
         catch (OperationCanceledException)
         {
-            // Not the caller's token: HttpClient.Timeout expired.
+            // Not the caller's token: the deadline above (or HttpClient.Timeout) expired.
             return new SpeedTestResult(startedAt, "Download", url, 0, 0, 0, TimeoutMessage);
         }
         catch (Exception ex)

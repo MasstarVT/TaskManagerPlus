@@ -55,7 +55,7 @@ public sealed record WinHttpProxyInfo(bool? DirectAccess, string ProxyServer, st
 public sealed class ProxyHijackPostureInfo
 {
     public ProxyConfigInfo PerUser { get; init; } = new(false, string.Empty, string.Empty, string.Empty);
-    public WinHttpProxyInfo Machine { get; init; } = new(true, string.Empty, string.Empty);
+    public WinHttpProxyInfo Machine { get; init; } = new(null, string.Empty, string.Empty); // Unknown until read, never "Direct"
 }
 
 /// <summary>One network adapter's driver version/date (round 9, #48). <see cref="Manufacturer"/> and

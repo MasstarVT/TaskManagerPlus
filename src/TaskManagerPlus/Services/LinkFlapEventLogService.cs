@@ -31,6 +31,20 @@ public static class LinkFlapEventLogService
     private const int EventLinkStateA = 32;
     private const int EventLinkStateB = 33;
     private const int MaxEvents = 2000;
+    private const int MaxRecordsRead = 20000; // bounds the scan when non-NIC providers dominate these IDs
+
+    // Event IDs 27/32/33 are not unique to NDIS miniports: Kernel-Boot logs 27/32 on every boot,
+    // Volsnap logs 33 when it ages out a shadow copy, and Eventlog, Hyper-V-Hypervisor,
+    // Kernel-General, Kernel-Processor-Power, Time-Service, WHEA-Logger, WindowsUpdateClient and
+    // TPM all define one of them too (provider manifests on a stock Windows 11 install). NIC
+    // drivers log under their own short service-style name (rtcx21, e1dexpress, Netwtw14, ...),
+    // never a "Microsoft-Windows-" one, so that prefix plus the two classic sources is excluded.
+    private static readonly string[] ExcludedClassicProviders = { "Volsnap", "TPM" };
+
+    private static bool IsNicProviderCandidate(string? providerName) =>
+        !string.IsNullOrEmpty(providerName) &&
+        !providerName.StartsWith("Microsoft-Windows-", StringComparison.OrdinalIgnoreCase) &&
+        !ExcludedClassicProviders.Contains(providerName, StringComparer.OrdinalIgnoreCase);
 
     private static readonly Regex NamedDataRegex = new(@"<Data Name=""([^""]+)"">([^<]*)</Data>", RegexOptions.Compiled);
     private static readonly string[] AdapterHintFieldNames = { "InterfaceDescription", "AdapterFriendlyName", "Description", "DeviceDescription", "Name" };
@@ -47,12 +61,13 @@ public static class LinkFlapEventLogService
             { ReverseDirection = true };
 
             using var reader = new EventLogReader(query);
-            int count = 0;
-            while (count < MaxEvents && reader.ReadEvent() is { } record)
+            int read = 0;
+            while (events.Count < MaxEvents && read < MaxRecordsRead && reader.ReadEvent() is { } record)
             {
                 using (record)
                 {
-                    count++;
+                    read++;
+                    if (!IsNicProviderCandidate(record.ProviderName)) continue;
                     string message;
                     try { message = record.FormatDescription() ?? string.Empty; }
                     catch { message = string.Empty; } // provider's message file isn't registered locally - a known, common gap

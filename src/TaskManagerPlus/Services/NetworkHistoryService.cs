@@ -198,7 +198,7 @@ public static class NetworkHistoryService
 
         try
         {
-            entries = JsonSerializer.Deserialize<List<NetworkHistoryEntry>>(json) ?? new List<NetworkHistoryEntry>();
+            entries = Sanitize(JsonSerializer.Deserialize<List<NetworkHistoryEntry?>>(json));
             return true;
         }
         catch (JsonException)
@@ -211,6 +211,26 @@ public static class NetworkHistoryService
         {
             return false;
         }
+    }
+
+    /// <summary>Valid JSON can still carry null rows, explicit-null strings and negative counts; a
+    /// null Date/ProcessName would throw in the readers' StartsWith/GroupBy (and silently stop
+    /// RecordSample, whose catch swallows it), so such rows are dropped and counts floored at 0.</summary>
+    private static List<NetworkHistoryEntry> Sanitize(List<NetworkHistoryEntry?>? loaded)
+    {
+        var clean = new List<NetworkHistoryEntry>();
+        if (loaded is null) return clean;
+        foreach (var e in loaded)
+        {
+            if (e is null || string.IsNullOrWhiteSpace(e.Date) || string.IsNullOrWhiteSpace(e.ProcessName)) continue;
+            e.ConnectionCountTotal = Math.Max(0, e.ConnectionCountTotal);
+            e.SampleCount = Math.Max(0, e.SampleCount);
+            e.BytesSentTotal = Math.Max(0, e.BytesSentTotal);
+            e.BytesReceivedTotal = Math.Max(0, e.BytesReceivedTotal);
+            e.CaptureCount = Math.Max(0, e.CaptureCount);
+            clean.Add(e);
+        }
+        return clean;
     }
 
     /// <summary>Write to a temp file and swap it in, so a reader (or a crash mid-write) never sees

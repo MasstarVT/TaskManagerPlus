@@ -19,9 +19,9 @@ public sealed record SmbClientEventScanResult(List<SmbClientEvent> Events, bool 
 /// event-log-scan convention; a fresh class per provider rather than sharing one, since there's no
 /// ID overlap between providers).
 ///
-/// The item names specific event IDs (30803/30809/1016-class) as the ones that matter - session
-/// disconnect-due-to-timeout, reconnect, and a small family of connectivity-loss IDs Microsoft's
-/// own SMBClient provider documents. Matched primarily by ID (a real, stable contract for this
+/// The item names request timeout, reconnect and connectivity loss as the events that matter; the
+/// IDs below are the ones the SMBClient provider's own manifest defines for each (the item's
+/// "1016-class" IDs don't exist in that provider). Matched primarily by ID (a real, stable contract for this
 /// specific provider, unlike DHCP/DNS-Client's own less-documented message text), with a keyword
 /// fallback bucket for any other event in the two channels so a build where an ID shifted still
 /// shows up as "Other" instead of silently vanishing.
@@ -32,12 +32,14 @@ public static class SmbClientEventLogService
     private const string OperationalChannel = "Microsoft-Windows-SMBClient/Operational";
     private const int MaxEventsPerChannel = 1000;
 
-    // Session disconnected because the server stopped responding within the configured timeout.
-    private static readonly int[] TimeoutIds = { 30803, 30804 };
-    // Session/share reconnected after a prior drop.
-    private static readonly int[] ReconnectIds = { 30809, 30810 };
-    // The general "1016-class" connectivity-loss family the item text references.
-    private static readonly int[] ConnectivityLossIds = { 1016, 1017, 1018 };
+    // IDs from the provider's own manifest (Get-WinEvent -ListProvider Microsoft-Windows-SMBClient).
+    // 30809: a request timed out with no response from the server.
+    private static readonly int[] TimeoutIds = { 30809 };
+    // 30806: session re-established; 30808: share connection re-established.
+    private static readonly int[] ReconnectIds = { 30806, 30808 };
+    // 30803: couldn't establish a connection; 30804: connection disconnected; 30805: session
+    // lost; 30807: share connection lost. (30810 - "added a transport interface" - is routine.)
+    private static readonly int[] ConnectivityLossIds = { 30803, 30804, 30805, 30807 };
 
     public static SmbClientEventScanResult Scan(TimeSpan window)
     {
@@ -75,19 +77,25 @@ public static class SmbClientEventLogService
         }
         catch
         {
-            // Channel disabled (both of these are analytic/debug logs, off by default on a stock
-            // install), access denied, or absent entirely - all real, expected conditions.
+            // Channel disabled by policy, access denied, or absent entirely - all real, expected
+            // conditions (both are Operational channels, normally enabled).
             return false;
         }
     }
 
     private static string Categorize(int id, string message)
     {
-        if (TimeoutIds.Contains(id) || message.Contains("timed out", StringComparison.OrdinalIgnoreCase) || message.Contains("timeout", StringComparison.OrdinalIgnoreCase))
+        // A known ID always wins - these messages' "Guidance" text mentions timeouts and
+        // reconnects in passing, so keyword matching is only the fallback for unknown IDs.
+        if (TimeoutIds.Contains(id)) return "Session timeout";
+        if (ReconnectIds.Contains(id)) return "Reconnect";
+        if (ConnectivityLossIds.Contains(id)) return "Connectivity loss";
+
+        if (message.Contains("timed out", StringComparison.OrdinalIgnoreCase) || message.Contains("timeout", StringComparison.OrdinalIgnoreCase))
             return "Session timeout";
-        if (ReconnectIds.Contains(id) || message.Contains("reconnect", StringComparison.OrdinalIgnoreCase))
+        if (message.Contains("reconnect", StringComparison.OrdinalIgnoreCase) || message.Contains("re-established", StringComparison.OrdinalIgnoreCase))
             return "Reconnect";
-        if (ConnectivityLossIds.Contains(id) || message.Contains("disconnected", StringComparison.OrdinalIgnoreCase) || message.Contains("lost connectivity", StringComparison.OrdinalIgnoreCase))
+        if (message.Contains("disconnected", StringComparison.OrdinalIgnoreCase) || message.Contains("lost connectivity", StringComparison.OrdinalIgnoreCase))
             return "Connectivity loss";
         return "Other";
     }

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net.NetworkInformation;
 using Microsoft.Win32;
 
@@ -15,7 +14,12 @@ public sealed record DohServerStatus(string InterfaceName, string ServerAddress,
 /// <summary>#520's combined result - the parsed table above (best-effort) plus the untouched raw
 /// `netsh dns show encryption` text (always shown too, so nothing is lost if the parse comes up
 /// short) and whether any interface actually has a DohInterfaceSettings registry key at all.</summary>
-public sealed record DohConfigResult(List<DohServerStatus> Parsed, string RawOutput, bool RegistryKeyPresent, bool CommandSupported);
+public sealed record DohConfigResult(List<DohServerStatus> Parsed, string RawOutput, bool RegistryKeyPresent, bool CommandSupported)
+{
+    /// <summary>Non-null when netsh couldn't be run or timed out - the status is then unknown, which
+    /// is different from the command not existing on this Windows build.</summary>
+    public string? ErrorMessage { get; init; }
+}
 
 /// <summary>One NRPT rule (#521) - <see cref="Namespaces"/> is the list of suffixes/namespaces this
 /// rule's DNS servers apply to; <see cref="DnsServers"/> is whichever of GenericDNSServers /
@@ -80,23 +84,14 @@ public static class DnsConfigService
         bool commandSupported;
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", "dns show encryption")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return new DohConfigResult(new(), string.Empty, registryPresent, false);
+            // A timeout must not reach the parser below: the killed process's partial stdout would
+            // otherwise be read as a complete (and supported) answer.
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("netsh.exe", "dns show encryption", 10000, timeoutOutput: string.Empty);
+            if (exitCode is null)
+                return new DohConfigResult(new(), string.Empty, registryPresent, false)
+                    { ErrorMessage = "netsh timed out after 10 s - encrypted-DNS status is unknown." };
 
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            try { await proc.WaitForExitAsync(cts.Token); }
-            catch (OperationCanceledException) { try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ } }
-
-            raw = ((await outputTask) + (await errorTask)).Trim();
+            raw = output.Trim();
             // Older Windows builds don't recognize the "dns" netsh context at all - netsh's own
             // "The following command was not found" text is how that shows up.
             commandSupported = raw.Length > 0 &&
@@ -105,7 +100,8 @@ public static class DnsConfigService
         }
         catch (Exception ex)
         {
-            return new DohConfigResult(new(), $"Couldn't run netsh: {ex.Message}", registryPresent, false);
+            return new DohConfigResult(new(), $"Couldn't run netsh: {ex.Message}", registryPresent, false)
+                { ErrorMessage = $"Couldn't run netsh: {ex.Message}" };
         }
 
         var parsed = commandSupported ? ParseEncryptionTable(raw) : new List<DohServerStatus>();

@@ -499,27 +499,31 @@
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <Border Grid.Column="0" CornerRadius="6" Padding="14,6" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <!-- Status color as outline + text on the elevated surface (the palette
+                                     guarantees AA for that pairing), not as a fill under white text. -->
+                                <Border Grid.Column="0" CornerRadius="6" Padding="14,6" VerticalAlignment="Center" Margin="0,0,12,0"
+                                        BorderThickness="2" Background="{DynamicResource BgElevatedBrush}">
                                     <Border.Style>
                                         <Style TargetType="Border">
-                                            <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                            <Setter Property="BorderBrush" Value="{DynamicResource SuccessBrush}" />
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding BufferbloatResult.Grade}" Value="C">
-                                                    <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
                                                 </DataTrigger>
                                                 <DataTrigger Binding="{Binding BufferbloatResult.Grade}" Value="D">
-                                                    <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
                                                 </DataTrigger>
                                                 <DataTrigger Binding="{Binding BufferbloatResult.Grade}" Value="F">
-                                                    <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
                                                 </DataTrigger>
                                                 <DataTrigger Binding="{Binding BufferbloatResult.Grade}" Value="N/A">
-                                                    <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource TextSecondaryBrush}" />
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
-                                    <TextBlock Text="{Binding BufferbloatResult.Grade}" FontSize="{StaticResource FontDisplay}" FontWeight="Bold" Foreground="White" />
+                                    <TextBlock Text="{Binding BufferbloatResult.Grade}" FontSize="{StaticResource FontDisplay}" FontWeight="Bold"
+                                               Foreground="{Binding BorderBrush, RelativeSource={RelativeSource AncestorType=Border}}" />
                                 </Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                     <TextBlock FontSize="{StaticResource FontStrong}">
@@ -912,8 +916,10 @@
                                     <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsMismatched}" Value="True">
-                                                <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
-                                                <Setter Property="Opacity" Value="0.85" />
+                                                <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="BorderThickness" Value="3,0,0,0" />
                                                 <Setter Property="ToolTip" Value="{Binding MismatchReason}" />
                                             </DataTrigger>
                                         </Style.Triggers>
@@ -1109,21 +1115,22 @@
                                                         <ColumnDefinition Width="Auto" />
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0" Text="{Binding AdapterName}" FontWeight="SemiBold" FontSize="{StaticResource FontSection}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                                    <Border Grid.Column="1" CornerRadius="4" Padding="8,3">
+                                                    <Border Grid.Column="1" CornerRadius="4" Padding="8,3" BorderThickness="1" Background="{DynamicResource BgElevatedBrush}">
                                                         <Border.Style>
                                                             <Style TargetType="Border">
-                                                                <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding LinkQualityLabel}" Value="Clean">
-                                                                        <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                                        <Setter Property="BorderBrush" Value="{DynamicResource SuccessBrush}" />
                                                                     </DataTrigger>
                                                                     <DataTrigger Binding="{Binding LinkQualityLabel}" Value="Bad">
-                                                                        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                                        <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
                                                         </Border.Style>
-                                                        <TextBlock Text="{Binding LinkQualityLabel}" FontSize="{StaticResource FontBody}" FontWeight="Bold" Foreground="White" />
+                                                        <TextBlock Text="{Binding LinkQualityLabel}" FontSize="{StaticResource FontBody}" FontWeight="Bold"
+                                                                   Foreground="{Binding BorderBrush, RelativeSource={RelativeSource AncestorType=Border}}" />
                                                     </Border>
                                                 </Grid>
                                                 <TextBlock Text="{Binding LinkQualityReason}" Style="{StaticResource SubStat}" Margin="0,3,0,2" TextWrapping="Wrap" Opacity="0.85" />
@@ -1461,11 +1468,13 @@
                             <!-- #536: real RSSI in dBm + good/marginal/poor band, replacing the old plain
                                  signal-percent readout. -->
                             <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0">
-                                <Run Text="RSSI " /><Run Text="{Binding WifiRadio.RssiDbm, TargetNullValue=Unknown, Mode=OneWay}" /><Run Text=" dBm (" />
+                                <!-- Units live in each StringFormat so a missing value reads plain "Unknown"
+                                     (TargetNullValue isn't formatted), never "Unknown dBm". -->
+                                <Run Text="RSSI " /><Run Text="{Binding WifiRadio.RssiDbm, TargetNullValue=Unknown, StringFormat={}{0} dBm, Mode=OneWay}" /><Run Text=" (" />
                                 <Run Text="{Binding WifiRssiBandText, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=")" />
                                 <Run Text=" · Channel " /><Run Text="{Binding WifiRadio.Channel, TargetNullValue=Unknown, Mode=OneWay}" />
                                 <Run Text=" (" /><Run Text="{Binding WifiRadio.BandLabel, Mode=OneWay}" /><Run Text=")" />
-                                <Run Text=" · Link quality " /><Run Text="{Binding WifiRadio.LinkQualityPercent, TargetNullValue=Unknown, Mode=OneWay}" /><Run Text="%" />
+                                <Run Text=" · Link quality " /><Run Text="{Binding WifiRadio.LinkQualityPercent, TargetNullValue=Unknown, StringFormat={}{0}%, Mode=OneWay}" />
                             </TextBlock>
 
                             <!-- #536: noise floor / SNR - hidden entirely today since Windows exposes no
@@ -1478,8 +1487,8 @@
                             <!-- #540: negotiated Rx/Tx rate, plus the band-steering suggestion once an
                                  Airspace scan below has actually seen the same SSID elsewhere. -->
                             <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0">
-                                <Run Text="Rx " /><Run Text="{Binding WifiRadio.RxRateMbps, TargetNullValue=Unknown, StringFormat={}{0:0.#}, Mode=OneWay}" /><Run Text=" Mbps" />
-                                <Run Text=" · Tx " /><Run Text="{Binding WifiRadio.TxRateMbps, TargetNullValue=Unknown, StringFormat={}{0:0.#}, Mode=OneWay}" /><Run Text=" Mbps" />
+                                <Run Text="Rx " /><Run Text="{Binding WifiRadio.RxRateMbps, TargetNullValue=Unknown, StringFormat={}{0:0.#} Mbps, Mode=OneWay}" />
+                                <Run Text=" · Tx " /><Run Text="{Binding WifiRadio.TxRateMbps, TargetNullValue=Unknown, StringFormat={}{0:0.#} Mbps, Mode=OneWay}" />
                             </TextBlock>
                             <TextBlock Text="{Binding WifiBandSteeringHintText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap"
                                        Foreground="{DynamicResource WarningBrush}" FontWeight="SemiBold"
@@ -1619,7 +1628,7 @@
                                                                         <TextBlock Style="{StaticResource SubStat}" FontFamily="Consolas">
                                                                             <Run Text="{Binding Bssid, Mode=OneWay}" />
                                                                             <Run Text=" — " /><Run Text="{Binding Band, Mode=OneWay}" /><Run Text=" ch." /><Run Text="{Binding Channel, TargetNullValue=?, Mode=OneWay}" />
-                                                                            <Run Text=", " /><Run Text="{Binding SignalPercent, TargetNullValue=Unknown, Mode=OneWay}" /><Run Text="%" />
+                                                                            <Run Text=", " /><Run Text="{Binding SignalPercent, TargetNullValue=Unknown, StringFormat={}{0}%, Mode=OneWay}" />
                                                                         </TextBlock>
                                                                         <TextBlock Text=" (connected)" Style="{StaticResource SubStat}" FontWeight="SemiBold"
                                                                                    Visibility="{Binding IsCurrentBssid, Converter={StaticResource BoolToVisibilityConverter}}" />
@@ -1669,7 +1678,33 @@
                                     <DataGridTextColumn Header="Event" Binding="{Binding Kind}" Width="1.1*" />
                                     <DataGridTextColumn Header="SSID" Binding="{Binding Ssid, TargetNullValue=''}" Width="1.1*" />
                                     <DataGridTextColumn Header="BSSID" Binding="{Binding Bssid, TargetNullValue=''}" Width="1.2*" />
-                                    <DataGridTextColumn Header="Duration" Binding="{Binding Duration, TargetNullValue='', StringFormat={}{0:hh\\:mm\\:ss}}" Width="0.9*" />
+                                    <!-- "hh" alone wraps at 24h, so a day-plus session gets a "1d" prefix. -->
+                                    <DataGridTemplateColumn Header="Duration" Width="0.9*" SortMemberPath="Duration">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock TextTrimming="CharacterEllipsis">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text">
+                                                                <Setter.Value>
+                                                                    <Binding Path="Duration" TargetNullValue="" StringFormat="{}{0:%d}d {0:hh\:mm\:ss}" />
+                                                                </Setter.Value>
+                                                            </Setter>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Duration.Days}" Value="0">
+                                                                    <Setter Property="Text">
+                                                                        <Setter.Value>
+                                                                            <Binding Path="Duration" StringFormat="{}{0:hh\:mm\:ss}" />
+                                                                        </Setter.Value>
+                                                                    </Setter>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                     <!-- #542: decoded reason/status text attached to each row. -->
                                     <DataGridTextColumn Header="Reason" Binding="{Binding ReasonText, TargetNullValue=''}" Width="2.2*" />
                                 </DataGrid.Columns>
@@ -1783,14 +1818,15 @@
                             <ItemsControl ItemsSource="{Binding Addressing}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Margin="0,0,0,10" Padding="10" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource BorderSubtleBrush}">
+                                        <Border Margin="0,0,0,10" Padding="10" CornerRadius="6" BorderThickness="1">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="Background" Value="Transparent" />
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtleBrush}" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding IsApipa}" Value="True">
-                                                            <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
-                                                            <Setter Property="Opacity" Value="0.9" />
+                                                            <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -2179,13 +2215,15 @@
                                     <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsDuplicate}" Value="True">
-                                                <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
-                                                <Setter Property="Opacity" Value="0.85" />
+                                                <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="BorderThickness" Value="3,0,0,0" />
                                                 <Setter Property="ToolTip" Value="This hostname appears more than once in the hosts file - Windows uses whichever line comes first." />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding IsBlackholed}" Value="True">
-                                                <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
-                                                <Setter Property="Opacity" Value="0.85" />
+                                                <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
                                                 <Setter Property="ToolTip" Value="A well-known public domain is pointed at a blackhole address - could be an ad-blocker, or could be malware. Quick flag, not a verdict." />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding ShadowsRecentLookup}" Value="True">
@@ -2495,8 +2533,10 @@
                                     <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsFlagged}" Value="True">
-                                                <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
-                                                <Setter Property="Opacity" Value="0.85" />
+                                                <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="BorderThickness" Value="3,0,0,0" />
                                                 <Setter Property="ToolTip" Value="{Binding FlagReason}" />
                                             </DataTrigger>
                                         </Style.Triggers>
@@ -2598,8 +2638,10 @@
                                                 <Setter Property="ToolTip" Value="This is the default gateway." />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding IsFlagged}" Value="True">
-                                                <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
-                                                <Setter Property="Opacity" Value="0.85" />
+                                                <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="BorderThickness" Value="3,0,0,0" />
                                                 <Setter Property="ToolTip" Value="{Binding FlagReason}" />
                                             </DataTrigger>
                                         </Style.Triggers>
@@ -2634,7 +2676,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="NCSI (&quot;No internet, secured&quot; explainer)" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="Re-check" Padding="10,4" Command="{Binding RunNcsiCheckCommand}" />
+                                <Button Grid.Column="1" Content="Run check" Padding="10,4" Command="{Binding RunNcsiCheckCommand}" />
                             </Grid>
                             <TextBlock Text="Windows decides &quot;Internet access&quot; vs. &quot;No internet, secured&quot; vs. &quot;Limited&quot; from three checks: NlaSvc running, a DNS probe, and an HTTP probe. This re-runs the same two live probes so you can see which one actually failed."
                                        Style="{StaticResource SubStat}" Margin="0,0,0,10" TextWrapping="Wrap" Opacity="0.7" />
@@ -2708,18 +2750,28 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border CornerRadius="4" Padding="8,3" Margin="0,0,6,6">
+                                        <Border CornerRadius="4" Padding="8,3" Margin="0,0,6,6" BorderThickness="1">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                    <Setter Property="BorderBrush" Value="Transparent" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding IsFlagged}" Value="True">
-                                                            <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
                                             </Border.Style>
                                             <TextBlock ToolTip="{Binding FlagReason}" FontSize="{StaticResource FontBody}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsFlagged}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
                                                 <Run Text="{Binding State, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=": " /><Run Text="{Binding Count, Mode=OneWay}" />
                                             </TextBlock>
                                         </Border>
@@ -2825,8 +2877,10 @@
                                     <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsStalledSynSent}" Value="True">
-                                                <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
-                                                <Setter Property="Opacity" Value="0.85" />
+                                                <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="BorderThickness" Value="3,0,0,0" />
                                                 <Setter Property="ToolTip" Value="{Binding StalledSynReason}" />
                                             </DataTrigger>
                                         </Style.Triggers>
@@ -3389,21 +3443,22 @@
                                                         <ColumnDefinition Width="Auto" />
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0" Text="{Binding ProfileName}" FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" VerticalAlignment="Center" />
-                                                    <Border Grid.Column="1" CornerRadius="4" Padding="6,2">
+                                                    <Border Grid.Column="1" CornerRadius="4" Padding="6,2" BorderThickness="1" Background="{DynamicResource BgElevatedBrush}">
                                                         <Border.Style>
                                                             <Style TargetType="Border">
-                                                                <Setter Property="Background" Value="{DynamicResource SuccessBrush}" />
+                                                                <Setter Property="BorderBrush" Value="{DynamicResource SuccessBrush}" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding Enabled}" Value="False">
-                                                                        <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                                        <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
                                                                     </DataTrigger>
                                                                     <DataTrigger Binding="{Binding Enabled}" Value="{x:Null}">
-                                                                        <Setter Property="Background" Value="{DynamicResource TextSecondaryBrush}" />
+                                                                        <Setter Property="BorderBrush" Value="{DynamicResource TextSecondaryBrush}" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
                                                         </Border.Style>
-                                                        <TextBlock Text="{Binding EnabledText}" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="White" />
+                                                        <TextBlock Text="{Binding EnabledText}" FontSize="{StaticResource FontCaption}" FontWeight="Bold"
+                                                                   Foreground="{Binding BorderBrush, RelativeSource={RelativeSource AncestorType=Border}}" />
                                                     </Border>
                                                 </Grid>
                                                 <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
@@ -3618,8 +3673,10 @@
                                             <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding LooksNonMicrosoft}" Value="True">
-                                                        <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
-                                                        <Setter Property="Opacity" Value="0.85" />
+                                                        <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                        <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                        <Setter Property="BorderThickness" Value="3,0,0,0" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
@@ -3695,7 +3752,7 @@
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
-                                        <TextBlock Text="No matching firewall rules found." Opacity="0.7" Margin="0,0,0,10">
+                                        <TextBlock Text="{Binding WizardReport.FirewallRulesEmptyText}" Opacity="0.7" Margin="0,0,0,10" TextWrapping="Wrap">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -3931,8 +3988,10 @@
                                     <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding LooksNonMicrosoft}" Value="True">
-                                                <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
-                                                <Setter Property="Opacity" Value="0.85" />
+                                                <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                <Setter Property="BorderThickness" Value="3,0,0,0" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
@@ -4074,8 +4133,8 @@
                                                 <ColumnDefinition Width="Auto" />
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="SMB1" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="White" VerticalAlignment="Top"
-                                                       Padding="4,0" Margin="0,0,8,0" Background="{DynamicResource DangerBrush}"
+                                            <TextBlock Grid.Column="0" Text="SMB1" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource DangerBrush}" VerticalAlignment="Top"
+                                                       Padding="4,0" Margin="0,0,8,0" Background="{DynamicResource BgElevatedBrush}"
                                                        Visibility="{Binding IsSmb1, Converter={StaticResource BoolToVisibilityConverter}}" />
                                             <StackPanel Grid.Column="1">
                                                 <TextBlock FontSize="{StaticResource FontStrong}">
@@ -4183,8 +4242,8 @@
                                                     <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextWrapping="Wrap" VerticalAlignment="Center" />
-                                                <TextBlock Grid.Column="1" Text="Offline" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="White"
-                                                           Padding="4,0" Background="{DynamicResource WarningBrush}" VerticalAlignment="Center">
+                                                <TextBlock Grid.Column="1" Text="Offline" FontSize="{StaticResource FontCaption}" FontWeight="Bold" Foreground="{DynamicResource WarningBrush}"
+                                                           Padding="4,0" Background="{DynamicResource BgElevatedBrush}" VerticalAlignment="Center">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
                                                             <Setter Property="Visibility" Value="Collapsed" />

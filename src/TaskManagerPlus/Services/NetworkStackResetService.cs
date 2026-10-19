@@ -34,7 +34,7 @@ public static class NetworkStackResetService
 
     private static async Task<StackResetActionResult> RunAsync(string actionName, string exe, string args)
     {
-        DateTime ranAt = DateTime.Now;
+        DateTime ranAt = DateTime.UtcNow;
         StackResetActionResult result;
         try
         {
@@ -86,7 +86,8 @@ public static class NetworkStackResetService
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
             string flatOutput = result.Output.Replace('\r', ' ').Replace('\n', ' ').Trim();
-            string line = $"{result.RanAtUtc:yyyy-MM-dd HH:mm:ss}\t{result.ActionName}\t{(result.Success ? "OK" : "FAILED")}\t{flatOutput}";
+            // The log itself has always been written in local time.
+            string line = $"{result.RanAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}\t{result.ActionName}\t{(result.Success ? "OK" : "FAILED")}\t{flatOutput}";
             File.AppendAllText(path, line + Environment.NewLine);
         }
         catch

@@ -148,7 +148,10 @@ public static class RoutingTableService
             }
         }
 
-        foreach (var group in routes.GroupBy(r => (r.AddressFamily, r.Destination, r.Netmask, r.Metric)))
+        // Multicast, broadcast, loopback and link-local routes exist once per interface by design,
+        // so two adapters at the same metric always "duplicate" them - not a conflict.
+        foreach (var group in routes.Where(r => !IsPerInterfaceDestination(r))
+                                    .GroupBy(r => (r.AddressFamily, r.Destination, r.Netmask, r.Metric)))
         {
             var rows = group.ToList();
             if (rows.Count <= 1) continue;
@@ -180,6 +183,15 @@ public static class RoutingTableService
         destination.StartsWith("127.", StringComparison.Ordinal) ||
         destination == "255.255.255.255" ||
         (IPAddress.TryParse(destination, out var ip) && ip.GetAddressBytes() is [>= 224, ..]);
+
+    private static bool IsPerInterfaceDestination(RouteEntry r)
+    {
+        if (r.AddressFamily == "IPv4") return IsSpecialIPv4Destination(r.Destination);
+        string dest = r.Destination;
+        return dest.StartsWith("ff", StringComparison.OrdinalIgnoreCase)       // ff00::/8 multicast
+            || dest.StartsWith("fe80:", StringComparison.OrdinalIgnoreCase)    // fe80::/64 link-local (+ per-address /128s)
+            || dest.StartsWith("::1/", StringComparison.Ordinal);              // loopback
+    }
 
     private static bool NetworkContains(string destination, string netmask, string ip)
     {
