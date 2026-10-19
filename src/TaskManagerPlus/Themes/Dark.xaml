@@ -806,6 +806,21 @@
         <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
     </Style>
 
+    <!-- Invisible resize grip for DataGridColumnHeader's PART_Left/RightHeaderGripper: without those
+         two parts in the template below, no column in any grid could be resized. -->
+    <Style x:Key="ColumnHeaderGripperStyle" TargetType="{x:Type Thumb}">
+        <Setter Property="Width" Value="8" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Cursor" Value="SizeWE" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Thumb}">
+                    <Border Background="{TemplateBinding Background}" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style TargetType="{x:Type DataGridColumnHeader}">
         <Setter Property="Background" Value="{DynamicResource BgPanelBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}" />
@@ -819,22 +834,26 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type DataGridColumnHeader}">
-                    <Border Background="{TemplateBinding Background}"
-                            BorderBrush="{TemplateBinding BorderBrush}"
-                            BorderThickness="{TemplateBinding BorderThickness}"
-                            Padding="{TemplateBinding Padding}">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <ContentPresenter Grid.Column="0" VerticalAlignment="Center"
-                                               TextBlock.FontWeight="{TemplateBinding FontWeight}" />
-                            <Path x:Name="SortArrow" Grid.Column="1" Width="8" Height="6" Stretch="Fill"
-                                  Fill="{DynamicResource AccentBrush}" Margin="6,0,2,0" VerticalAlignment="Center"
-                                  Data="M 0 0 L 4 5 L 8 0 Z" Visibility="Collapsed" />
-                        </Grid>
-                    </Border>
+                    <Grid>
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter Grid.Column="0" VerticalAlignment="Center"
+                                                   TextBlock.FontWeight="{TemplateBinding FontWeight}" />
+                                <Path x:Name="SortArrow" Grid.Column="1" Width="8" Height="6" Stretch="Fill"
+                                      Fill="{DynamicResource AccentBrush}" Margin="6,0,2,0" VerticalAlignment="Center"
+                                      Data="M 0 0 L 4 5 L 8 0 Z" Visibility="Collapsed" />
+                            </Grid>
+                        </Border>
+                        <Thumb x:Name="PART_LeftHeaderGripper" HorizontalAlignment="Left" Style="{StaticResource ColumnHeaderGripperStyle}" />
+                        <Thumb x:Name="PART_RightHeaderGripper" HorizontalAlignment="Right" Style="{StaticResource ColumnHeaderGripperStyle}" />
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="SortDirection" Value="Ascending">
                             <Setter TargetName="SortArrow" Property="Visibility" Value="Visible" />
@@ -1045,6 +1064,36 @@
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+        <Style.Triggers>
+            <!-- The setters above shape a vertical bar; without this trigger every horizontal
+                 ScrollBar (the Processes grid's ~40 columns, horizontally scrolling TextBoxes)
+                 was forced to a 10px-wide, vertically-laid-out stub that couldn't be dragged. -->
+            <Trigger Property="Orientation" Value="Horizontal">
+                <Setter Property="Width" Value="Auto" />
+                <Setter Property="MinWidth" Value="0" />
+                <Setter Property="Height" Value="10" />
+                <Setter Property="MinHeight" Value="10" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type ScrollBar}">
+                            <Grid Background="Transparent">
+                                <Track x:Name="PART_Track" Height="8" VerticalAlignment="Center">
+                                    <Track.DecreaseRepeatButton>
+                                        <RepeatButton Style="{StaticResource ThinScrollBarPageButton}" Command="ScrollBar.PageLeftCommand" />
+                                    </Track.DecreaseRepeatButton>
+                                    <Track.IncreaseRepeatButton>
+                                        <RepeatButton Style="{StaticResource ThinScrollBarPageButton}" Command="ScrollBar.PageRightCommand" />
+                                    </Track.IncreaseRepeatButton>
+                                    <Track.Thumb>
+                                        <Thumb Style="{StaticResource ThinScrollBarThumb}" Height="8" MinWidth="24" />
+                                    </Track.Thumb>
+                                </Track>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
     <!-- ============================= Misc ============================= -->

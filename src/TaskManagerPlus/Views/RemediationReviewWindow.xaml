@@ -7,6 +7,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
+        Background="{DynamicResource BgBrush}" Foreground="{DynamicResource TextPrimaryBrush}"
         Title="{Binding FindingTitle, StringFormat='Fix: {0}'}"
         Height="620" Width="620" MinHeight="480" MinWidth="480"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">

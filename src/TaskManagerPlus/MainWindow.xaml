@@ -55,7 +55,7 @@
                 <Grid x:Name="SearchBoxGrid" Grid.Column="1" HorizontalAlignment="Center" Width="320">
                     <TextBox Text="{Binding Search.SearchText, UpdateSourceTrigger=PropertyChanged}"
                              ToolTip="Search processes, services, startup items, drivers, software, USB devices" Padding="10,6" />
-                    <Popup IsOpen="{Binding Search.HasQuery, Mode=OneWay}" PlacementTarget="{Binding ElementName=SearchBoxGrid}"
+                    <Popup x:Name="SearchPopup" IsOpen="{Binding Search.HasQuery, Mode=OneWay}" PlacementTarget="{Binding ElementName=SearchBoxGrid}"
                            Placement="Bottom" StaysOpen="True" AllowsTransparency="True" Width="380">
                         <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource BorderBrush2}"
                                 BorderThickness="1" CornerRadius="8" Padding="4" Margin="0,4,0,0">
@@ -98,9 +98,12 @@
                     </Popup>
                 </Grid>
 
-                <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}">
+                <TextBlock Grid.Column="2" VerticalAlignment="Center">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
+                            <!-- Default Foreground lives here, not as a local attribute: a local value
+                                 would beat the trigger and the "Not elevated" warning colour never showed. -->
+                            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                             <Setter Property="Text" Value="{x:Static res:Strings.ElevatedStatus}" />
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsElevated}" Value="False">

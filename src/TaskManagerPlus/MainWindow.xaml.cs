@@ -34,6 +34,18 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = _viewModel;
 
+        // The header search popup is a topmost window bound to Search.HasQuery: hide it while the
+        // app is in the background (it otherwise floated over other apps after Alt+Tab), restore it
+        // on return, and nudge it along when the window moves. SetCurrentValue keeps the binding.
+        Deactivated += (_, _) => SearchPopup.SetCurrentValue(System.Windows.Controls.Primitives.Popup.IsOpenProperty, false);
+        Activated += (_, _) => SearchPopup.SetCurrentValue(System.Windows.Controls.Primitives.Popup.IsOpenProperty, _viewModel.Search.HasQuery);
+        LocationChanged += (_, _) =>
+        {
+            double offset = SearchPopup.HorizontalOffset;
+            SearchPopup.HorizontalOffset = offset + 1;
+            SearchPopup.HorizontalOffset = offset;
+        };
+
         // Round 17, item 59: jump from a Stability-tab service-restart-loop warning to the
         // matching Services-tab entry - same "raise an event, let the shell handle cross-view-
         // model navigation" shape as the new-crash-dump toast wiring below, reusing SelectTabByName

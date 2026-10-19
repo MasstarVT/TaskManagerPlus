@@ -7,6 +7,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
+        Background="{DynamicResource BgBrush}" Foreground="{DynamicResource TextPrimaryBrush}"
         Title="Run safe fixes"
         Height="520" Width="560" MinHeight="360" MinWidth="420"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
@@ -76,7 +77,7 @@
             <Button Grid.Column="2" Content="Close" Padding="14,4" Click="OnClose" />
         </Grid>
 
-        <TextBlock Text="Nothing eligible right now - every current finding either has no fix, or its fix isn't both low-risk and reversible." Margin="0,20,0,0">
+        <TextBlock Text="Nothing eligible right now - every current finding either has no fix, or its fix isn't both low-risk and reversible." Margin="0,20,0,0" TextWrapping="Wrap">
             <TextBlock.Style>
                 <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                     <Setter Property="Visibility" Value="Collapsed" />
