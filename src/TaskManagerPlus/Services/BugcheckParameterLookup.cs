@@ -44,15 +44,17 @@ public static class BugcheckParameterLookup
         {
             new BugcheckParamLabel("Memory referenced"),
             new BugcheckParamLabel("IRQL at time of reference"),
-            new BugcheckParamLabel("Access type (0 = read, 1 = write)"),
+            new BugcheckParamLabel("Access type (0 = read, 1 = write, 2 or 8 = execute)"),
             new BugcheckParamLabel("Address of the driver instruction that referenced memory"),
         },
+        // Parameter 2's encoding changed in Windows 10 1507 (it used to be 0/1); parameter 4 is
+        // the page-fault type, per Microsoft's bug check 0x50 reference.
         [0x00000050] = new[]
         {
             new BugcheckParamLabel("Memory referenced"),
-            new BugcheckParamLabel("Access type (0 = read, 1 = write)"),
+            new BugcheckParamLabel("Access type (0 = read, 2 = write, 0x10 = execute; 1 = write before Windows 10 1507)"),
             new BugcheckParamLabel("Address of the instruction that referenced memory"),
-            new BugcheckParamLabel("Reserved"),
+            new BugcheckParamLabel("Page-fault type (0 = freed PTE, 2 = not-present page table, 4 = non-canonical address, 0xF = user address accessed inconsistently)"),
         },
         [0x0000001E] = new[]
         {

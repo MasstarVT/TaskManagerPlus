@@ -45,20 +45,27 @@ public sealed class WerReportRowViewModel : ObservableObject
 
         OpenWebSearchCommand = new RelayCommand(() =>
         {
-            try
-            {
-                string query = Uri.EscapeDataString(
-                    $"{report.AppName} {report.ModName} {report.ExceptionCode} {(report.IsHang ? "hang" : "crash")}".Trim());
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo($"https://www.bing.com/search?q={query}")
-                {
-                    UseShellExecute = true,
-                });
-            }
-            catch (Exception ex)
-            {
-                ActionStatusText = $"Couldn't open browser: {ex.Message}";
-            }
+            string query = Uri.EscapeDataString(
+                $"{report.AppName} {report.ModName} {report.ExceptionCode} {(report.IsHang ? "hang" : "crash")}".Trim());
+            ActionStatusText = OpenSearchUrl($"https://www.bing.com/search?q={query}");
         });
+    }
+
+    /// <summary>Opens a web search in the user's browser, unelevated (SafeLaunchService); when
+    /// that isn't possible the URL goes on the clipboard instead. Returns the status line to show
+    /// (null when the browser opened).</summary>
+    internal static string? OpenSearchUrl(string url)
+    {
+        if (SafeLaunchService.OpenUrl(url)) return null;
+        try
+        {
+            System.Windows.Clipboard.SetText(url);
+            return "Couldn't open the browser - the search link was copied to the clipboard instead.";
+        }
+        catch (Exception ex)
+        {
+            return $"Couldn't open the browser or copy the link ({ex.Message}): {url}";
+        }
     }
 }
 

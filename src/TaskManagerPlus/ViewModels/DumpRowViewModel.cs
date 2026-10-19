@@ -62,14 +62,16 @@ public sealed class DumpRowViewModel : ObservableObject
     public AsyncRelayCommand AnalyzeCommand { get; }
     public RelayCommand OpenInWinDbgCommand { get; }
 
-    public DumpRowViewModel(ParsedDumpInfo parsed, DebuggerAvailability debugger, BugcheckDecodedInfo decoded)
+    /// <param name="symbolCacheFolder">The crash-analysis settings' symbol cache folder, read at
+    /// analysis time (the elevated cdb gets its own validated symbol path from it).</param>
+    public DumpRowViewModel(ParsedDumpInfo parsed, DebuggerAvailability debugger, BugcheckDecodedInfo decoded, Func<string> symbolCacheFolder)
     {
         Parsed = parsed;
         Decoded = decoded;
         CanUseDebugger = debugger.AnyFound;
         DebuggerHintText = debugger.AnyFound
             ? string.Empty
-            : "No debugger found - install the \"Debugging Tools for Windows\" feature from the Windows SDK, or WinDbg Preview from the Microsoft Store, to enable analysis.";
+            : "No debugger found - install the \"Debugging Tools for Windows\" feature from the Windows SDK, or WinDbg from the Microsoft Store, to enable analysis.";
 
         AnalyzeCommand = new AsyncRelayCommand(async () =>
         {
@@ -78,7 +80,7 @@ public sealed class DumpRowViewModel : ObservableObject
             AnalyzeError = null;
             try
             {
-                var result = await DebuggerToolsService.RunAnalyzeAsync(debugger.CdbPath, Parsed.FilePath);
+                var result = await DebuggerToolsService.RunAnalyzeAsync(debugger.CdbPath, Parsed.FilePath, symbolCacheFolder());
                 if (result.Error is not null) AnalyzeError = result.Error;
                 Analysis = result;
             }
@@ -93,7 +95,9 @@ public sealed class DumpRowViewModel : ObservableObject
         }, () => debugger.CdbPath is not null);
 
         OpenInWinDbgCommand = new RelayCommand(
-            () => DebuggerToolsService.TryOpenInWinDbg(debugger, Parsed.FilePath),
+            () => ActionStatusText = DebuggerToolsService.TryOpenInWinDbg(debugger, Parsed.FilePath, symbolCacheFolder()) is { } refused
+                ? $"Couldn't open the debugger: {refused}"
+                : null,
             () => debugger.AnyFound);
 
         CopySignatureCommand = new RelayCommand(() =>
@@ -112,18 +116,8 @@ public sealed class DumpRowViewModel : ObservableObject
 
         OpenWebSearchCommand = new RelayCommand(() =>
         {
-            try
-            {
-                string query = Uri.EscapeDataString($"{Parsed.BugcheckCode} {BugcheckCodeLookup.Describe(Parsed.BugcheckCode)} bsod");
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo($"https://www.bing.com/search?q={query}")
-                {
-                    UseShellExecute = true,
-                });
-            }
-            catch (Exception ex)
-            {
-                ActionStatusText = $"Couldn't open browser: {ex.Message}";
-            }
+            string query = Uri.EscapeDataString($"{Parsed.BugcheckCode} {BugcheckCodeLookup.Describe(Parsed.BugcheckCode)} bsod");
+            ActionStatusText = WerReportRowViewModel.OpenSearchUrl($"https://www.bing.com/search?q={query}");
         }, () => !string.IsNullOrEmpty(Parsed.BugcheckCode));
     }
 }

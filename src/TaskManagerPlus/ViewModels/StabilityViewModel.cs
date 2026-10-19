@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Windows;
 using LiveChartsCore;
 using LiveChartsCore.SkiaSharpView;
@@ -160,7 +161,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         {
             if (_crashAnalysisSettings.SymbolCacheFolder == value) return;
             _crashAnalysisSettings.SymbolCacheFolder = value;
-            CrashAnalysisSettingsService.Save(_crashAnalysisSettings);
+            // Only a plain local folder is saved - it feeds the elevated debugger's symbol path.
+            if (CrashAnalysisSettingsService.ValidateSymbolCacheFolder(value) is { } invalid)
+                SymbolServerStatusText = invalid;
+            else
+                CrashAnalysisSettingsService.Save(_crashAnalysisSettings);
             OnPropertyChanged();
         }
     }
@@ -636,6 +641,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     private bool _canRevertLocalDumps;
     public bool CanRevertLocalDumps { get => _canRevertLocalDumps; private set => SetProperty(ref _canRevertLocalDumps, value); }
 
+    /// <summary>Why Revert is unavailable although a backup file exists (unverified, or an older
+    /// version's copy in the settings folder), or null.</summary>
+    private string? _localDumpsBackupNote;
+    public string? LocalDumpsBackupNote { get => _localDumpsBackupNote; private set => SetProperty(ref _localDumpsBackupNote, value); }
+
     private string? _localDumpsToggleStatusText;
     public string? LocalDumpsToggleStatusText { get => _localDumpsToggleStatusText; private set => SetProperty(ref _localDumpsToggleStatusText, value); }
 
@@ -652,6 +662,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     // ---- #185: shadow copy / VSS family ("Backup and restore points") ----
     public ObservableCollection<ShadowCopyEventInfo> ShadowCopyEvents { get; } = new();
     public ObservableCollection<ShadowStorageVolumeInfo> ShadowStorageVolumes { get; } = new();
+
+    /// <summary>True once ShadowCopyEvents holds a successful read - an empty list only means
+    /// "none found" then, not "couldn't read".</summary>
+    private bool _shadowCopyEventsReadOk;
+    public bool ShadowCopyEventsReadOk { get => _shadowCopyEventsReadOk; private set => SetProperty(ref _shadowCopyEventsReadOk, value); }
 
     private string? _shadowCopyStatusText;
     public string? ShadowCopyStatusText { get => _shadowCopyStatusText; private set => SetProperty(ref _shadowCopyStatusText, value); }
@@ -836,6 +851,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     /// via ReliabilityMonitorService.CorrelateChangesWithCrashClusters.</summary>
     public ObservableCollection<ReliabilityRecordInfo> SoftwareChangeLog { get; } = new();
 
+    /// <summary>True when the last Reliability Monitor record read succeeded (same "empty only
+    /// means none when the read worked" gate as ShadowCopyEventsReadOk).</summary>
+    private bool _softwareChangeLogReadOk;
+    public bool SoftwareChangeLogReadOk { get => _softwareChangeLogReadOk; private set => SetProperty(ref _softwareChangeLogReadOk, value); }
+
     private ReliabilityAnalysisStatus _reliabilityAnalysisStatus = new();
     public ReliabilityAnalysisStatus ReliabilityAnalysisStatus { get => _reliabilityAnalysisStatus; private set => SetProperty(ref _reliabilityAnalysisStatus, value); }
 
@@ -847,6 +867,9 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
     private bool _canRevertReliabilityAnalysis;
     public bool CanRevertReliabilityAnalysis { get => _canRevertReliabilityAnalysis; private set => SetProperty(ref _canRevertReliabilityAnalysis, value); }
+
+    private string? _reliabilityBackupNote;
+    public string? ReliabilityBackupNote { get => _reliabilityBackupNote; private set => SetProperty(ref _reliabilityBackupNote, value); }
 
     private string? _reliabilityAnalysisStatusText;
     public string? ReliabilityAnalysisStatusText { get => _reliabilityAnalysisStatusText; private set => SetProperty(ref _reliabilityAnalysisStatusText, value); }
@@ -1109,14 +1132,14 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         DrillDownCommand = new RelayCommand(p => _ = DrillDownAsync(p as TimelineEntry));
         FindChangesBeforeCrashCommand = new RelayCommand(p => _ = FindChangesBeforeCrashAsync(p as TimelineEntry));
 
-        // #166: reuses EtwTraceService.RevealInExplorer - no second `explorer.exe /select,` helper.
-        RevealWerQueueCommand = new RelayCommand(() => EtwTraceService.RevealInExplorer(WerFootprint.QueuePath), () => WerFootprint.QueueExists);
-        RevealWerArchiveCommand = new RelayCommand(() => EtwTraceService.RevealInExplorer(WerFootprint.ArchivePath), () => WerFootprint.ArchiveExists);
+        // #166: an unelevated Explorer window via SafeLaunchService.
+        RevealWerQueueCommand = new RelayCommand(() => SafeLaunchService.RevealInExplorer(WerFootprint.QueuePath), () => WerFootprint.QueueExists);
+        RevealWerArchiveCommand = new RelayCommand(() => SafeLaunchService.RevealInExplorer(WerFootprint.ArchivePath), () => WerFootprint.ArchiveExists);
 
         // #165: both gated behind their own explicit MessageBox confirmation - see EnableLocalDumps/RevertLocalDumps.
         EnableLocalDumpsCommand = new RelayCommand(EnableLocalDumps, () => !ReadOnlyModeService.IsReadOnly);
         RevertLocalDumpsCommand = new RelayCommand(RevertLocalDumps, () => CanRevertLocalDumps && !ReadOnlyModeService.IsReadOnly);
-        CanRevertLocalDumps = WerReportService.BackupExists();
+        RefreshLocalDumpsBackupState();
 
         // #195: gated behind its own explicit MessageBox confirmation - see RunLodctrRebuildAsync.
         RunLodctrRebuildCommand = new AsyncRelayCommand(RunLodctrRebuildAsync, () => !ReadOnlyModeService.IsReadOnly);
@@ -1127,7 +1150,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         // #172: gated behind their own explicit MessageBox confirmation, same shape as #165 above.
         EnableReliabilityAnalysisCommand = new RelayCommand(EnableReliabilityAnalysis, () => !ReadOnlyModeService.IsReadOnly);
         RevertReliabilityAnalysisCommand = new RelayCommand(RevertReliabilityAnalysis, () => CanRevertReliabilityAnalysis && !ReadOnlyModeService.IsReadOnly);
-        CanRevertReliabilityAnalysis = ReliabilityMonitorService.BackupExists();
+        RefreshReliabilityBackupState();
 
         // #137: one chip per source actually wired into BuildTimeline - see TimelineSource's remarks.
         TimelineFilters.Add(new TimelineFilterChip(TimelineSource.EventLog, "Event log", ApplyTimelineFilters));
@@ -1139,12 +1162,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         // Round 14, item 20: MEMORY.DMP folder/copy/delete actions.
         OpenMemoryDumpFolderCommand = new RelayCommand(() =>
         {
-            try
-            {
-                var path = MemoryDump?.FilePath ?? MinidumpParserService.MemoryDmpPath;
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
-            }
-            catch (Exception ex) { MemoryDumpStatusText = $"Couldn't open folder: {ex.Message}"; }
+            var path = MemoryDump?.FilePath ?? MinidumpParserService.MemoryDmpPath;
+            if (!SafeLaunchService.RevealInExplorer(path)) MemoryDumpStatusText = $"Couldn't open an Explorer window for {path}.";
         }, () => MemoryDump?.Exists == true);
 
         // A MEMORY.DMP is routinely several GB - the copy runs off the UI thread.
@@ -1219,6 +1238,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         // Round 14, item 25: symbol path apply/test.
         ApplySymbolPathCommand = new RelayCommand(() =>
         {
+            if (CrashAnalysisSettingsService.ValidateSymbolCacheFolder(SymbolCacheFolder) is { } invalid)
+            {
+                SymbolServerStatusText = invalid;
+                return;
+            }
             bool ok = SymbolServerService.ApplySymbolPath(SymbolCacheFolder);
             SymbolServerStatusText = ok ? "Symbol path applied for this user." : "Couldn't set the environment variable.";
             OnPropertyChanged(nameof(CurrentSymbolPathText));
@@ -1521,14 +1545,17 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         ResetVerifierCommand = new AsyncRelayCommand(async () =>
         {
+            // Name the exact PoolTag value the reset will write back, not just "what it was".
+            string poolTagLine = DriverVerifierService.DescribePendingPoolTagRestore() ?? "PoolTag isn't touched (this app hasn't changed it).";
             var confirm = System.Windows.MessageBox.Show(
-                "Clears every Driver Verifier setting (verifier /reset), and puts the Special Pool tag (PoolTag) back to what it was if this app changed it.\n\nA reboot is needed for a currently-running verified session to actually stop, and for the machine to go back to full speed. This app will also forget when Verifier was turned on. Continue?",
+                "Clears every Driver Verifier setting (verifier /reset).\n\n" + poolTagLine + "\n\nA reboot is needed for a currently-running verified session to actually stop, and for the machine to go back to full speed. This app will also forget when Verifier was turned on. Continue?",
                 "Reset Driver Verifier",
                 System.Windows.MessageBoxButton.YesNo,
                 System.Windows.MessageBoxImage.Warning);
             if (confirm != System.Windows.MessageBoxResult.Yes) return;
 
             var (ok, poolTagNote) = await DriverVerifierService.ResetAsync();
+            AppendRepairJournal("Driver Verifier", "Reset every Driver Verifier setting", "verifier.exe /reset", ok);
             VerifierResetStatusText = ok
                 ? "Reset. Reboot for this to fully take effect - Driver Verifier will not verify any driver after that reboot."
                     + (poolTagNote is not null ? " " + poolTagNote : string.Empty)
@@ -1608,16 +1635,21 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
             bool ok;
             string output;
+            string driverList = string.Join(' ', selected);
             if (WizardApplyVolatile)
             {
                 uint? flag = WizardVolatileFlagIndex > 0
                     ? DriverVerifierService.VolatileFlagOptions[WizardVolatileFlagIndex - 1].Value
                     : null;
                 (ok, output) = await DriverVerifierService.ApplyVolatileAsync(selected, flag);
+                AppendRepairJournal("Driver Verifier", $"Started volatile verification of {selected.Count} driver(s)",
+                    $"verifier.exe /volatile /adddriver {driverList}" + (flag is { } f && f > 0 ? $" ; verifier.exe /volatile /flags {f}" : string.Empty), ok);
             }
             else
             {
                 (ok, output) = await DriverVerifierService.ApplyStandardAsync(selected);
+                AppendRepairJournal("Driver Verifier", $"Enabled standard verification of {selected.Count} driver(s) from the next reboot",
+                    $"verifier.exe /standard /driver {driverList}", ok);
             }
 
             if (ok) VerifierEnableHistoryService.RecordEnabled();
@@ -1713,6 +1745,10 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             if (confirm != System.Windows.MessageBoxResult.Yes) return;
 
             var (ok, output) = await DriverVerifierService.ApplySpecialPoolForTagAsync(tag, driver);
+            // The PoolTag registry write itself is in the registry change journal; the verifier
+            // run (only made when an owning driver is known) is journaled here.
+            if (driver is not null)
+                AppendRepairJournal("Driver Verifier", $"Scoped Special Pool to {driver} for pool tag '{tag}'", $"verifier.exe /flags 1 /driver {driver}", ok);
             SpecialPoolStatusText = ok
                 ? $"Special Pool enabled for '{tag}'. Reboot for it to take effect. {output.Trim()}"
                 : $"Couldn't apply Special Pool: {output}";
@@ -2008,13 +2044,15 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 System.Windows.MessageBoxImage.Warning);
             if (confirm != System.Windows.MessageBoxResult.Yes) return;
 
-            var (_, message) = await BootRecoveryService.RebootToRecoveryEnvironmentAsync();
+            var (recoveryOk, message) = await BootRecoveryService.RebootToRecoveryEnvironmentAsync();
+            AppendRepairJournal("This PC", "Restarted into the Windows Recovery Environment", "shutdown.exe /r /o /t 0", recoveryOk);
             SafeModeStatusText = message;
         }, () => !ReadOnlyModeService.IsReadOnly);
 
         RevertSafeModeBootCommand = new AsyncRelayCommand(async () =>
         {
             var (ok, message) = await BootRecoveryService.RevertSafeModeBootAsync();
+            AppendRepairJournal("Boot configuration {current}", "Cleared the Safe Mode boot flag", "bcdedit.exe /deletevalue {current} safeboot", ok);
             SafeModeStatusText = message;
             if (ok) await RefreshBootConfigAsync();
         }, () => !ReadOnlyModeService.IsReadOnly);
@@ -2030,7 +2068,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         LaunchRstruiCommand = new RelayCommand(() =>
         {
-            bool ok = RestorePointService.LaunchRstrui();
+            // System32's rstrui.exe directly - no shell/association lookup from this elevated process.
+            bool ok = SafeLaunchService.StartSystemTool("rstrui.exe");
             RestorePointsStatusText = ok ? "System Restore opened in a separate window." : "Couldn't launch rstrui.exe.";
         });
 
@@ -2113,10 +2152,12 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 System.Windows.MessageBoxImage.Warning);
             if (confirm != System.Windows.MessageBoxResult.Yes) return;
 
-            bool ok = SystemRepairService.LaunchMemoryDiagnostic();
+            // System32's mdsched.exe directly (MemoryDiagnosticLauncherService), never a shell lookup.
+            var (ok, launchError) = MemoryDiagnosticLauncherService.Launch();
+            AppendRepairJournal("This PC", "Started Windows Memory Diagnostic", "mdsched.exe", ok);
             MemoryDiagnosticStatusText = ok
                 ? "Windows Memory Diagnostic launched - the machine will restart shortly."
-                : "Couldn't launch mdsched.exe.";
+                : $"Couldn't launch Windows Memory Diagnostic: {launchError}";
         }, () => !ReadOnlyModeService.IsReadOnly);
 
         RefreshMemoryDiagnosticResultsCommand = new AsyncRelayCommand(async () =>
@@ -2208,12 +2249,18 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             System.Windows.MessageBoxImage.Warning);
         if (confirm != System.Windows.MessageBoxResult.Yes) return;
 
-        var (_, message) = await BootRecoveryService.RebootToSafeModeAsync(withNetworking);
+        var (ok, message) = await BootRecoveryService.RebootToSafeModeAsync(withNetworking);
+        // The persistent change is the safeboot flag; it can be set even when the restart that
+        // follows fails, which BootRecoveryService reports as "Safe Mode boot flag set (...)".
+        bool flagSet = ok || message.StartsWith("Safe Mode boot flag set", StringComparison.Ordinal);
+        AppendRepairJournal("Boot configuration {current}", $"Set the Safe Mode boot flag ({(withNetworking ? "network" : "minimal")}) and restarted",
+            $"bcdedit.exe /set {{current}} safeboot {(withNetworking ? "network" : "minimal")} ; shutdown.exe /r /t 0", flagSet);
         SafeModeStatusText = message;
     }
 
-    /// <summary>Journals one of the guided-repair tool runs (sfc, DISM, the chkdsk schedule) -
-    /// one-shot runs with nothing to reverse.</summary>
+    /// <summary>Journals one of the tool runs this tab makes (sfc, DISM, the chkdsk schedule,
+    /// Driver Verifier, Safe Mode/recovery restarts, Memory Diagnostic) - one-shot runs with
+    /// nothing to reverse from the journal.</summary>
     private static void AppendRepairJournal(string target, string action, string commandLine, bool success)
     {
         ChangeJournalService.Append(new ChangeJournalEntry
@@ -2555,7 +2602,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         try
         {
-            var buckets = _wer.GroupByBucket(_lastWerReports);
+            // "Crash reports" card: crash reports only - not hangs or update/setup reports.
+            var buckets = _wer.GroupByBucket(_lastWerReports.Where(WerReportService.IsCrashReport));
             CrashReportBuckets.Clear();
             foreach (var b in buckets) CrashReportBuckets.Add(b);
         }
@@ -2582,7 +2630,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         try { LocalDumpsSettings = await Task.Run(() => _wer.ReadLocalDumpsSettings()); }
         catch { /* degrade - keeps its previous value */ }
-        CanRevertLocalDumps = WerReportService.BackupExists();
+        RefreshLocalDumpsBackupState();
 
         try { WerConfigStatus = await Task.Run(() => _wer.ReadConfigStatus()); }
         catch { /* degrade - keeps its previous value (Unknown on first load) */ }
@@ -2610,8 +2658,13 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             ShadowStorageVolumes.Clear();
             foreach (var v in status.StorageVolumes) ShadowStorageVolumes.Add(v);
             ShadowCopyStatusText = status.VssAdminError;
+            ShadowCopyEventsReadOk = true;
         }
-        catch (Exception ex) { ShadowCopyStatusText = $"Couldn't read shadow copy status: {ex.Message}"; }
+        catch (Exception ex)
+        {
+            ShadowCopyEventsReadOk = false;
+            ShadowCopyStatusText = $"Couldn't read shadow copy status: {ex.Message}";
+        }
 
         try
         {
@@ -2718,7 +2771,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     {
         try { ReliabilityAnalysisStatus = await Task.Run(() => _reliability.ReadAnalysisStatus()); }
         catch { /* degrade - keeps its previous value (enabled/Unknown on first load) */ }
-        CanRevertReliabilityAnalysis = ReliabilityMonitorService.BackupExists();
+        RefreshReliabilityBackupState();
 
         IsReliabilityMonitorAvailable = !ReliabilityAnalysisStatus.IsCollectionDisabled;
         if (!IsReliabilityMonitorAvailable)
@@ -2770,9 +2823,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             SoftwareChangeLog.Clear();
             foreach (var r in records.Where(r => r.Category == ReliabilityRecordCategory.Informational))
                 SoftwareChangeLog.Add(r);
+            SoftwareChangeLogReadOk = true;
         }
         catch
         {
+            SoftwareChangeLogReadOk = false;
             // degrade - ReliabilityRecords/SoftwareChangeLog keep whatever the last successful read
             // produced rather than being cleared out from under a transient failure.
         }
@@ -2852,15 +2907,19 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
-        // Same first-change-only backup as EnableLocalDumps below.
-        bool createdBackup = !ReliabilityMonitorService.BackupExists();
-        if (createdBackup) ReliabilityMonitorService.SaveBackup(_reliability.ReadAnalysisStatus());
+        // Same first-change-only backup as EnableLocalDumps below; no backup, no change.
+        bool createdBackup = ReliabilityMonitorService.LoadBackup(out _) is null;
+        if (createdBackup && ReliabilityMonitorService.SaveBackup(_reliability.ReadAnalysisStatus()) is { } backupError)
+        {
+            ReliabilityAnalysisStatusText = $"Couldn't save a backup of the current setting, so nothing was changed: {backupError}";
+            return;
+        }
 
         var (success, error) = _reliability.EnableAnalysis();
         if (success)
         {
             ReliabilityAnalysisStatus = _reliability.ReadAnalysisStatus();
-            CanRevertReliabilityAnalysis = true;
+            RefreshReliabilityBackupState();
             IsReliabilityMonitorAvailable = !ReliabilityAnalysisStatus.IsCollectionDisabled;
             ReliabilityAnalysisStatusText = "Reliability Monitor data collection re-enabled - new data will start appearing the next time the RAC task runs (see \"Refresh reliability data\" below).";
         }
@@ -2875,16 +2934,22 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     /// EnableReliabilityAnalysis above last wrote to it. Mirrors RevertLocalDumps below.</summary>
     private void RevertReliabilityAnalysis()
     {
-        var backup = ReliabilityMonitorService.LoadBackup();
+        var backup = RefreshReliabilityBackupState();
         if (backup is null)
         {
-            ReliabilityAnalysisStatusText = "No previous Reliability Monitor configuration was saved to revert to.";
+            ReliabilityAnalysisStatusText = ReliabilityBackupNote ?? "No previous Reliability Monitor configuration was saved to revert to.";
             return;
         }
 
+        // The dialog names exactly what will be written (or deleted).
+        string change = !backup.KeyExists
+            ? "The whole HKLM\\SOFTWARE\\Microsoft\\Reliability Analysis\\WMI key is deleted (it didn't exist before this app changed it)."
+            : backup.WmiEnableValue is { } v
+                ? $"HKLM\\SOFTWARE\\Microsoft\\Reliability Analysis\\WMI\\WMIEnable is set to {v.ToString(CultureInfo.InvariantCulture)}."
+                : "The WMIEnable value under HKLM\\SOFTWARE\\Microsoft\\Reliability Analysis\\WMI is removed (it didn't exist before).";
         var confirm = MessageBox.Show(
-            "This restores the Reliability Analysis\\WMI registry configuration to what it was before this app last changed it"
-            + (backup.KeyExists ? "." : " (the WMIEnable value didn't exist before - it will be removed again.)")
+            "This restores the Reliability Analysis\\WMI registry configuration to what it was before this app last changed it:\n\n"
+            + change
             + "\n\nRevert Reliability Monitor data collection now?",
             "Revert Reliability Monitor",
             MessageBoxButton.YesNo,
@@ -2896,7 +2961,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         {
             ReliabilityMonitorService.ClearBackup();
             ReliabilityAnalysisStatus = _reliability.ReadAnalysisStatus();
-            CanRevertReliabilityAnalysis = false;
+            RefreshReliabilityBackupState();
             IsReliabilityMonitorAvailable = !ReliabilityAnalysisStatus.IsCollectionDisabled;
             ReliabilityAnalysisStatusText = "Reliability Monitor configuration reverted to its previous state.";
         }
@@ -2906,18 +2971,34 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>Re-reads the signed #172 backup: Revert is offered only for a verified one, and
+    /// the note says why an existing file isn't used.</summary>
+    private ReliabilityAnalysisStatus? RefreshReliabilityBackupState()
+    {
+        var backup = ReliabilityMonitorService.LoadBackup(out var problem);
+        CanRevertReliabilityAnalysis = backup is not null;
+        ReliabilityBackupNote = problem ?? (backup is null ? ReliabilityMonitorService.LegacyBackupNote() : null);
+        return backup;
+    }
+
+    // Stored unexpanded (REG_EXPAND_SZ, Microsoft's documented default) so each crashing account
+    // expands it to its own profile - an expanded path would send SYSTEM services' dumps into
+    // this user's writable folder.
+    private const string LocalDumpsDefaultFolder = @"%LOCALAPPDATA%\CrashDumps";
+
     /// <summary>#165: a real confirmation dialog stating the disk-space implication, matching the
     /// "explicit permission required for a registry write" convention CLAUDE.md documents - never
     /// writes without this. Saves the pre-change values first (WerReportService.SaveBackup) so
     /// RevertLocalDumps below can restore them even after an app restart.</summary>
     private void EnableLocalDumps()
     {
-        string suggestedFolder = Environment.ExpandEnvironmentVariables(@"%LOCALAPPDATA%\CrashDumps");
+        string yourFolder = Environment.ExpandEnvironmentVariables(LocalDumpsDefaultFolder);
 
         var confirm = MessageBox.Show(
             "This writes to HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps so Windows "
             + "keeps a local copy of future crash dumps instead of only uploading them and discarding the copy.\n\n"
-            + $"Dumps will be written to:\n{suggestedFolder}\n\n"
+            + $"DumpFolder = {LocalDumpsDefaultFolder} (in each crashing account's own profile - for your apps:\n{yourFolder})\n"
+            + "DumpCount = 10, DumpType = 1 (mini dump)\n\n"
             + "Up to 10 mini dumps will be kept (older ones are deleted automatically as new ones arrive) - each "
             + "one is small, but a machine with several crashing apps will accumulate more of them over time.\n\n"
             + "Enable local crash dump capture now?",
@@ -2927,16 +3008,21 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         if (confirm != MessageBoxResult.Yes) return;
 
         // Back up only the state before this app's first change - a second Enable would otherwise
-        // overwrite the original with the already-enabled state and make Revert a no-op.
-        bool createdBackup = !WerReportService.BackupExists();
-        if (createdBackup) WerReportService.SaveBackup(_wer.ReadLocalDumpsSettings());
+        // overwrite the original with the already-enabled state and make Revert a no-op. Only a
+        // verified backup counts, and without one saved nothing is changed.
+        bool createdBackup = WerReportService.LoadBackup(out _) is null;
+        if (createdBackup && WerReportService.SaveBackup(_wer.ReadLocalDumpsSettings()) is { } backupError)
+        {
+            LocalDumpsToggleStatusText = $"Couldn't save a backup of the current LocalDumps settings, so nothing was changed: {backupError}";
+            return;
+        }
 
-        var (success, error) = _wer.WriteLocalDumpsSettings(suggestedFolder, dumpCount: 10, dumpType: 1);
+        var (success, error) = _wer.WriteLocalDumpsSettings(LocalDumpsDefaultFolder, dumpCount: 10, dumpType: 1);
         if (success)
         {
             LocalDumpsSettings = _wer.ReadLocalDumpsSettings();
-            CanRevertLocalDumps = true;
-            LocalDumpsToggleStatusText = $"Local crash dump capture enabled - dumps will be written to {suggestedFolder}.";
+            RefreshLocalDumpsBackupState();
+            LocalDumpsToggleStatusText = $"Local crash dump capture enabled - dumps of your apps will be written to {yourFolder}.";
         }
         else
         {
@@ -2952,16 +3038,21 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     /// restart, not just within the same session).</summary>
     private void RevertLocalDumps()
     {
-        var backup = WerReportService.LoadBackup();
+        var backup = RefreshLocalDumpsBackupState();
         if (backup is null)
         {
-            LocalDumpsToggleStatusText = "No previous local crash dump configuration was saved to revert to.";
+            LocalDumpsToggleStatusText = LocalDumpsBackupNote ?? "No previous local crash dump configuration was saved to revert to.";
             return;
         }
 
+        // The dialog names exactly what will be written - the raw REG_EXPAND_SZ folder included.
+        static string Value(object? v) => v is null ? "(removed)" : Convert.ToString(v, CultureInfo.InvariantCulture) ?? "(removed)";
+        string change = backup.KeyExists
+            ? $"DumpFolder = {Value(backup.DumpFolder)}\nDumpCount = {Value(backup.DumpCount)}\nDumpType = {Value(backup.DumpType)} ({backup.DumpTypeLabel})"
+            : "DumpFolder, DumpCount and DumpType are removed (the LocalDumps key didn't exist before; it is deleted too if nothing else is left in it).";
         var confirm = MessageBox.Show(
-            "This restores the LocalDumps registry configuration to what it was before this app last changed it"
-            + (backup.KeyExists ? "." : " (the LocalDumps key didn't exist before - it will be removed again.)")
+            "This restores HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps to what it was before this app last changed it:\n\n"
+            + change
             + "\n\nRevert local crash dump capture now?",
             "Revert local crash dump capture",
             MessageBoxButton.YesNo,
@@ -2973,13 +3064,23 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         {
             WerReportService.ClearBackup();
             LocalDumpsSettings = _wer.ReadLocalDumpsSettings();
-            CanRevertLocalDumps = false;
+            RefreshLocalDumpsBackupState();
             LocalDumpsToggleStatusText = "Local crash dump configuration reverted to its previous state.";
         }
         else
         {
             LocalDumpsToggleStatusText = $"Couldn't revert local crash dump capture: {error}";
         }
+    }
+
+    /// <summary>Re-reads the signed #165 backup: Revert is offered only for a verified one, and
+    /// the note says why an existing file isn't used.</summary>
+    private LocalDumpsSettings? RefreshLocalDumpsBackupState()
+    {
+        var backup = WerReportService.LoadBackup(out var problem);
+        CanRevertLocalDumps = backup is not null;
+        LocalDumpsBackupNote = problem ?? (backup is null ? WerReportService.LegacyBackupNote() : null);
+        return backup;
     }
 
     /// <summary>#137: re-filters the already-built merged list by whichever source chips are
@@ -3118,7 +3219,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         DumpRows.Clear();
         for (int i = 0; i < bundle.ParsedDumps.Count; i++)
         {
-            var row = new DumpRowViewModel(bundle.ParsedDumps[i], bundle.Debugger, bundle.DecodedInfos[i]);
+            var row = new DumpRowViewModel(bundle.ParsedDumps[i], bundle.Debugger, bundle.DecodedInfos[i], () => SymbolCacheFolder);
             row.PropertyChanged += OnDumpRowPropertyChanged;
             DumpRows.Add(row);
         }
@@ -3126,7 +3227,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         MemoryDump = bundle.MemoryDump;
         MemoryDumpRow = bundle.MemoryDump.Exists && bundle.MemoryDump.Parsed is not null
-            ? new DumpRowViewModel(bundle.MemoryDump.Parsed, bundle.Debugger, bundle.MemoryDumpDecoded ?? new BugcheckDecodedInfo())
+            ? new DumpRowViewModel(bundle.MemoryDump.Parsed, bundle.Debugger, bundle.MemoryDumpDecoded ?? new BugcheckDecodedInfo(), () => SymbolCacheFolder)
             : null;
         OpenMemoryDumpFolderCommand.RaiseCanExecuteChanged();
         CopyMemoryDumpCommand.RaiseCanExecuteChanged();
@@ -3170,7 +3271,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         var appEvents = _service.ReadApplicationCrashEvents(WerHistoryDays);
         reports = WerReportService.JoinApplicationErrorEvents(reports, appEvents);
 
-        var crashes = reports.Where(r => !r.IsHang).ToList();
+        // Update/setup/servicing reports (NonCritical_/Critical_) are neither crashes nor hangs.
+        var crashes = reports.Where(WerReportService.IsCrashReport).ToList();
         var hangs = reports.Where(r => r.IsHang).OrderByDescending(r => r.ReportTimestamp).ToList();
 
         return new WerBundle
@@ -3179,7 +3281,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             HangReports = hangs,
             Status = WerReportService.ReadCollectionStatus(),
             QueueSize = WerReportService.ReadQueueSize(),
-            History = WerReportService.BuildLongHorizonHistory(reports, WerHistoryDays),
+            History = WerReportService.BuildLongHorizonHistory(crashes, WerHistoryDays),
         };
     }
 
@@ -3406,12 +3508,15 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         // the whole system down) - bugchecks, watchdog-triggered live kernel reports, and any
         // unexpected shutdown this app itself classified as bugcheck-caused; BuildUptimeHistogramAndMtbf
         // de-dupes near-simultaneous entries from these different sources describing the same event.
-        var crashTimes = snapshot.Minidumps.Select(m => m.Timestamp)
-            .Concat(dumpBundle.LiveKernelReports.Select(l => l.Timestamp))
+        // Live kernel reports are written while the system keeps running; a bugcheck's minidump
+        // file and its Kernel-Power 41 record are only written during the next boot, so they carry
+        // that boot's time, not the crash's.
+        var liveCrashTimes = dumpBundle.LiveKernelReports.Select(l => l.Timestamp).ToList();
+        var nextBootTimes = snapshot.Minidumps.Select(m => m.Timestamp)
             .Concat(snapshot.UnexpectedShutdowns.Where(u => u.Cause == ShutdownCause.Bugcheck).Select(u => u.TimeCreated))
             .ToList();
 
-        var (histogram, mtbf) = CrashCorrelationService.BuildUptimeHistogramAndMtbf(crashTimes, bootTimes);
+        var (histogram, mtbf) = CrashCorrelationService.BuildUptimeHistogramAndMtbf(liveCrashTimes, bootTimes, nextBootTimes);
 
         return new CorrelationBundle { Timeline = timeline, Clusters = clusters, Histogram = histogram, Mtbf = mtbf };
     }
@@ -3456,7 +3561,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         if (mtbf.LongestCrashFreeStreak is { } s)
             parts.Add($"Longest crash-free streak: {CrashCorrelationService.FormatTimeSpan(s)}.");
         if (mtbf.UnknownUptimeCount > 0)
-            parts.Add($"{mtbf.UnknownUptimeCount} crash(es) had no matching boot record, so aren't in the histogram above.");
+            parts.Add($"{mtbf.UnknownUptimeCount} crash(es) aren't in the histogram above - their uptime isn't known (a bugcheck is only recorded during the next boot, or no earlier boot record was found).");
 
         return string.Join(" ", parts);
     }

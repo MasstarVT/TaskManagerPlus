@@ -193,6 +193,7 @@ public static class DriverVerifierService
     {
         var names = driverFileNames.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()).ToList();
         if (names.Count == 0) return (false, "No drivers were selected.");
+        if (FirstInvalidDriverName(names) is { } bad) return (false, InvalidDriverNameMessage(bad));
 
         var (output, exitCode) = await RunCapturedAsync("verifier.exe", $"/standard /driver {string.Join(' ', names)}");
         return (exitCode is 0 or 2, output);
@@ -208,6 +209,7 @@ public static class DriverVerifierService
     {
         var names = driverFileNames.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()).ToList();
         if (names.Count == 0) return (false, "No drivers were selected.");
+        if (FirstInvalidDriverName(names) is { } bad) return (false, InvalidDriverNameMessage(bad));
 
         var sb = new System.Text.StringBuilder();
 
@@ -240,10 +242,15 @@ public static class DriverVerifierService
         if (string.IsNullOrWhiteSpace(tag)) return (false, "No pool tag was given.");
         if (PackPoolTag(tag.Trim()) is not { } packed)
             return (false, $"'{tag}' isn't a valid pool tag (up to 4 printable ASCII characters).");
+        if (!string.IsNullOrWhiteSpace(driverFileName) && FirstInvalidDriverName(new[] { driverFileName.Trim() }) is { } bad)
+            return (false, InvalidDriverNameMessage(bad));
 
         string? previous = ReadCurrentPoolTag();
         int? previousDword = ReadPoolTagDword();
-        bool createdBackup = SavePoolTagBackupIfMissing(previousDword);
+        var (createdBackup, backupError) = SavePoolTagBackupIfMissing(previousDword);
+        // No change without a way back: a reset restores PoolTag from this backup.
+        if (backupError is not null)
+            return (false, $"Couldn't save a backup of the current PoolTag value, so nothing was changed: {backupError}");
         bool registryOk = WritePoolTag(packed);
         if (registryOk)
         {
@@ -327,33 +334,49 @@ public static class DriverVerifierService
     // ---- PoolTag backup: the value as it was before this app first set it, so a Driver Verifier
     // reset can put it back. Only the first write is backed up - a second Apply must not replace
     // the original with the app's own earlier tag. A legacy non-DWORD value (which Windows
-    // ignores) is backed up as "absent". ----
+    // ignores) is backed up as "absent". Signed and kept in the admin-only Backups area (see
+    // RevertBackupStore): a reset writes it back to HKLM. ----
 
     private sealed class PoolTagBackup
     {
         public int? PreviousValue { get; set; }
     }
 
-    private static string PoolTagBackupPath => AppPaths.GetPath("pooltag-backup.json");
+    private const string PoolTagBackupFileName = "pooltag-backup.json";
+    private const string PoolTagBackupMacDomain = "pooltag-backup";
 
-    private static bool SavePoolTagBackupIfMissing(int? previousDword)
+    private static string?[] PoolTagBackupMacFields(PoolTagBackup b) => new[] { b.PreviousValue?.ToString(CultureInfo.InvariantCulture) };
+
+    private static PoolTagBackup? LoadPoolTagBackup(out string? problem)
+        => RevertBackupStore.Load<PoolTagBackup>(PoolTagBackupFileName, PoolTagBackupMacDomain, PoolTagBackupMacFields, out problem);
+
+    /// <summary>Created = this call wrote the backup; Error = it was needed and couldn't be written.
+    /// A verified backup from an earlier Apply is kept - it holds the original value.</summary>
+    private static (bool Created, string? Error) SavePoolTagBackupIfMissing(int? previousDword)
     {
-        try
-        {
-            if (File.Exists(PoolTagBackupPath)) return false;
-            Directory.CreateDirectory(Path.GetDirectoryName(PoolTagBackupPath)!);
-            File.WriteAllText(PoolTagBackupPath, JsonSerializer.Serialize(new PoolTagBackup { PreviousValue = previousDword }));
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
+        if (LoadPoolTagBackup(out _) is not null) return (false, null);
+        var backup = new PoolTagBackup { PreviousValue = previousDword };
+        string? error = RevertBackupStore.Save(PoolTagBackupFileName, PoolTagBackupMacDomain, backup, PoolTagBackupMacFields(backup));
+        return (error is null, error);
     }
 
-    private static void DeletePoolTagBackup()
+    private static void DeletePoolTagBackup() => RevertBackupStore.Delete(PoolTagBackupFileName);
+
+    /// <summary>What a Driver Verifier reset will do to PoolTag, for its confirmation dialog - the
+    /// exact value restored, or why nothing will be. Null when this app never changed it.</summary>
+    public static string? DescribePendingPoolTagRestore()
     {
-        try { File.Delete(PoolTagBackupPath); } catch { /* best-effort */ }
+        var backup = LoadPoolTagBackup(out var problem);
+        if (backup is null)
+        {
+            string? legacy = RevertBackupStore.LegacyNote(PoolTagBackupFileName);
+            return problem is not null ? $"PoolTag is left as it is: {problem}"
+                : legacy is not null ? $"PoolTag is left as it is. {legacy}"
+                : null;
+        }
+        return backup.PreviousValue is { } p
+            ? $"The Special Pool tag (PoolTag) is set back to '{UnpackPoolTag(p)}' (DWORD 0x{p:X8})."
+            : "The PoolTag value this app set is removed (there was none before).";
     }
 
     /// <summary>Puts PoolTag back to what it was before this app first set it - deleting it when
@@ -361,17 +384,9 @@ public static class DriverVerifierService
     /// both Driver Verifier reset paths. Null when this app never changed the value.</summary>
     internal static string? RestorePoolTagFromBackup()
     {
-        PoolTagBackup? backup;
-        try
-        {
-            if (!File.Exists(PoolTagBackupPath)) return null;
-            backup = JsonSerializer.Deserialize<PoolTagBackup>(File.ReadAllText(PoolTagBackupPath));
-        }
-        catch
-        {
-            return "Couldn't read the saved PoolTag backup - the Special Pool tag was left as it is.";
-        }
-        if (backup is null) return null;
+        var backup = LoadPoolTagBackup(out var problem);
+        if (backup is null)
+            return problem is null ? null : $"{problem} The Special Pool tag was left as it is.";
 
         try
         {
@@ -432,6 +447,14 @@ public static class DriverVerifierService
         }
         return names;
     }
+
+    /// <summary>verifier.exe takes driver names as separate argv entries, and the argument string
+    /// is split on spaces - so a name is only passed when it is a plain "name.sys" file name.</summary>
+    internal static string? FirstInvalidDriverName(IEnumerable<string> names)
+        => names.FirstOrDefault(n => !Regex.IsMatch(n, @"^[A-Za-z0-9_.\-]+\.sys$", RegexOptions.IgnoreCase));
+
+    internal static string InvalidDriverNameMessage(string name)
+        => $"'{name}' isn't a plain driver file name (name.sys) - nothing was changed.";
 
     /// <summary>Extracts /querysettings' "Level = 0x........" (or "Level: 0x...") hex value.</summary>
     private static uint? ExtractLevelHex(string output)
@@ -499,7 +522,14 @@ public static class DriverVerifierControlService
         string? queryError = null;
         try
         {
-            (queryOutput, _) = await RunCapturedAsync("verifier.exe", "/query", timeoutMs: 15000);
+            (queryOutput, int? exitCode) = await RunCapturedAsync("verifier.exe", "/query", timeoutMs: 15000);
+            // A null exit code is a timed-out (killed) run - its output says nothing about whether
+            // Verifier is active, so it must not read as a clean "not active".
+            if (exitCode is null)
+            {
+                queryError = "verifier /query didn't finish in time and was stopped - whether Driver Verifier is active this boot is unknown.";
+                queryOutput = string.Empty;
+            }
         }
         catch (Exception ex)
         {
@@ -597,6 +627,8 @@ public static class DriverVerifierControlService
     public static Task<(bool Success, string Message)> EnableStandardAsync(IReadOnlyList<string> driverFileNames)
     {
         if (driverFileNames.Count == 0) return Task.FromResult((false, "No drivers selected."));
+        if (DriverVerifierService.FirstInvalidDriverName(driverFileNames) is { } bad)
+            return Task.FromResult((false, DriverVerifierService.InvalidDriverNameMessage(bad)));
         string args = $"/standard /driver {string.Join(' ', driverFileNames)}";
         return RunArgsAsync("verifier.exe", args, timeoutMs: 30000, rebootNeededExitCodeOk: true);
     }

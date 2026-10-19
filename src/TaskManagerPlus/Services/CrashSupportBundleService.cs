@@ -40,12 +40,14 @@ public static class CrashSupportBundleService
         string outputZipPath)
     {
         var notes = new List<string>();
-        string workDir = Path.Combine(Path.GetTempPath(), "TaskManagerPlus-SupportBundle-" + Guid.NewGuid().ToString("N"));
+        // Staged in a fresh admin-only folder, not %TEMP%: elevated msinfo32/wevtutil write into
+        // it and admin-only dumps are copied there, and %TEMP% belongs to the unelevated user.
+        var work = AdminDataPaths.CreatePrivateTempDirectory("SupportBundle", out var workError);
+        if (work is null) return (false, $"Couldn't build the support bundle: {workError}", null);
+        string workDir = work.FullName;
 
         try
         {
-            Directory.CreateDirectory(workDir);
-
             // ---- Selected minidumps -----------------------------------------------------------
             int dumpsCopied = CopySelectedDumps(selectedDumpFilePaths, workDir, notes);
 
@@ -124,8 +126,8 @@ public static class CrashSupportBundleService
         }
         finally
         {
-            try { if (Directory.Exists(workDir)) Directory.Delete(workDir, recursive: true); }
-            catch { /* best-effort cleanup - a leftover temp folder isn't worth failing the whole action over */ }
+            // Best-effort; a leftover is swept by AdminDataPaths.PurgeStaleTemp.
+            AdminDataPaths.TryDelete(work);
         }
     }
 

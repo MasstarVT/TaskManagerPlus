@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.ServiceProcess;
 using System.Text;
@@ -207,6 +208,54 @@ public sealed class WerReportService
     }
 
     // ---------------------------------------------------------------------------------------
+    // Which reports are application crashes. The archive also holds hangs (AppHang_) and
+    // update/setup/servicing reports (NonCritical_/Critical_: StoreAgentInstallFailure1,
+    // WindowsWcpOtherFailure3, crashpad_log, ...). WER files every crash EventType seen in the
+    // Application log's WER 1001 events (APPCRASH, BEX64, MoBEX, MoAppCrash) under AppCrash_.
+    // ---------------------------------------------------------------------------------------
+
+    private static readonly HashSet<string> CrashEventTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "APPCRASH", "BEX", "BEX64", "MoAppCrash", "MoBEX", "CLR20r3",
+    };
+
+    public static bool IsCrashReport(string? eventType, string folderPath)
+    {
+        if (eventType is not null && CrashEventTypes.Contains(eventType)) return true;
+        try { return Path.GetFileName(Path.TrimEndingDirectorySeparator(folderPath)).StartsWith("AppCrash_", StringComparison.OrdinalIgnoreCase); }
+        catch { return false; }
+    }
+
+    public static bool IsCrashReport(WerReport r) => IsCrashReport(r.EventType, r.ReportFolder);
+
+    public static bool IsCrashReport(WerReportInfo r) => IsCrashReport(r.EventType, r.FolderPath);
+
+    /// <summary>True when an Application-log exe name (event 1000/1002 insertion string 0) names
+    /// the app this report is about. Report.wer's direct AppName key is the product name
+    /// ("Discord"), not the exe, so it also matches the report folder's app segment: WER names the
+    /// folder "&lt;Type&gt;_&lt;first 16 characters of the app's signature name&gt;_&lt;hash&gt;...",
+    /// e.g. AppCrash_AsusDownloadAgen_... for AsusDownloadAgent.exe.</summary>
+    private static bool NamesSameApp(WerReport r, string? exeName)
+    {
+        if (string.IsNullOrWhiteSpace(exeName)) return false;
+        string exe = exeName.Trim();
+        if (string.Equals(r.AppName, exe, StringComparison.OrdinalIgnoreCase)) return true;
+        try
+        {
+            string folder = Path.GetFileName(Path.TrimEndingDirectorySeparator(r.ReportFolder));
+            int sep = folder.IndexOf('_');
+            if (sep < 0) return false;
+            string rest = folder[(sep + 1)..];
+            string expected = exe.Length >= 16 ? exe[..16] : exe + "_";
+            return rest.StartsWith(expected, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Item 39: bucket grouping.
     // ---------------------------------------------------------------------------------------
 
@@ -248,10 +297,10 @@ public sealed class WerReportService
         var result = new List<WerReport>(reports.Count);
         foreach (var r in reports)
         {
-            if (r.IsHang || string.IsNullOrEmpty(r.AppName)) { result.Add(r); continue; }
+            if (r.IsHang) { result.Add(r); continue; }
 
             var match = events
-                .Where(e => string.Equals(e.AppName, r.AppName, StringComparison.OrdinalIgnoreCase)
+                .Where(e => NamesSameApp(r, e.AppName)
                     && (string.IsNullOrEmpty(r.ModName) || string.IsNullOrEmpty(e.ModName) || string.Equals(e.ModName, r.ModName, StringComparison.OrdinalIgnoreCase))
                     && Math.Abs((e.TimeCreated - r.ReportTimestamp).TotalMinutes) <= AppErrorJoinWindowMinutes)
                 .OrderBy(e => Math.Abs((e.TimeCreated - r.ReportTimestamp).TotalMinutes))
@@ -277,17 +326,15 @@ public sealed class WerReportService
         var result = new List<ApplicationHangEvent>(hangEvents.Count);
         foreach (var h in hangEvents)
         {
-            // Prefer an exact Report Id match - WER's own report-folder name is frequently the
-            // Report Id itself, so a substring check on the folder path catches it. Fall back to
-            // a name+time-window match only when that's not available (an older report, or the
-            // event's own Report Id couldn't be parsed).
+            // Prefer an exact Report Id match in the folder path. On current builds the folder's
+            // trailing GUID isn't the 1002 event's Report Id (none of 13 matched on Windows 11
+            // 26100), so the name+time-window match below is what normally applies.
             WerReport? match = null;
             if (!string.IsNullOrEmpty(h.ReportId))
                 match = hangReports.FirstOrDefault(r => ReportFolderContainsReportId(r, h.ReportId!));
 
             match ??= hangReports
-                .Where(r => !string.IsNullOrEmpty(h.ProcessName) && !string.IsNullOrEmpty(r.AppName)
-                    && string.Equals(r.AppName, h.ProcessName, StringComparison.OrdinalIgnoreCase)
+                .Where(r => NamesSameApp(r, h.ProcessName)
                     && Math.Abs((r.ReportTimestamp - h.TimeCreated).TotalMinutes) <= AppHangJoinWindowMinutes)
                 .OrderBy(r => Math.Abs((r.ReportTimestamp - h.TimeCreated).TotalMinutes))
                 .FirstOrDefault();
@@ -815,12 +862,13 @@ public sealed class WerReportService
         // One crash normally leaves BOTH a WER report and an Application Error 1000 entry, and they
         // name the app differently (Report.wer's AppName is the product name, 1000 the exe). Both
         // are keyed by exe name, and a 1000 entry only counts when no WER report for the same exe
-        // sits within DuplicateWindow of it. Hang reports are left out - hangs have their own list.
+        // sits within DuplicateWindow of it. Only crash reports count - hangs have their own list,
+        // and update/setup/servicing reports aren't app crashes.
         var werTimes = new Dictionary<string, List<DateTime>>(StringComparer.OrdinalIgnoreCase);
         var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in reports)
         {
-            if (r.EventType?.StartsWith("AppHang", StringComparison.OrdinalIgnoreCase) == true) continue;
+            if (!IsCrashReport(r)) continue;
             string key = ExeKey(r);
             Add(key, r.ModName, r.Timestamp);
             if (!werTimes.TryGetValue(key, out var times)) werTimes[key] = times = new List<DateTime>();
@@ -922,9 +970,8 @@ public sealed class WerReportService
     // ==== #166: WER storage footprint ====
 
     /// <summary>Total size and file count of the ReportQueue/ReportArchive trees - a reveal-in-
-    /// Explorer button is offered next to each (reusing EtwTraceService.RevealInExplorer, the same
-    /// helper #159's stale-artifact list already uses, rather than a second copy of the
-    /// `explorer.exe /select,` logic); this app never deletes anything from either folder.</summary>
+    /// Explorer button is offered next to each (SafeLaunchService.RevealInExplorer, an unelevated
+    /// Explorer window); this app never deletes anything from either folder.</summary>
     public WerStorageFootprint ComputeStorageFootprint()
     {
         string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
@@ -1015,11 +1062,8 @@ public sealed class WerReportService
             using var key = Registry.LocalMachine.CreateSubKey(LocalDumpsPath, writable: true);
             if (key is null) return (false, "Could not open or create the LocalDumps registry key.");
 
-            // Best-effort - WER creates the folder itself on the first dump it writes, but creating
-            // it now means the "reveal in Explorer" affordance works immediately instead of erroring
-            // until a crash actually happens.
-            try { Directory.CreateDirectory(dumpFolder); } catch { /* not fatal - WER will still create it on first use */ }
-
+            // No folder is created here: WER creates it on the first dump, in the crashing
+            // account's own context (DumpFolder is REG_EXPAND_SZ, normally a %VAR% path).
             key.SetValue("DumpFolder", dumpFolder, RegistryValueKind.ExpandString);
             key.SetValue("DumpCount", dumpCount, RegistryValueKind.DWord);
             key.SetValue("DumpType", dumpType, RegistryValueKind.DWord);
@@ -1074,53 +1118,44 @@ public sealed class WerReportService
         }
     }
 
-    // ---- #165 backup persistence: the pre-change values, so "revert" survives an app restart too,
-    // not just the current session - same AppPaths.SettingsDirectory JSON-file shape every other
-    // persisted setting in this app uses (see PollIntervalSettingsService for the reference shape). ----
+    // ---- #165 backup persistence: the pre-change values, so "revert" survives an app restart too.
+    // Revert writes them to HKLM, so they're kept signed in the admin-only Backups area (see
+    // RevertBackupStore), never in the user-writable settings folder. ----
 
-    private static string BackupPath => AppPaths.GetPath("wer-localdumps-backup.json");
+    private const string BackupFileName = "wer-localdumps-backup.json";
+    private const string BackupMacDomain = "wer-localdumps-backup";
 
-    public static bool BackupExists()
+    private static string?[] BackupMacFields(LocalDumpsSettings s) => new[]
     {
-        try { return File.Exists(BackupPath); }
-        catch { return false; }
-    }
+        JournalIntegrityService.Flag(s.KeyExists),
+        s.DumpFolder,
+        s.DumpCount?.ToString(CultureInfo.InvariantCulture),
+        s.DumpType?.ToString(CultureInfo.InvariantCulture),
+    };
 
-    public static void SaveBackup(LocalDumpsSettings previous)
+    /// <summary>Null on success, otherwise why the backup couldn't be saved.</summary>
+    public static string? SaveBackup(LocalDumpsSettings previous)
+        => RevertBackupStore.Save(BackupFileName, BackupMacDomain, previous, BackupMacFields(previous));
+
+    /// <summary>The verified backup, or null; <paramref name="problem"/> says why one that exists
+    /// can't be used (Revert stays disabled).</summary>
+    public static LocalDumpsSettings? LoadBackup(out string? problem)
     {
-        try
+        var loaded = RevertBackupStore.Load<LocalDumpsSettings>(BackupFileName, BackupMacDomain, BackupMacFields, out problem);
+        // Range checks still apply: these values go straight back into HKLM.
+        if (loaded is not null && (loaded.DumpType is < 0 or > 2 || loaded.DumpCount is < 0
+            || (loaded.DumpFolder is { } f && string.IsNullOrWhiteSpace(f))))
         {
-            Directory.CreateDirectory(AppPaths.SettingsDirectory);
-            File.WriteAllText(BackupPath, JsonSerializer.Serialize(previous, new JsonSerializerOptions { WriteIndented = true }));
+            problem = "The saved backup holds values outside the documented range - revert is disabled.";
+            return null;
         }
-        catch { /* best-effort - worst case only the ViewModel's in-session "before" values survive */ }
+        return loaded;
     }
 
-    public static LocalDumpsSettings? LoadBackup()
-    {
-        try
-        {
-            if (!File.Exists(BackupPath)) return null;
-            var loaded = JsonSerializer.Deserialize<LocalDumpsSettings>(File.ReadAllText(BackupPath));
-            // A revert writes these values back to HKLM, so out-of-range content is treated as a
-            // corrupt backup (no revert offered) rather than clamped into a value nobody had.
-            if (loaded is null) return null;
-            if (loaded.DumpType is { } t && t is < 0 or > 2) return null;
-            if (loaded.DumpCount is { } c && c < 0) return null;
-            if (loaded.DumpFolder is { } f && string.IsNullOrWhiteSpace(f)) return null;
-            return loaded;
-        }
-        catch
-        {
-            return null; // corrupt/unreadable backup file - degrade to "no revert available"
-        }
-    }
+    /// <summary>Names a backup an earlier version left in the settings folder, or null.</summary>
+    public static string? LegacyBackupNote() => RevertBackupStore.LegacyNote(BackupFileName);
 
-    public static void ClearBackup()
-    {
-        try { if (File.Exists(BackupPath)) File.Delete(BackupPath); }
-        catch { /* best-effort */ }
-    }
+    public static void ClearBackup() => RevertBackupStore.Delete(BackupFileName);
 
     // ==== #167: error reporting configuration check ====
 

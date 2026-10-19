@@ -283,26 +283,37 @@ public static class CrashCorrelationService
     /// crash, if that's actually the longest one seen). Crash timestamps within 5 minutes of each
     /// other are treated as one event (the same underlying crash often shows up more than once
     /// across sources, e.g. both a minidump and an unexpected-shutdown record).
+    /// <paramref name="loggedAtNextBootTimes"/> are records Windows writes during the boot AFTER
+    /// the crash (a bugcheck's minidump file, Kernel-Power 41): their timestamp is that next boot,
+    /// so the uptime at the crash itself isn't known - they count toward MTBF but go in
+    /// UnknownUptimeCount rather than reading as "&lt; 2 min" against the boot that logged them.
     /// </summary>
     public static (List<UptimeAtCrashBucket> Histogram, MtbfSummary Mtbf) BuildUptimeHistogramAndMtbf(
-        List<DateTime> crashTimes, List<DateTime> bootTimes)
+        List<DateTime> crashTimes, List<DateTime> bootTimes, List<DateTime>? loggedAtNextBootTimes = null)
     {
-        var crashes = Deduplicate(crashTimes, TimeSpan.FromMinutes(5));
+        var deferred = loggedAtNextBootTimes ?? new List<DateTime>();
+        var crashes = Deduplicate(crashTimes.Concat(deferred).ToList(), TimeSpan.FromMinutes(5));
+        var liveTimes = crashTimes.Distinct().OrderBy(t => t).ToList();
         var boots = bootTimes.Distinct().OrderBy(t => t).ToList();
+        var window = TimeSpan.FromMinutes(5);
 
         var counts = new int[UptimeBuckets.Length];
         int unknown = 0;
         foreach (var crash in crashes)
         {
+            // A merged event has a usable time only if one of its records was written live.
+            DateTime? when = liveTimes.Where(t => t >= crash && t - crash <= window).Select(t => (DateTime?)t).FirstOrDefault();
+            if (when is null) { unknown++; continue; }
+
             DateTime? boot = null;
             foreach (var b in boots)
             {
-                if (b > crash) break;
+                if (b > when.Value) break;
                 boot = b;
             }
             if (boot is null) { unknown++; continue; }
 
-            var uptime = crash - boot.Value;
+            var uptime = when.Value - boot.Value;
             for (int i = 0; i < UptimeBuckets.Length; i++)
             {
                 if (uptime <= UptimeBuckets[i].Max) { counts[i]++; break; }

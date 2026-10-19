@@ -5,6 +5,7 @@
              xmlns:vm="clr-namespace:TaskManagerPlus.ViewModels"
              xmlns:views="clr-namespace:TaskManagerPlus.Views"
              xmlns:models="clr-namespace:TaskManagerPlus.Models"
+             xmlns:sys="clr-namespace:System;assembly=mscorlib"
              xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.WPF;assembly=LiveChartsCore.SkiaSharpView.WPF"
              d:DataContext="{d:DesignInstance Type=vm:StabilityViewModel}"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -785,9 +786,16 @@
                                         <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding WerCrashBuckets.Count}" Value="0">
+                                                <!-- Only a finished, error-free refresh can claim "none found". -->
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding WerCrashBuckets.Count}" Value="0" />
+                                                        <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                        <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                        <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />
+                                                    </MultiDataTrigger.Conditions>
                                                     <Setter Property="Visibility" Value="Visible" />
-                                                </DataTrigger>
+                                                </MultiDataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </TextBlock.Style>
@@ -842,9 +850,15 @@
                                         <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding WerHangReports.Count}" Value="0">
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding WerHangReports.Count}" Value="0" />
+                                                        <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                        <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                        <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />
+                                                    </MultiDataTrigger.Conditions>
                                                     <Setter Property="Visibility" Value="Visible" />
-                                                </DataTrigger>
+                                                </MultiDataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </TextBlock.Style>
@@ -1782,7 +1796,9 @@
                                 </StackPanel>
                                 <TextBlock Text="{Binding MemoryDumpStatusText}" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,4,0,0" />
                             </StackPanel>
-                            <TextBlock Text="No MEMORY.DMP found - this machine isn't configured for a Complete/Kernel dump (see CrashDumpEnabled in the Minidump folder's housekeeping above, or the crash-analysis settings).">
+                            <!-- A missing file says nothing about configuration: the default (Automatic memory
+                                 dump) only writes MEMORY.DMP after a bugcheck, and Disk Cleanup/Storage Sense delete it. -->
+                            <TextBlock Text="No MEMORY.DMP present - none has been written yet (Windows writes it only after a crash), or it was removed (Disk Cleanup and Storage Sense delete it). The Crash dump configuration card below shows which dump type this PC is set to write.">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -2515,6 +2531,9 @@
                             </WrapPanel>
                             <TextBlock Text="{Binding LocalDumpsToggleStatusText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap"
                                         Visibility="{Binding LocalDumpsToggleStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                            <!-- Why Revert is off although a backup file exists (unverified, or an older version's copy). -->
+                            <TextBlock Text="{Binding LocalDumpsBackupNote}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                        Visibility="{Binding LocalDumpsBackupNote, Converter={StaticResource NullToVisibilityConverter}}" />
                         </StackPanel>
                     </Border>
                     <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
@@ -4054,8 +4073,22 @@
                                                         </TextBlock.Style>
                                                     </TextBlock>
                                                 </Grid>
-                                                <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold" Margin="0,2,0,0"
-                                                            Visibility="{Binding BadSectorsFoundKb, Converter={StaticResource NullToVisibilityConverter}}">
+                                                <!-- Every chkdsk summary has a "N KB in bad sectors" line, so only a
+                                                     non-zero count is a finding. -->
+                                                <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" FontWeight="SemiBold" Margin="0,2,0,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding BadSectorsFoundKb}" Value="{x:Null}">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding BadSectorsFoundKb}">
+                                                                    <DataTrigger.Value><sys:Int64>0</sys:Int64></DataTrigger.Value>
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
                                                     <Run Text="{Binding BadSectorsFoundKb, Mode=OneWay}" /><Run Text=" KB in bad sectors" />
                                                 </TextBlock>
                                                 <TextBlock Text="{Binding RawSummary}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}"
@@ -4647,6 +4680,8 @@
                                         Visibility="{Binding ReliabilityRefreshStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
                             <TextBlock Text="{Binding ReliabilityAnalysisStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap"
                                         Visibility="{Binding ReliabilityAnalysisStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+                            <TextBlock Text="{Binding ReliabilityBackupNote}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                        Visibility="{Binding ReliabilityBackupNote, Converter={StaticResource NullToVisibilityConverter}}" />
                         </StackPanel>
                     </Border>
                     <!-- #170: the full Reliability Monitor feed - application/Windows/miscellaneous
@@ -4781,9 +4816,16 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding SoftwareChangeLog.Count}" Value="0">
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding SoftwareChangeLog.Count}" Value="0" />
+                                                    <Condition Binding="{Binding SoftwareChangeLogReadOk}" Value="True" />
+                                                    <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                    <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -5047,9 +5089,14 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding SystemProtectionStatus.RestorePoints.Count}" Value="0">
+                                            <!-- A failed restore-point read (ReadOk=False) isn't "none found". -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding SystemProtectionStatus.RestorePoints.Count}" Value="0" />
+                                                    <Condition Binding="{Binding SystemProtectionStatus.ReadOk}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -5181,9 +5228,13 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding ShadowCopyEvents.Count}" Value="0">
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding ShadowCopyEvents.Count}" Value="0" />
+                                                    <Condition Binding="{Binding ShadowCopyEventsReadOk}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>

@@ -104,8 +104,8 @@ public sealed class WerHangInfo
 }
 
 /// <summary>#166: total size/file count of the ReportQueue and ReportArchive trees - no deletion is
-/// ever performed by this app, only a reveal-in-Explorer button (reusing
-/// EtwTraceService.RevealInExplorer) so the user can clean up themselves.</summary>
+/// ever performed by this app, only a reveal-in-Explorer button (SafeLaunchService.RevealInExplorer)
+/// so the user can clean up themselves.</summary>
 public sealed class WerStorageFootprint
 {
     public string QueuePath { get; init; } = string.Empty;

@@ -19,9 +19,11 @@ public static class DebuggerToolsService
     private static readonly TimeSpan AnalyzeTimeout = TimeSpan.FromSeconds(90);
 
     /// <summary>Item 23: probes the usual Debugging Tools for Windows install locations - the
-    /// traditional Windows Kits SDK feature (cdb.exe/windbg.exe under
-    /// Debuggers\x64) and the Microsoft Store "WinDbg Preview" package (an MSIX app, so it lives
-    /// under %LocalAppData%\Microsoft\WindowsApps rather than Program Files).</summary>
+    /// traditional Windows Kits SDK feature (cdb.exe/windbg.exe under Debuggers\x64) and the
+    /// Microsoft Store WinDbg package. The Store app is resolved through the package manager to
+    /// its admin-owned install folder (Program Files\WindowsApps), never through the per-user
+    /// %LocalAppData%\Microsoft\WindowsApps alias folder: that folder is writable by the user, and
+    /// whatever is found here is started from this elevated process.</summary>
     public static DebuggerAvailability DetectDebugger()
     {
         string? cdb = null;
@@ -49,46 +51,77 @@ public static class DebuggerToolsService
         }
         catch { /* best-effort */ }
 
-        if (windbg is null)
-        {
-            try
-            {
-                var appsRoot = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                var windowsApps = Path.Combine(appsRoot, "Microsoft", "WindowsApps");
-                if (Directory.Exists(windowsApps))
-                {
-                    var direct = Directory.GetFiles(windowsApps, "WinDbgX.exe", SearchOption.TopDirectoryOnly).FirstOrDefault();
-                    windbg = direct ?? Directory.GetDirectories(windowsApps, "Microsoft.WinDbg*")
-                        .SelectMany(d =>
-                        {
-                            try { return Directory.GetFiles(d, "*.exe"); }
-                            catch { return Array.Empty<string>(); }
-                        })
-                        .FirstOrDefault(f => Path.GetFileName(f).Contains("windbg", StringComparison.OrdinalIgnoreCase));
-                }
-            }
-            catch { /* Store WinDbg not installed / folder not accessible */ }
-        }
+        windbg ??= FindStoreWinDbg();
 
         return new DebuggerAvailability { CdbPath = cdb, WindbgPath = windbg };
     }
 
-    /// <summary>Item 23: "Open in WinDbg" - launches windbg.exe (preferred, has a UI) or falls
-    /// back to cdb.exe, UseShellExecute so it opens as a normal foreground app rather than
-    /// attached to this process's own console (this app has none, being a WPF app).</summary>
-    public static bool TryOpenInWinDbg(DebuggerAvailability availability, string dumpPath)
+    // Microsoft's Store publisher id; the family name pins both the package name and publisher.
+    private const string StoreWinDbgFamilyName = "Microsoft.WinDbg_8wekyb3d8bbwe";
+
+    /// <summary>The Store WinDbg's executable inside its install folder, or null. Only a
+    /// Store-signed, non-development package of Microsoft's publisher counts - a sideloaded
+    /// package can carry the same name. The exe name comes from the package's own manifest.</summary>
+    private static string? FindStoreWinDbg()
     {
-        string? exe = availability.WindbgPath ?? availability.CdbPath;
-        if (exe is null) return false;
         try
         {
-            Process.Start(new ProcessStartInfo(exe, $"-z \"{dumpPath}\"") { UseShellExecute = true });
-            return true;
+            var manager = new global::Windows.Management.Deployment.PackageManager();
+            foreach (var package in manager.FindPackagesForUser(string.Empty, StoreWinDbgFamilyName))
+            {
+                if (package.SignatureKind != global::Windows.ApplicationModel.PackageSignatureKind.Store || package.IsDevelopmentMode) continue;
+                string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(package.InstalledLocation.Path));
+                if (ReadManifestExecutable(root) is { } exe) return exe;
+            }
         }
-        catch
+        catch { /* package API unavailable / WinDbg not installed - no Store debugger */ }
+        return null;
+    }
+
+    private static string? ReadManifestExecutable(string root)
+    {
+        try
         {
-            return false;
+            var manifest = System.Xml.Linq.XDocument.Load(Path.Combine(root, "AppxManifest.xml"));
+            var executables = manifest.Descendants()
+                .Where(e => e.Name.LocalName == "Application")
+                .Select(e => (string?)e.Attribute("Executable"))
+                .Where(x => !string.IsNullOrWhiteSpace(x) && x!.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            foreach (var relative in executables.OrderByDescending(x => x!.Contains("DbgX", StringComparison.OrdinalIgnoreCase)))
+            {
+                string full = Path.GetFullPath(Path.Combine(root, relative!));
+                if (full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) && File.Exists(full))
+                    return full;
+            }
         }
+        catch { /* unreadable manifest - treat as not installed */ }
+        return null;
+    }
+
+    /// <summary>Item 23: "Open in WinDbg" - starts windbg (preferred, has a UI) or falls back to
+    /// cdb.exe in a console of its own, through SafeLaunchService.StartTrustedExecutable (refused
+    /// unless the exe and its folders are admin-only). The debugger gets this app's validated
+    /// symbol path rather than the inherited _NT_SYMBOL_PATH, which any process running as the
+    /// user can set. Null on success, otherwise why it didn't start.</summary>
+    public static string? TryOpenInWinDbg(DebuggerAvailability availability, string dumpPath, string? symbolCacheFolder)
+    {
+        string? exe = availability.WindbgPath ?? availability.CdbPath;
+        if (exe is null) return "no debugger was found";
+        string symbols = SymbolArguments(exe, symbolCacheFolder);
+        return SafeLaunchService.StartTrustedExecutable(exe, $"{symbols} -z \"{dumpPath}\"");
+    }
+
+    /// <summary>`-y "srv*&lt;cache&gt;*https://msdl..."` from the validated cache folder (the
+    /// default when it isn't valid), plus `-sins` - ignore the symbol/image path environment
+    /// variables - for the Debugging Tools' cdb/windbg. The Store WinDbg gets only -y.</summary>
+    private static string SymbolArguments(string exe, string? symbolCacheFolder)
+    {
+        string path = SymbolServerService.BuildSymbolPath(symbolCacheFolder)
+            ?? string.Format(SymbolServerService.SuggestedPathTemplate, CrashAnalysisSettings.Defaults.SymbolCacheFolder);
+        string name = Path.GetFileName(exe);
+        bool classic = name.Equals("cdb.exe", StringComparison.OrdinalIgnoreCase) || name.Equals("windbg.exe", StringComparison.OrdinalIgnoreCase);
+        return classic ? $"-sins -y \"{path}\"" : $"-y \"{path}\"";
     }
 
     /// <summary>
@@ -99,17 +132,25 @@ public static class DebuggerToolsService
     /// fields, and STACK_TEXT as the block of lines between its own header and the next all-caps
     /// "SOMETHING:" section header - the same shape !analyze -v's own output uses throughout.
     /// </summary>
-    public static async Task<CdbAnalysisResult> RunAnalyzeAsync(string cdbPath, string dumpPath, CancellationToken cancellationToken = default)
+    public static async Task<CdbAnalysisResult> RunAnalyzeAsync(string cdbPath, string dumpPath, string? symbolCacheFolder, CancellationToken cancellationToken = default)
     {
         try
         {
-            var psi = new ProcessStartInfo(cdbPath, $"-z \"{dumpPath}\" -c \"!analyze -v; q\"")
+            // cdb runs elevated. Its symbol path must not come from the inherited environment:
+            // _NT_SYMBOL_PATH & co. are per-user variables any process running as the user can
+            // set, and a symsrv*<dll>* entry makes dbghelp load that DLL. So: -sins (ignore them),
+            // an explicit -y from the validated cache folder, and the _NT_* variables stripped.
+            var psi = new ProcessStartInfo(cdbPath, $"{SymbolArguments(cdbPath, symbolCacheFolder)} -z \"{dumpPath}\" -c \"!analyze -v; q\"")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
+            foreach (var name in psi.Environment.Keys
+                .Where(k => k.StartsWith("_NT_", StringComparison.OrdinalIgnoreCase) || k.StartsWith("DBGHELP_", StringComparison.OrdinalIgnoreCase))
+                .ToList())
+                psi.Environment.Remove(name);
             using var proc = Process.Start(psi);
             if (proc is null)
                 return new CdbAnalysisResult { AnalyzedAt = DateTime.Now, Error = "Couldn't start cdb.exe." };

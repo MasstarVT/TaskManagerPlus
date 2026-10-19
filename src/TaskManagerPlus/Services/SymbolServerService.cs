@@ -25,14 +25,21 @@ public static class SymbolServerService
         }
     }
 
+    /// <summary>The srv* symbol path for a cache folder, or null when the folder isn't one plain
+    /// local folder (see CrashAnalysisSettingsService.ValidateSymbolCacheFolder).</summary>
+    public static string? BuildSymbolPath(string? cacheFolder)
+        => CrashAnalysisSettingsService.ValidateSymbolCacheFolder(cacheFolder) is null
+            ? string.Format(SuggestedPathTemplate, cacheFolder!.Trim())
+            : null;
+
     /// <summary>Sets _NT_SYMBOL_PATH for the current user (persists across sessions/processes,
-    /// including a cdb.exe launched from this app) and for this process (so an Analyse click in
-    /// the same session picks it up immediately without needing a restart).</summary>
+    /// for debuggers the user starts) and for this process. This app's own cdb run doesn't read
+    /// it - DebuggerToolsService passes its own validated path. False for an invalid folder.</summary>
     public static bool ApplySymbolPath(string cacheFolder)
     {
         try
         {
-            string path = string.Format(SuggestedPathTemplate, cacheFolder);
+            if (BuildSymbolPath(cacheFolder) is not { } path) return false;
             Environment.SetEnvironmentVariable("_NT_SYMBOL_PATH", path, EnvironmentVariableTarget.User);
             Environment.SetEnvironmentVariable("_NT_SYMBOL_PATH", path, EnvironmentVariableTarget.Process);
             return true;

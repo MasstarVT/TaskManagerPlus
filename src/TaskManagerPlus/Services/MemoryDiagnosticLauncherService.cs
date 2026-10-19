@@ -1,6 +1,3 @@
-using System.Diagnostics;
-using System.IO;
-
 namespace TaskManagerPlus.Services;
 
 /// <summary>
@@ -13,31 +10,13 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class MemoryDiagnosticLauncherService
 {
-    /// <summary>Starts mdsched.exe (found via the system directory, same as every other shelled-out
-    /// tool in this app) and returns immediately - mdsched shows its own UI and this app never
-    /// waits on it. False + an error message on any failure (e.g. missing on a stripped-down
-    /// Windows install) rather than throwing out of a command handler.</summary>
+    /// <summary>Starts mdsched.exe from System32 only (SafeLaunchService.StartSystemTool - no PATH
+    /// or file-association lookup from this elevated process) and returns immediately - mdsched
+    /// shows its own UI and this app never waits on it. False + an error message on any failure
+    /// (e.g. missing on a stripped-down Windows install) rather than throwing out of a command
+    /// handler.</summary>
     public static (bool Success, string? Error) Launch()
-    {
-        try
-        {
-            string exePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "mdsched.exe");
-            if (!File.Exists(exePath))
-            {
-                // Fall back to letting the shell resolve it from PATH - covers the unusual case of
-                // a non-standard System32 layout without hardcoding a second lookup rule.
-                exePath = "mdsched.exe";
-            }
-
-            var startInfo = new ProcessStartInfo(exePath) { UseShellExecute = true };
-            using var process = Process.Start(startInfo);
-            return process is not null
-                ? (true, null)
-                : (false, "mdsched.exe didn't start.");
-        }
-        catch (Exception ex)
-        {
-            return (false, ex.Message);
-        }
-    }
+        => SafeLaunchService.StartSystemTool("mdsched.exe")
+            ? (true, null)
+            : (false, "mdsched.exe couldn't be started from the System32 folder.");
 }

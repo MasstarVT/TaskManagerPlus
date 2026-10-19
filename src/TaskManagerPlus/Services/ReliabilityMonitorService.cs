@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Management;
 using System.Text.Json;
@@ -372,45 +373,44 @@ public sealed class ReliabilityMonitorService
         }
     }
 
-    // ---- #172 backup persistence: same AppPaths.SettingsDirectory JSON-file shape
-    // WerReportService uses for #165's LocalDumps revert. ----
+    // ---- #172 backup persistence: signed, in the admin-only Backups area - same shape as
+    // WerReportService's #165 LocalDumps backup (see RevertBackupStore). Only the two values the
+    // revert reads are kept; the policy value is re-read live. ----
 
-    private static string BackupPath => AppPaths.GetPath("reliability-analysis-backup.json");
+    private const string BackupFileName = "reliability-analysis-backup.json";
+    private const string BackupMacDomain = "reliability-analysis-backup";
 
-    public static bool BackupExists()
+    private sealed class AnalysisBackup
     {
-        try { return File.Exists(BackupPath); }
-        catch { return false; }
+        public bool KeyExists { get; set; }
+        public int? WmiEnableValue { get; set; }
     }
 
-    public static void SaveBackup(ReliabilityAnalysisStatus previous)
+    private static string?[] BackupMacFields(AnalysisBackup b) => new[]
     {
-        try
-        {
-            Directory.CreateDirectory(AppPaths.SettingsDirectory);
-            File.WriteAllText(BackupPath, JsonSerializer.Serialize(previous, new JsonSerializerOptions { WriteIndented = true }));
-        }
-        catch { /* best-effort - worst case only the ViewModel's in-session "before" value survives */ }
+        JournalIntegrityService.Flag(b.KeyExists),
+        b.WmiEnableValue?.ToString(CultureInfo.InvariantCulture),
+    };
+
+    /// <summary>Null on success, otherwise why the backup couldn't be saved.</summary>
+    public static string? SaveBackup(ReliabilityAnalysisStatus previous)
+    {
+        var backup = new AnalysisBackup { KeyExists = previous.KeyExists, WmiEnableValue = previous.WmiEnableValue };
+        return RevertBackupStore.Save(BackupFileName, BackupMacDomain, backup, BackupMacFields(backup));
     }
 
-    public static ReliabilityAnalysisStatus? LoadBackup()
+    /// <summary>The verified backup, or null; <paramref name="problem"/> says why one that exists
+    /// can't be used (Revert stays disabled).</summary>
+    public static ReliabilityAnalysisStatus? LoadBackup(out string? problem)
     {
-        try
-        {
-            if (!File.Exists(BackupPath)) return null;
-            return JsonSerializer.Deserialize<ReliabilityAnalysisStatus>(File.ReadAllText(BackupPath));
-        }
-        catch
-        {
-            return null; // corrupt/unreadable backup file - degrade to "no revert available"
-        }
+        var b = RevertBackupStore.Load<AnalysisBackup>(BackupFileName, BackupMacDomain, BackupMacFields, out problem);
+        return b is null ? null : new ReliabilityAnalysisStatus { KeyExists = b.KeyExists, WmiEnableValue = b.WmiEnableValue };
     }
 
-    public static void ClearBackup()
-    {
-        try { if (File.Exists(BackupPath)) File.Delete(BackupPath); }
-        catch { /* best-effort */ }
-    }
+    /// <summary>Names a backup an earlier version left in the settings folder, or null.</summary>
+    public static string? LegacyBackupNote() => RevertBackupStore.LegacyNote(BackupFileName);
+
+    public static void ClearBackup() => RevertBackupStore.Delete(BackupFileName);
 
     // ==== shared process runner (same shape as every other Services/* shell-out in this app) ====
 
