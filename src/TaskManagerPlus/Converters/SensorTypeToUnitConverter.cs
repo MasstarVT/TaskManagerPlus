@@ -23,6 +23,7 @@ public sealed class SensorTypeToUnitConverter : IValueConverter
                 SensorType.Current => "A",
                 SensorType.Temperature => "°C",
                 SensorType.TimeSpan => "s",
+                SensorType.Energy => "mWh",
                 _ => string.Empty,
             }
             : string.Empty;

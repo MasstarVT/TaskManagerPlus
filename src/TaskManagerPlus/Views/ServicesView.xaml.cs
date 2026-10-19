@@ -46,7 +46,13 @@ public partial class ServicesView : UserControl
     private static void Subscribe(FrameworkElement ring, object? dataContext)
     {
         if (dataContext is ServiceRow row && ring.Tag is PropertyChangedEventHandler handler)
+        {
+            // Idempotent: a recycled container can be re-prepared (DataContextChanged) before
+            // Loaded fires, and both paths subscribe - a double subscription would outlive the
+            // single Unsubscribe and keep pulsing a ring that now shows another row.
+            row.PropertyChanged -= handler;
             row.PropertyChanged += handler;
+        }
     }
 
     private static void Unsubscribe(FrameworkElement ring, object? dataContext)

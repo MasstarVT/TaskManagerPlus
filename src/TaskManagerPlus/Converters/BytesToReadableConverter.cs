@@ -36,9 +36,11 @@ public sealed class BytesToReadableConverter : IValueConverter
             unitIndex++;
         }
 
+        // Keep the sign: deltas such as the Processes "WS/Priv gap" column are legitimately negative.
+        string sign = bytes < 0 ? "-" : string.Empty;
         string formatted = unitIndex == 0
-            ? $"{abs:0} {Units[unitIndex]}"
-            : $"{abs:0.0} {Units[unitIndex]}";
+            ? $"{sign}{abs:0} {Units[unitIndex]}"
+            : $"{sign}{abs:0.0} {Units[unitIndex]}";
 
         return isRate ? formatted + "/s" : formatted;
     }

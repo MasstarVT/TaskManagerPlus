@@ -42,16 +42,20 @@ public partial class App : Application
         if (dumpIndex >= 0 && dumpIndex + 1 < e.Args.Length)
         {
             string outputPath = e.Args[dumpIndex + 1];
+            // Non-zero unless the command completed, so scripts can tell a failure from success
+            // (the error itself goes to <path>.error.txt).
+            int exitCode = 1;
             try
             {
                 await CliDumpService.DumpSnapshotAsync(outputPath);
+                exitCode = 0;
             }
             catch (Exception ex)
             {
                 try { File.WriteAllText(outputPath + ".error.txt", ex.ToString()); }
                 catch { /* best-effort - nothing more useful to do from a CLI path */ }
             }
-            Shutdown(0);
+            Shutdown(exitCode);
             return;
         }
 
@@ -68,16 +72,18 @@ public partial class App : Application
         if (scanIndex >= 0 && scanIndex + 1 < e.Args.Length)
         {
             string outputPath = e.Args[scanIndex + 1];
+            int exitCode = 1;
             try
             {
                 await CliDumpService.ScanAsync(outputPath, scrub, quiet);
+                exitCode = 0;
             }
             catch (Exception ex)
             {
                 try { File.WriteAllText(outputPath + ".error.txt", ex.ToString()); }
                 catch { /* best-effort - nothing more useful to do from a CLI path */ }
             }
-            Shutdown(0);
+            Shutdown(exitCode);
             return;
         }
 
@@ -85,16 +91,18 @@ public partial class App : Application
         if (collectIndex >= 0 && collectIndex + 1 < e.Args.Length)
         {
             string outputPath = e.Args[collectIndex + 1];
+            int exitCode = 1;
             try
             {
                 await CliDumpService.CollectAsync(outputPath, scrub, quiet);
+                exitCode = 0;
             }
             catch (Exception ex)
             {
                 try { File.WriteAllText(outputPath + ".error.txt", ex.ToString()); }
                 catch { /* best-effort - nothing more useful to do from a CLI path */ }
             }
-            Shutdown(0);
+            Shutdown(exitCode);
             return;
         }
 
