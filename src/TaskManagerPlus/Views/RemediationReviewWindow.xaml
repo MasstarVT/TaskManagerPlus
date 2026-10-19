@@ -17,9 +17,11 @@
             <TextBlock Text="Review exactly what this will run before confirming - nothing runs until you click Run below."
                        Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,14" />
 
-            <!-- One or more applicable fixes for this finding - pick which one to review. -->
+            <!-- One or more applicable fixes for this finding - pick which one to review. Locked
+                 while something runs: the output panes below belong to the running action. -->
             <TextBlock Text="Action" Style="{StaticResource CardTitle}" Margin="0,0,0,4" />
             <ComboBox ItemsSource="{Binding Actions}" SelectedItem="{Binding SelectedAction}"
+                      IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBoolConverter}}"
                       DisplayMemberPath="Title" Margin="0,0,0,10" />
 
             <StackPanel Visibility="{Binding SelectedAction, Converter={StaticResource NullToVisibilityConverter}}">

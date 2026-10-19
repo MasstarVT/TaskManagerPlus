@@ -131,7 +131,7 @@ public sealed class SubsystemErrorFamilyService
         foreach (var (familyName, logName, provider, eventIds, summary) in RollupFamilies)
         {
             var pairs = eventIds.Select(id => (provider, id));
-            var rows = ReadFamily(logName, pairs, lookbackDays);
+            var rows = ReadFamily(logName, pairs, lookbackDays, out bool capped);
             if (rows.Count == 0) continue;
 
             var hits = rows.OrderByDescending(r => r.TimeCreated)
@@ -149,6 +149,7 @@ public sealed class SubsystemErrorFamilyService
                 FamilyName = familyName,
                 Summary = summary,
                 TotalCount = rows.Count,
+                CountIsCapped = capped,
                 LastSeen = rows.Max(r => r.TimeCreated),
                 Hits = hits,
             });
@@ -159,7 +160,13 @@ public sealed class SubsystemErrorFamilyService
     // ==================== shared helpers ====================
 
     private List<EventRecordRow> ReadFamily(string logName, IEnumerable<(string Provider, int EventId)> pairs, int lookbackDays, int pageSize = 1000)
+        => ReadFamily(logName, pairs, lookbackDays, out _, pageSize);
+
+    /// <summary>`capped`: the read stopped at <paramref name="pageSize"/> with more records left,
+    /// so the row count is a lower bound.</summary>
+    private List<EventRecordRow> ReadFamily(string logName, IEnumerable<(string Provider, int EventId)> pairs, int lookbackDays, out bool capped, int pageSize = 1000)
     {
+        capped = false;
         var list = pairs.ToList();
         if (list.Count == 0) return new List<EventRecordRow>();
 
@@ -173,7 +180,9 @@ public sealed class SubsystemErrorFamilyService
         try
         {
             var result = _explorer.ReadPage(logName, xpath, null, pageSize);
-            return result.ErrorText is null ? result.Rows : new List<EventRecordRow>();
+            if (result.ErrorText is not null) return new List<EventRecordRow>();
+            capped = result.HasMore;
+            return result.Rows;
         }
         catch
         {

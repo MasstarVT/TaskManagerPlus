@@ -383,7 +383,7 @@ public static class TroubleshootService
             {
                 return anyFailed
                     ? DiagnosticStepResult.Skip("Couldn't read the System log's Kernel-Power/EventLog/BugCheck events, so crashes can't be ruled out.")
-                    : DiagnosticStepResult.Pass("No BugCheck (1001) or Kernel-Power (41) crash events found in the last 30 days.");
+                    : DiagnosticStepResult.Pass("No BugCheck (1001), Kernel-Power (41) or unexpected-shutdown (EventLog 6008) events found in the last 30 days.");
             }
 
             var evidence = crashes.Take(10)
@@ -666,7 +666,10 @@ public static class TroubleshootService
     /// pointing at the generated file rather than guessing an offender.</summary>
     public static async Task<DiagnosticStepResult> CheckSleepStudyAsync()
     {
-        string tempFile = Path.Combine(Path.GetTempPath(), $"tmp-sleepstudy-{Guid.NewGuid():N}.html");
+        // Elevated tool output: a fresh admin-only folder, deleted once parsed (see AdminDataPaths).
+        var dir = AdminDataPaths.CreatePrivateTempDirectory("sleepstudy", out string? dirError);
+        if (dir is null) return DiagnosticStepResult.Skip($"Couldn't create a private folder for the sleep study report: {dirError}");
+        string tempFile = Path.Combine(dir.FullName, "sleepstudy.html");
         try
         {
             var (_, exitCode) = await RunCapturedAsync("powercfg.exe", $"/sleepstudy /output \"{tempFile}\"", timeoutMs: 30000);
@@ -684,17 +687,19 @@ public static class TroubleshootService
 
             if (offenders.Count == 0)
                 return DiagnosticStepResult.Warn(
-                    "Sleep study report generated but no specific offender could be confidently extracted from it - open the file directly for the full report.",
-                    new[] { tempFile });
+                    "Sleep study report generated but no specific offender could be confidently extracted from it - run `powercfg /sleepstudy` yourself for the full report.");
 
-            offenders.Add($"Full report: {tempFile}");
             return DiagnosticStepResult.Warn(
-                "Sleep study report generated - possible DRIPS offenders / modern-standby exit sources found. This is a best-effort text extraction; open the file for the full report.",
+                "Sleep study report generated - possible DRIPS offenders / modern-standby exit sources found. This is a best-effort text extraction; run `powercfg /sleepstudy` yourself for the full report.",
                 offenders);
         }
         catch (Exception ex)
         {
             return DiagnosticStepResult.Skip($"Couldn't run/parse powercfg /sleepstudy: {ex.Message}");
+        }
+        finally
+        {
+            AdminDataPaths.TryDelete(dir);
         }
     }
 
@@ -1303,9 +1308,13 @@ public static class TroubleshootService
         if (!File.Exists(wpr) || !File.Exists(tracerpt))
             return DiagnosticStepResult.Skip("wpr.exe and/or tracerpt.exe aren't available on this system - can't run the capture.");
 
-        string etlPath = Path.Combine(Path.GetTempPath(), $"tmp-dpc-capture-{Guid.NewGuid():N}.etl");
-        string summaryPath = Path.Combine(Path.GetTempPath(), $"tmp-dpc-summary-{Guid.NewGuid():N}.txt");
-        string csvPath = Path.Combine(Path.GetTempPath(), $"tmp-dpc-events-{Guid.NewGuid():N}.csv");
+        // wpr/tracerpt run elevated: their output goes in a fresh admin-only folder, deleted once
+        // summarized, never a predictable %TEMP% path a same-user process could redirect.
+        var dir = AdminDataPaths.CreatePrivateTempDirectory("dpccapture", out string? dirError);
+        if (dir is null) return DiagnosticStepResult.Skip($"Couldn't create a private folder for the capture: {dirError}");
+        string etlPath = Path.Combine(dir.FullName, "dpc-capture.etl");
+        string summaryPath = Path.Combine(dir.FullName, "dpc-summary.txt");
+        string csvPath = Path.Combine(dir.FullName, "dpc-events.csv");
         try
         {
             var (startOutput, startExit) = await RunCapturedAsync(wpr, "-start DiagEasy -filemode", timeoutMs: 20000);
@@ -1337,28 +1346,28 @@ public static class TroubleshootService
             var (_, tracerptExit) = await RunCapturedAsync(tracerpt,
                 $"\"{etlPath}\" -o \"{csvPath}\" -summary \"{summaryPath}\" -quiet", timeoutMs: 60000);
             if (tracerptExit != 0 || !File.Exists(summaryPath))
-                return DiagnosticStepResult.Warn("Capture saved, but tracerpt couldn't summarize it.", new[] { $"Trace file: {etlPath}" });
+                return DiagnosticStepResult.Warn("Capture recorded, but tracerpt couldn't summarize it.");
 
             string summary = await File.ReadAllTextAsync(summaryPath, ct);
             var providerLines = Regex.Matches(summary, @"^\s*(Microsoft-Windows-[\w-]+|PerfInfo|[\w.\\-]+)\s*:\s*(\d+)\s*$", RegexOptions.Multiline)
-                .Select(m => (Name: m.Groups[1].Value.Trim(), Count: int.Parse(m.Groups[2].Value)))
+                .Select(m => (Name: m.Groups[1].Value.Trim(), Count: int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture)))
                 .Where(p => p.Count > 0)
                 .OrderByDescending(p => p.Count)
                 .Take(8)
                 .ToList();
 
-            var evidence = new List<string> { $"Trace file: {etlPath}", $"Summary report: {summaryPath}" };
+            // The trace itself is deleted with its private folder - for a per-driver breakdown,
+            // record one with Windows Performance Recorder and open it in WPA.
             if (providerLines.Count == 0)
             {
                 return DiagnosticStepResult.Warn(
-                    "Capture completed, but no specific provider/module could be confidently extracted from tracerpt's summary. tracerpt alone can't resolve DPC routines to driver names without symbols - open the trace in Windows Performance Analyzer for a real per-driver DPC breakdown.",
-                    evidence);
+                    "Capture completed, but no specific provider/module could be confidently extracted from tracerpt's summary. tracerpt alone can't resolve DPC routines to driver names without symbols - record a trace with Windows Performance Recorder and open it in Windows Performance Analyzer for a real per-driver DPC breakdown.");
             }
 
-            evidence.InsertRange(0, providerLines.Select(p => $"{p.Name}: {p.Count} events during the capture"));
+            var evidence = providerLines.Select(p => $"{p.Name}: {p.Count} events during the capture").ToList();
             var top = providerLines[0];
             return DiagnosticStepResult.Warn(
-                $"Best-effort lead, not a confirmed per-driver ranking: \"{top.Name}\" logged the most events during the capture window ({top.Count}). tracerpt can't resolve DPC/ISR routines to a driver module name without symbols - open the trace in Windows Performance Analyzer for the definitive per-driver DPC time breakdown.",
+                $"Best-effort lead, not a confirmed per-driver ranking: \"{top.Name}\" logged the most events during the capture window ({top.Count}). tracerpt can't resolve DPC/ISR routines to a driver module name without symbols - record a trace with Windows Performance Recorder and open it in Windows Performance Analyzer for the definitive per-driver DPC time breakdown.",
                 evidence);
         }
         catch (OperationCanceledException) { throw; }
@@ -1368,7 +1377,9 @@ public static class TroubleshootService
         }
         finally
         {
-            try { if (File.Exists(csvPath)) File.Delete(csvPath); } catch { /* best-effort cleanup */ }
+            // A stop killed on timeout may still be writing the .etl - TryDelete is best-effort and
+            // anything left is swept with the rest of the stale private folders.
+            AdminDataPaths.TryDelete(dir);
         }
     }
 
@@ -1453,19 +1464,21 @@ public static class TroubleshootService
         }
     }
 
-    /// <summary>WLAN-AutoConfig failure and disconnect events, last 7 days: 8002 (failed to
-    /// connect), 8003 (disconnected), and the Error-level 11002/11006/11009 (association/security/
-    /// IHV security failed). The routine 8000/8001 connect and 11000-series "started/succeeded"
-    /// events log on every normal connection, so they're not read at all.</summary>
+    /// <summary>WLAN-AutoConfig failure events, last 7 days - the Error-level 8002 (failed to
+    /// connect) and 11002/11006/11009 (association/security/IHV security failed). 8003 is left out:
+    /// it's the Information-level "successfully disconnected" event, logged for a manual disconnect
+    /// or a network switch as well as a drop, and its reason code isn't a stable public contract to
+    /// tell those apart. The routine 8000/8001 connect and 11000-series "started/succeeded" events
+    /// log on every normal connection, so they're not read either.</summary>
     public static DiagnosticStepResult CheckWlanAutoConfigEvents()
     {
-        var ids = new[] { 8002, 8003, 11002, 11006, 11009 };
+        var ids = new[] { 8002, 11002, 11006, 11009 };
         var events = ReadProviderEvents("Microsoft-Windows-WLAN-AutoConfig/Operational", null, ids, 7, out bool readFailed, maxEvents: 100);
 
         if (events.Count == 0 && readFailed)
             return DiagnosticStepResult.Skip("Couldn't read the WLAN-AutoConfig/Operational log.");
         if (events.Count == 0)
-            return DiagnosticStepResult.Pass("No WLAN-AutoConfig connection-failure or disconnect events (8002/8003/11002/11006/11009) found in the last 7 days.");
+            return DiagnosticStepResult.Pass("No WLAN-AutoConfig connection-failure events (8002/11002/11006/11009) found in the last 7 days.");
 
         var byId = events.GroupBy(e => e.EventId).OrderByDescending(g => g.Count()).ToList();
         var evidence = events.Take(15).Select(e => $"{e.TimeCreated:g} - event {e.EventId}: {Truncate(e.Message, 140)}").ToList();
@@ -1636,6 +1649,10 @@ public static class TroubleshootService
             var evidence = new List<string> { $"Drive {driveLetter}: media type {mediaType}" };
             if (mediaType == "HDD")
                 return DiagnosticStepResult.Warn("System drive is a spinning disk (HDD) - fragmentation is worth checking (manual step below).", evidence);
+            // MediaType 0 (Unspecified - common for RAID, Storage Spaces, USB and some NVMe), or a
+            // disk the lookup couldn't map: it may still be an HDD.
+            if (mediaType == "Unknown")
+                return DiagnosticStepResult.Skip("Couldn't determine the system drive's media type - Windows reports it as unspecified, so it may still be a spinning disk (the fragmentation step below will analyze it anyway).", evidence);
             return DiagnosticStepResult.Pass($"System drive media type: {mediaType}{(mediaType == "SSD" ? " - fragmentation doesn't apply." : ".")}", evidence);
         }
         catch (Exception ex)
@@ -1655,7 +1672,9 @@ public static class TroubleshootService
         try
         {
             string mediaType = ctx.MediaType.Length > 0 && ctx.MediaType != "Unknown" ? ctx.MediaType : DiskFragmentationService.GetMediaType(ctx.DriveLetter);
-            if (mediaType != "HDD")
+            // An unknown media type may still be an HDD - analyze it rather than claim it doesn't apply.
+            bool mediaKnown = mediaType != "Unknown";
+            if (mediaKnown && mediaType != "HDD")
                 return DiagnosticStepResult.Pass($"Drive {ctx.DriveLetter}: media type {mediaType} - fragmentation doesn't apply, skipping the analyze pass.");
 
             // #354 added MftSizeBytes to FragmentationAnalysis's field list after this call was
@@ -1667,6 +1686,7 @@ public static class TroubleshootService
                 return DiagnosticStepResult.Skip(analysis.Message);
 
             var evidence = new List<string> { $"Drive {ctx.DriveLetter}: {analysis.Message}" };
+            if (!mediaKnown) evidence.Add("Media type couldn't be determined - fragmentation only matters if this is a spinning disk.");
             if (analysis.FragmentedPercent is { } p && p >= 10)
                 return DiagnosticStepResult.Warn($"Drive {ctx.DriveLetter} is {p}% fragmented - a plausible contributor to sustained high disk activity on an HDD.", evidence);
             return DiagnosticStepResult.Pass($"Drive {ctx.DriveLetter} fragmentation: {analysis.Message}.", evidence);
@@ -1757,7 +1777,10 @@ public static class TroubleshootService
     /// does for a different powercfg report.</summary>
     public static async Task<DiagnosticStepResult> CheckBatteryReportAsync()
     {
-        string reportPath = Path.Combine(Path.GetTempPath(), $"tmp-batteryreport-{Guid.NewGuid():N}.html");
+        // Elevated tool output: a fresh admin-only folder, deleted once parsed (see AdminDataPaths).
+        var dir = AdminDataPaths.CreatePrivateTempDirectory("batteryreport", out string? dirError);
+        if (dir is null) return DiagnosticStepResult.Skip($"Couldn't create a private folder for the battery report: {dirError}");
+        string reportPath = Path.Combine(dir.FullName, "battery-report.html");
         try
         {
             var (output, exitCode) = await RunCapturedAsync("powercfg.exe", $"/batteryreport /output \"{reportPath}\"", timeoutMs: 20000);
@@ -1770,19 +1793,19 @@ public static class TroubleshootService
             var designMatch = Regex.Match(text, @"DESIGN CAPACITY\s*([\d,]+)\s*mWh", RegexOptions.IgnoreCase);
             var fullMatch = Regex.Match(text, @"FULL CHARGE CAPACITY\s*([\d,]+)\s*mWh", RegexOptions.IgnoreCase);
 
-            var evidence = new List<string> { $"Full report: {reportPath}" };
+            var evidence = new List<string>();
             if (!designMatch.Success || !fullMatch.Success ||
                 !double.TryParse(designMatch.Groups[1].Value.Replace(",", ""), System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var design) ||
                 !double.TryParse(fullMatch.Groups[1].Value.Replace(",", ""), System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var full) || design <= 0)
             {
-                return DiagnosticStepResult.Warn("Battery report generated, but design/full-charge capacity couldn't be confidently extracted - open the report directly for the full detail.", evidence);
+                return DiagnosticStepResult.Warn("Battery report generated, but design/full-charge capacity couldn't be confidently extracted - run `powercfg /batteryreport` yourself (or use the Energy & Thermals tab) for the full detail.");
             }
 
             double healthPercent = Math.Round(full / design * 100, 0);
-            evidence.Insert(0, $"Design capacity: {design:0} mWh");
-            evidence.Insert(1, $"Full charge capacity: {full:0} mWh");
+            evidence.Add($"Design capacity: {design:0} mWh");
+            evidence.Add($"Full charge capacity: {full:0} mWh");
 
             string summary = $"Battery health: {healthPercent:0}% of design capacity ({full:0} mWh of {design:0} mWh).";
             return healthPercent < 80
@@ -1793,6 +1816,10 @@ public static class TroubleshootService
         {
             return DiagnosticStepResult.Skip($"Couldn't run/parse powercfg /batteryreport: {ex.Message}");
         }
+        finally
+        {
+            AdminDataPaths.TryDelete(dir);
+        }
     }
 
     /// <summary>`powercfg /srumutil /output &lt;file&gt; /xml` - SRUM-based per-app energy
@@ -1801,7 +1828,10 @@ public static class TroubleshootService
     /// its absence as a check failure - the summary explicitly says so per this round's spec.</summary>
     public static async Task<DiagnosticStepResult> CheckSrumEnergyAsync()
     {
-        string xmlPath = Path.Combine(Path.GetTempPath(), $"tmp-srum-{Guid.NewGuid():N}.xml");
+        // Elevated tool output: a fresh admin-only folder, deleted once parsed (see AdminDataPaths).
+        var dir = AdminDataPaths.CreatePrivateTempDirectory("srum", out string? dirError);
+        if (dir is null) return DiagnosticStepResult.Skip($"Couldn't create a private folder for the SRUM export: {dirError}");
+        string xmlPath = Path.Combine(dir.FullName, "srum.xml");
         try
         {
             var (_, exitCode) = await RunCapturedAsync("powercfg.exe", $"/srumutil /output \"{xmlPath}\" /xml", timeoutMs: 25000);
@@ -1818,16 +1848,19 @@ public static class TroubleshootService
                 .Take(8)
                 .ToList();
 
-            var evidence = new List<string> { $"Full SRUM export: {xmlPath}" };
             if (apps.Count == 0)
-                return DiagnosticStepResult.Warn("SRUM energy data exported, but no specific per-app energy figures could be confidently extracted - open the XML export directly.", evidence);
+                return DiagnosticStepResult.Warn("SRUM energy data exported, but no specific per-app energy figures could be confidently extracted - run `powercfg /srumutil` yourself for the full export.");
 
-            evidence.InsertRange(0, apps.Select(a => $"{a.Key}: {a.Energy:0} (relative energy estimate)"));
+            var evidence = apps.Select(a => $"{a.Key}: {a.Energy:0} (relative energy estimate)").ToList();
             return DiagnosticStepResult.Warn($"Top energy-consuming app: {apps[0].Key}. Figures are SRUM's own relative energy estimates, not a calibrated mWh figure.", evidence);
         }
         catch (Exception ex)
         {
             return DiagnosticStepResult.Skip($"Couldn't run/parse powercfg /srumutil: {ex.Message}");
+        }
+        finally
+        {
+            AdminDataPaths.TryDelete(dir);
         }
     }
 
@@ -2019,10 +2052,19 @@ public static class TroubleshootService
                 {
                     using var deviceParams = vidPidKey.OpenSubKey($@"{instanceName}\Device Parameters");
                     var raw = deviceParams?.GetValue("SelectiveSuspendEnabled") ?? deviceParams?.GetValue("EnhancedPowerManagementEnabled");
-                    if (raw is null) continue;
+                    // SelectiveSuspendEnabled is a 1-byte REG_BINARY on many devices, a DWORD on
+                    // others; any other shape is skipped rather than failing the whole check.
+                    long? flag = raw switch
+                    {
+                        byte[] { Length: > 0 } bytes => bytes[0],
+                        int i => i,
+                        long l => l,
+                        _ => null,
+                    };
+                    if (flag is null) continue;
                     string hubLabel = $"{vidPidName}\\{instanceName}";
                     checkedHubs.Add(hubLabel);
-                    if (Convert.ToInt32(raw) != 0)
+                    if (flag != 0)
                         enabledOn.Add(hubLabel);
                 }
             }

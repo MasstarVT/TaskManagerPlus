@@ -54,7 +54,9 @@ public sealed class StatusCodeResolverService
     {
         try
         {
-            var psi = new ProcessStartInfo("certutil.exe", $"-error {code}")
+            // Full System32 path: a bare name is searched for in the current directory first.
+            string certutil = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "certutil.exe");
+            var psi = new ProcessStartInfo(certutil, $"-error {code}")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -91,18 +93,18 @@ public sealed class StatusCodeResolverService
         }
     }
 
-    private const string CertutilMessageLabel = "Error message text:";
-
     // What certutil prints for a code it has no text for: "Error 0x12345678 (305419896)" (the
     // leading word is localized, the shape isn't).
-    private static readonly Regex UnresolvedCodeTextRegex = new(@"^\S+\s+0x[0-9A-Fa-f]+\s*\(-?\d+\)\.?$", RegexOptions.Compiled);
+    private static readonly Regex UnresolvedCodeTextRegex = new(@"^[^:：]{0,40}?0x[0-9A-Fa-f]+\s*\(-?\d+\)\.?$", RegexOptions.Compiled);
 
     /// <summary>The meaning line of `certutil -error` output, or null when there isn't one. Real
     /// output (en-US):
     ///   0x80070005 (WIN32: 5 ERROR_ACCESS_DENIED) -- 2147942405 (-2147024891)
     ///   Error message text: Access is denied.
     ///   CertUtil: -error command completed successfully.
-    /// The label is stripped; an unknown code's "Error 0x... (n)" placeholder counts as no meaning.</summary>
+    /// The "Error message text:" label is a localized resource, so everything up to the first
+    /// colon is stripped whatever the language; an unknown code's "Error 0x... (n)" placeholder
+    /// counts as no meaning.</summary>
     internal static string? ParseCertutilErrorText(string output, string code)
     {
         if (string.IsNullOrWhiteSpace(output)) return null;
@@ -118,8 +120,9 @@ public sealed class StatusCodeResolverService
                 && !l.Equals(code, StringComparison.OrdinalIgnoreCase));
         if (string.IsNullOrWhiteSpace(line)) return null;
 
-        if (line.StartsWith(CertutilMessageLabel, StringComparison.OrdinalIgnoreCase))
-            line = line[CertutilMessageLabel.Length..].Trim();
+        // ASCII or full-width colon (CJK language packs).
+        int colon = line.IndexOfAny(new[] { ':', '：' });
+        if (colon >= 0) line = line[(colon + 1)..].Trim();
         return line.Length == 0 || UnresolvedCodeTextRegex.IsMatch(line) ? null : line;
     }
 }

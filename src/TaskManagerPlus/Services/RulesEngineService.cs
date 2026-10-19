@@ -413,11 +413,7 @@ public sealed class RulesEngineService : IDisposable
             ["network.hasErrors"] = performance.HasNetworkErrors,
             ["network.receiveBps"] = performance.NetworkReceiveBps,
             ["network.sendBps"] = performance.NetworkSendBps,
-            ["thermal.deadFanDetected"] = energyThermals.DeadFanDetected,
             ["services.failedCount"] = (double)services.Services.Count(s => s.HasFailedToStart),
-            ["system.rebootPending"] = systemSpecs.RebootPending,
-            ["system.outdatedDriverCount"] = (double)systemSpecs.OutdatedDrivers.Count,
-            ["system.multipleAvActive"] = systemSpecs.MultipleActiveAvWarning,
         };
 
         // A sensor-less machine simply omits this key - exists() reads false, everything else
@@ -426,6 +422,31 @@ public sealed class RulesEngineService : IDisposable
         // a clean/false condition.
         if (energyThermals.CpuPackageTempC is { } cpuTemp) bag["thermal.cpuPackageC"] = cpuTemp;
         else unavailableMetrics.Add("thermal.cpuPackageC");
+
+        // DeadFanDetected is false both for "fans spinning" and for "no fan/temperature sensors to
+        // compare" - only the first is a checked result.
+        if (energyThermals.SensorsAvailable && energyThermals.Fans.Count > 0 && energyThermals.Temperatures.Count > 0)
+            bag["thermal.deadFanDetected"] = energyThermals.DeadFanDetected;
+        else unavailableMetrics.Add("thermal.deadFanDetected");
+
+        // Until System Specs' inventory has loaded (or when it failed), its fields are initializer
+        // defaults - "no reboot pending", no drivers, no volumes or disks - not a clean inventory.
+        if (!systemSpecs.HasLoaded)
+        {
+            foreach (var key in new[]
+            {
+                "system.rebootPending", "system.outdatedDriverCount", "system.multipleAvActive",
+                "disk.maxPercentUsed", "disk.maxPercentUsedLabel", "disk.anyDirty", "disk.dirtyLabel",
+                "disk.anyHealthWarning", "disk.healthWarningLabel", "disk.healthWarningText",
+            })
+                unavailableMetrics.Add(key);
+            AddDefenderMetrics(bag, processes);
+            return bag;
+        }
+
+        bag["system.rebootPending"] = systemSpecs.RebootPending;
+        bag["system.outdatedDriverCount"] = (double)systemSpecs.OutdatedDrivers.Count;
+        bag["system.multipleAvActive"] = systemSpecs.MultipleActiveAvWarning;
 
         // Per-drive keys (spec's `disk.<drive>.percentUsed` shape) plus a couple of aggregate
         // "worst volume" keys so a single built-in rule can flag "some drive is full" without
@@ -459,11 +480,15 @@ public sealed class RulesEngineService : IDisposable
         bag["disk.healthWarningLabel"] = healthLabel;
         bag["disk.healthWarningText"] = healthText;
 
+        AddDefenderMetrics(bag, processes);
+        return bag;
+    }
+
+    private static void AddDefenderMetrics(Dictionary<string, object> bag, ProcessesViewModel processes)
+    {
         var defender = processes.Processes.FirstOrDefault(p => p.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase));
         bag["process.defenderCpuPercent"] = defender?.CpuPercent ?? 0.0;
         bag["process.defenderRunning"] = defender is not null;
-
-        return bag;
     }
 
     private static string SanitizeMetricKey(string raw)
@@ -1047,11 +1072,17 @@ public sealed class RulesEngineService : IDisposable
                     var result = new Dictionary<string, RuleOverride>(StringComparer.OrdinalIgnoreCase);
                     foreach (var kv in loaded)
                         if (kv.Value is not null && !string.IsNullOrWhiteSpace(kv.Key)) result.TryAdd(kv.Key, kv.Value);
+                    if (result.Count < loaded.Count) AppPaths.MarkUnreadable(OverridesSettingsPath);
                     return result;
                 }
+                if (!string.IsNullOrWhiteSpace(json)) AppPaths.MarkUnreadable(OverridesSettingsPath);
             }
         }
-        catch { /* corrupt/unreadable - fall back to no overrides */ }
+        catch
+        {
+            // Corrupt/unreadable - fall back to no overrides, but keep a copy before the next save.
+            AppPaths.MarkUnreadable(OverridesSettingsPath);
+        }
         return new Dictionary<string, RuleOverride>(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -1061,7 +1092,8 @@ public sealed class RulesEngineService : IDisposable
         {
             var dir = Path.GetDirectoryName(OverridesSettingsPath)!;
             Directory.CreateDirectory(dir);
-            File.WriteAllText(OverridesSettingsPath, JsonSerializer.Serialize(_overrides, JsonOpts));
+            if (!AppPaths.PreserveUnreadable(OverridesSettingsPath)) return;
+            AppPaths.WriteAllTextAtomic(OverridesSettingsPath, JsonSerializer.Serialize(_overrides, JsonOpts));
         }
         catch { /* best-effort - overrides just won't survive a restart */ }
     }
@@ -1095,10 +1127,20 @@ public sealed class RulesEngineService : IDisposable
             {
                 var json = File.ReadAllText(SuppressionsSettingsPath);
                 var loaded = JsonSerializer.Deserialize<List<RuleSuppression>>(json, JsonOpts);
-                if (loaded is not null) return loaded.Where(x => x is not null && x.RuleId is not null).ToList();
+                if (loaded is not null)
+                {
+                    var kept = loaded.Where(x => x is not null && x.RuleId is not null).ToList();
+                    if (kept.Count < loaded.Count) AppPaths.MarkUnreadable(SuppressionsSettingsPath);
+                    return kept;
+                }
+                if (!string.IsNullOrWhiteSpace(json)) AppPaths.MarkUnreadable(SuppressionsSettingsPath);
             }
         }
-        catch { /* corrupt/unreadable - fall back to no suppressions */ }
+        catch
+        {
+            // Corrupt/unreadable - fall back to no suppressions, but keep a copy before the next save.
+            AppPaths.MarkUnreadable(SuppressionsSettingsPath);
+        }
         return new List<RuleSuppression>();
     }
 
@@ -1108,7 +1150,8 @@ public sealed class RulesEngineService : IDisposable
         {
             var dir = Path.GetDirectoryName(SuppressionsSettingsPath)!;
             Directory.CreateDirectory(dir);
-            File.WriteAllText(SuppressionsSettingsPath, JsonSerializer.Serialize(_suppressions, JsonOpts));
+            if (!AppPaths.PreserveUnreadable(SuppressionsSettingsPath)) return;
+            AppPaths.WriteAllTextAtomic(SuppressionsSettingsPath, JsonSerializer.Serialize(_suppressions, JsonOpts));
         }
         catch { /* best-effort */ }
     }
@@ -1151,9 +1194,7 @@ public sealed class RulesEngineService : IDisposable
     private static void WritePackFile(string path, RulePackFile file)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        string tmp = path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(file, JsonOpts));
-        File.Move(tmp, path, overwrite: true);
+        AppPaths.WriteAllTextAtomic(path, JsonSerializer.Serialize(file, JsonOpts));
     }
 
     /// <summary>#922: writes (or updates) one rule into user-overrides.json and reloads. Used both

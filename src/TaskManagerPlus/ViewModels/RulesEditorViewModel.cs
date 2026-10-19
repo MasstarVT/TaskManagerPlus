@@ -221,26 +221,22 @@ public sealed class RulesEditorViewModel : ObservableObject, IDisposable
         try
         {
             var condition = JsonSerializer.Deserialize<RuleCondition>(EditConditionJson, RulesEngineService.JsonOpts) ?? new RuleCondition();
-            var rule = new Rule
-            {
-                Id = SelectedRow.Id,
-                Title = EditTitle,
-                Body = EditBody,
-                Category = EditCategory,
-                DocsUrl = string.IsNullOrWhiteSpace(EditDocsUrl) ? null : EditDocsUrl,
-                Severity = EditSeverity,
-                Confidence = Math.Clamp(EditConfidence, 0, 100),
-                GroupKey = string.IsNullOrWhiteSpace(EditGroupKey) ? null : EditGroupKey,
-                SustainedForSeconds = int.TryParse(EditSustainedText, out var s) && s > 0 ? s : null,
-                Condition = condition,
-                ImportedFromFile = SelectedRow.Rule.ImportedFromFile,
-                ImportSourceFileName = SelectedRow.Rule.ImportSourceFileName,
-                // #931/#932: not exposed in this edit form (yet) - carried over from the rule
-                // being edited so saving an unrelated field (e.g. Body/Confidence) doesn't
-                // silently drop a built-in rule's counter-evidence/impact template.
-                CounterEvidence = SelectedRow.Rule.CounterEvidence,
-                ImpactTemplate = SelectedRow.Rule.ImpactTemplate,
-            };
+            // Start from a full copy of the rule being edited, so every field this form doesn't
+            // show (ActionIds, AlertChannel, escalation, PlainEnglishBody, ExplainerId,
+            // CounterEvidence, ImpactTemplate, import provenance) survives the save - the saved
+            // copy replaces the original by Id.
+            var rule = JsonSerializer.Deserialize<Rule>(JsonSerializer.Serialize(SelectedRow.Rule, RulesEngineService.JsonOpts), RulesEngineService.JsonOpts)
+                ?? throw new InvalidOperationException("couldn't copy the rule being edited");
+            rule.Id = SelectedRow.Id;
+            rule.Title = EditTitle;
+            rule.Body = EditBody;
+            rule.Category = EditCategory;
+            rule.DocsUrl = string.IsNullOrWhiteSpace(EditDocsUrl) ? null : EditDocsUrl;
+            rule.Severity = EditSeverity;
+            rule.Confidence = Math.Clamp(EditConfidence, 0, 100);
+            rule.GroupKey = string.IsNullOrWhiteSpace(EditGroupKey) ? null : EditGroupKey;
+            rule.SustainedForSeconds = int.TryParse(EditSustainedText, out var s) && s > 0 ? s : null;
+            rule.Condition = condition;
             _engine.SaveUserRule(rule);
             StatusText = "Saved to your rule overrides (user-overrides.json) - the built-in pack file was not touched.";
         }

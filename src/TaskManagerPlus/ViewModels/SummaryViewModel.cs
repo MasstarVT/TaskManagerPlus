@@ -207,6 +207,29 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         set { if (SetProperty(ref _findingSortMode, value)) RefreshHealthIssues(); }
     }
 
+    private string _linkStatusText = string.Empty;
+    /// <summary>Set when a "Learn more"/"Read more (offline)" link couldn't be opened - the address
+    /// is copied to the clipboard instead, and this says so.</summary>
+    public string LinkStatusText { get => _linkStatusText; private set => SetProperty(ref _linkStatusText, value); }
+
+    private void OpenLink(string target, string what)
+    {
+        if (ExternalLinkService.TryOpen(target))
+        {
+            LinkStatusText = string.Empty;
+            return;
+        }
+        try
+        {
+            System.Windows.Clipboard.SetText(target);
+            LinkStatusText = $"Couldn't open the {what}, so its address was copied to the clipboard: {target}";
+        }
+        catch
+        {
+            LinkStatusText = $"Couldn't open the {what}: {target}";
+        }
+    }
+
     // #935: "Not a problem" feedback, kept purely local (FeedbackService/feedback.jsonl) - a
     // status line plus a one-click "suppress this rule?" follow-up, mirroring this card's other
     // status-text-under-a-button conventions (CopySummaryStatusText, SnapshotStatusText, ...).
@@ -441,12 +464,13 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             }
         });
         FixFindingCommand = new RelayCommand(p => OpenFixDialog(p), p => p is HealthIssue { HasFixAction: true });
-        OpenDocsUrlCommand = new RelayCommand(p => { if (p is string url && url.Length > 0) ExternalLinkService.TryOpen(url); });
+        OpenDocsUrlCommand = new RelayCommand(p => { if (p is string url && url.Length > 0) OpenLink(url, "link"); });
         OpenExplainerCommand = new RelayCommand(p =>
         {
             if (p is not string id) return;
             var path = ExplainerCatalogService.GetPath(id);
-            if (path is not null) ExternalLinkService.TryOpen(path);
+            if (path is not null) OpenLink(path, "explainer page");
+            else LinkStatusText = "This finding's offline explainer page isn't available.";
         });
         CopyMarkdownCommand = new RelayCommand(_ =>
         {
@@ -980,7 +1004,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         sb.Append($"Current load: CPU {Performance.CpuCurrentPercent:0}%, RAM {Performance.RamPercent:0}%, Disk {Performance.DiskPercent:0}%\n");
         if (_energyThermals.CpuPackageTempC is { } temp) sb.Append($"CPU temp: {temp:0.#}°C\n");
         sb.Append(HealthIssues.Count == 0
-            ? "Health Check: no issues detected"
+            ? "Health Check: " + NoIssuesText
             : $"Health Check: {HealthIssues.Count} issue{(HealthIssues.Count == 1 ? "" : "s")} ({string.Join("; ", HealthIssues.Take(3).Select(i => i.Message))}{(HealthIssues.Count > 3 ? "; ..." : string.Empty)})");
 
         try
@@ -1635,7 +1659,9 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         var verdicts = _storage.DriveHealthVerdicts;
         if (verdicts.Count == 0)
         {
-            StorageHealthSummaryText = "No disks detected.";
+            // Empty both while the Storage tab's inventory is still loading and when it failed - a
+            // running Windows always has a system disk, so this is never a real "no disks".
+            StorageHealthSummaryText = "Unknown (drive inventory not loaded yet, or couldn't be read)";
             StorageHealthHasReplace = false;
             StorageHealthHasWatch = false;
             return;

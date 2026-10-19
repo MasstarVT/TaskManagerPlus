@@ -647,6 +647,20 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
+                    <!-- A "Learn more"/"Read more" link that couldn't be opened (address copied instead). -->
+                    <TextBlock Text="{Binding LinkStatusText}" TextWrapping="Wrap" Margin="0,8,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LinkStatusText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
                     <!-- #935: "not a problem" feedback status + one-click suppress follow-up -
                          see FeedbackService's remarks: purely local, never uploaded anywhere. -->
                     <StackPanel Margin="0,8,0,0">

@@ -185,7 +185,8 @@ public sealed class ChangeJournalViewModel : ObservableObject
         var (canUndo, reason) = Evaluate(row.Entry);
         if (!canUndo)
         {
-            row.ResultText = reason;
+            // CanUndoNow is fixed per row - rebuild so Undo is disabled, keeping the reason visible.
+            RefreshKeepingResult(row.Entry.Id, reason);
             return;
         }
 
@@ -197,13 +198,21 @@ public sealed class ChangeJournalViewModel : ObservableObject
             if (success)
             {
                 ChangeJournalService.MarkUndone(row.Entry.Id);
-                Refresh(); // reloads from disk so the row's Undone/CanUndoNow state stays honest
+                // Reloads from disk so the row's Undone/CanUndoNow state stays honest; the new row
+                // carries the result, or a successful Undo would show nothing.
+                RefreshKeepingResult(row.Entry.Id, message);
             }
         }
         finally
         {
             row.IsBusy = false;
         }
+    }
+
+    private void RefreshKeepingResult(string entryId, string message)
+    {
+        Refresh();
+        if (Entries.FirstOrDefault(r => r.Entry.Id == entryId) is { } fresh) fresh.ResultText = message;
     }
 
     private async Task RestoreFromBackupAsync(ChangeJournalRow? row)

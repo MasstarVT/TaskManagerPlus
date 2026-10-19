@@ -36,11 +36,18 @@ public static class DeferredActionService
             // The file is user-writable but TaskName reaches an elevated `schtasks /delete /tn "..."`
             // (Cancel) - only names of the shape RemediationReviewViewModel creates are kept, so a
             // tampered entry can neither name someone else's task nor break out of the quotes.
-            return list?.Where(a => a is not null && OwnTaskName.IsMatch(a.TaskName ?? string.Empty)).ToList()
+            var kept = list?.Where(a => a is not null && OwnTaskName.IsMatch(a.TaskName ?? string.Empty)).ToList()
                 ?? new List<DeferredAction>();
+            // Add/Remove rewrite the file from this result: keep a copy of what was dropped (or
+            // couldn't be parsed) so already-scheduled tasks don't silently lose their tracking rows.
+            if (list is null ? !string.IsNullOrWhiteSpace(json) : kept.Count < list.Count)
+                AppPaths.MarkUnreadable(FilePath);
+            return kept;
         }
         catch
         {
+            // Unreadable or locked - Save refuses to overwrite it unless a copy can be made first.
+            AppPaths.MarkUnreadable(FilePath);
             return new List<DeferredAction>();
         }
     }
@@ -78,6 +85,7 @@ public static class DeferredActionService
     {
         var dir = Path.GetDirectoryName(FilePath)!;
         Directory.CreateDirectory(dir);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(all, JsonOpts));
+        if (!AppPaths.PreserveUnreadable(FilePath)) return;
+        AppPaths.WriteAllTextAtomic(FilePath, JsonSerializer.Serialize(all, JsonOpts));
     }
 }

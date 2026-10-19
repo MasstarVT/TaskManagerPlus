@@ -426,6 +426,7 @@ public sealed class RemediationReviewViewModel : ObservableObject
     {
         System.Windows.Application.Current?.Dispatcher.Invoke(() =>
         {
+            if (!ReferenceEquals(SelectedAction, action)) return; // output belongs to the action that's running
             LiveOutputLines.Add(line);
             if (action.ParseProgressPercent?.Invoke(line) is { } pct)
                 ProgressPercent = Math.Clamp(pct, 0, 100);

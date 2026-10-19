@@ -74,6 +74,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     private EventBookmark? _pageBookmark;
     private string _lastQueriedChannel = string.Empty;
     private string _lastQueriedXPath = "*";
+    private string _lastQueriedKeyword = string.Empty;
     // #110: whether _lastQueriedChannel is a channel name (PathType.LogName) or the full path to
     // an opened .evtx file (PathType.FilePath) - ReadPage/StartWatch need to know which.
     private bool _lastQueriedIsFilePath;
@@ -664,7 +665,8 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         var (success, output) = await EventLogHealthService.ApplyMaxSizeAsync(rec.ChannelName, rec.SuggestedMaxSizeBytes);
         if (success)
         {
-            EventLogHealthService.RecordConfigChange(rec.ChannelName, EventLogConfigChangeType.MaxSize, (health.MaxSizeBytes ?? 0).ToString(), rec.SuggestedMaxSizeBytes.ToString());
+            EventLogHealthService.RecordConfigChange(rec.ChannelName, EventLogConfigChangeType.MaxSize,
+                (health.MaxSizeBytes ?? 0).ToString(CultureInfo.InvariantCulture), rec.SuggestedMaxSizeBytes.ToString(CultureInfo.InvariantCulture));
             ChannelHealthStatusText = "Retention raised.";
             await LoadChannelHealthAsync(SelectedChannel);
         }
@@ -719,25 +721,30 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         var change = EventLogHealthService.FindConfigChange(node.Name, EventLogConfigChangeType.MaxSize);
         if (change is null) return;
 
+        // event-log-config.json is user-writable: parse and show the exact value before asking,
+        // and refuse one that can't be a real prior size (0 is what an unreadable size recorded).
+        if (!long.TryParse(change.PreviousValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out long prevBytes) || prevBytes <= 0)
+        {
+            ChannelHealthStatusText = $"The saved previous size (\"{change.PreviousValue}\") isn't a usable value - nothing was changed.";
+            return;
+        }
+
+        string current = SelectedChannelHealth?.MaxSizeBytes is { } cur ? $"{Formatting.FormatBytes(cur)} ({cur} bytes)" : "unknown";
         var confirm = MessageBox.Show(
-            $"This runs:\nwevtutil sl \"{node.Name}\" /ms:{change.PreviousValue}\n\n"
+            $"This runs:\nwevtutil sl \"{node.Name}\" /ms:{prevBytes}\n\n"
+            + $"Channel: {node.Name}\nCurrent maximum size: {current}\n"
+            + $"Restored maximum size: {Formatting.FormatBytes(prevBytes)} ({prevBytes} bytes), as recorded {change.Timestamp:g}\n\n"
             + "Restores this channel's maximum size to what it was before this app last changed it. Revert now?",
             "Revert channel retention",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
         if (confirm != MessageBoxResult.Yes) return;
 
-        _ = RevertChannelMaxSizeInnerAsync(node.Name, change);
+        _ = RevertChannelMaxSizeInnerAsync(node.Name, prevBytes);
     }
 
-    private async Task RevertChannelMaxSizeInnerAsync(string channelName, EventLogConfigChangeRecord change)
+    private async Task RevertChannelMaxSizeInnerAsync(string channelName, long prevBytes)
     {
-        if (!long.TryParse(change.PreviousValue, out long prevBytes))
-        {
-            ChannelHealthStatusText = "Couldn't parse the saved previous value - nothing was changed.";
-            return;
-        }
-
         ChannelHealthStatusText = "Reverting...";
         var (success, output) = await EventLogHealthService.ApplyMaxSizeAsync(channelName, prevBytes);
         if (success)
@@ -761,8 +768,10 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         if (change is null) return;
 
         bool prevEnabled = change.PreviousValue.Equals("True", StringComparison.OrdinalIgnoreCase);
+        string current = SelectedChannelHealth?.IsEnabled switch { true => "enabled", false => "disabled", _ => "unknown" };
         var confirm = MessageBox.Show(
             $"This runs:\nwevtutil sl \"{node.Name}\" /e:{(prevEnabled ? "true" : "false")}\n\n"
+            + $"Channel: {node.Name}\nCurrently: {current}\nAfter revert: {(prevEnabled ? "enabled" : "disabled")}, as recorded {change.Timestamp:g}\n\n"
             + "Restores this channel's enabled state to what it was before this app last changed it. Revert now?",
             "Revert channel enabled state",
             MessageBoxButton.YesNo,
@@ -849,12 +858,21 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         var channel = SelectedChannel;
         if (channel is null || channel.IsGroup || !channel.IsAccessible) return;
 
+        bool resumeFollow = false;
         if (reset)
         {
+            // A live tail of the previous query would keep inserting its rows into the new list;
+            // stopping it here also drops any of its callbacks still queued.
+            if (IsFollowing)
+            {
+                StopFollow();
+                resumeFollow = true;
+            }
             Events.Clear();
             _pageBookmark = null;
             _lastQueriedChannel = channel.Name;
             _lastQueriedXPath = string.IsNullOrWhiteSpace(RawXPathText) ? "*" : RawXPathText;
+            _lastQueriedKeyword = KeywordText;
             _lastQueriedIsFilePath = channel.IsFilePath;
         }
         else if (!string.Equals(_lastQueriedChannel, channel.Name, StringComparison.OrdinalIgnoreCase))
@@ -867,7 +885,8 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         IsEventsLoading = true;
         try
         {
-            string keyword = KeywordText;
+            // The keyword the list was loaded with, so a later page matches the rows above it.
+            string keyword = _lastQueriedKeyword;
             var pathType = _lastQueriedIsFilePath ? PathType.FilePath : PathType.LogName;
             var result = await Task.Run(() => _service.ReadPage(_lastQueriedChannel, _lastQueriedXPath, reset ? null : _pageBookmark, pathType: pathType));
             if (result.ErrorText is not null)
@@ -888,6 +907,8 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             StatusText = Events.Count == 0 ? "No matching events found." : $"{Events.Count} event(s) loaded.";
             UpdateHiddenNoiseText();
             if (ShowBurstCollapsedView) RecomputeCollapsedBursts();
+            // Re-arm the live tail against the query just loaded.
+            if (resumeFollow) IsFollowing = true;
         }
         catch (Exception ex)
         {
@@ -1235,9 +1256,12 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         }
 
         string xpath = string.IsNullOrWhiteSpace(RawXPathText) ? "*" : RawXPathText;
+        // The keyword filters loaded rows client-side, so followed rows get the same filter.
+        string keyword = KeywordText;
         if (Events.Count > 0 && (_lastQueriedIsFilePath
             || !string.Equals(_lastQueriedChannel, channel.Name, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(_lastQueriedXPath, xpath, StringComparison.Ordinal)))
+            || !string.Equals(_lastQueriedXPath, xpath, StringComparison.Ordinal)
+            || !string.Equals(_lastQueriedKeyword, keyword, StringComparison.Ordinal)))
         {
             // Follow inserts into the list already shown - streaming one channel/filter into rows
             // loaded from another would mix the two with nothing to tell them apart.
@@ -1257,6 +1281,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             row => Application.Current?.Dispatcher.BeginInvoke(() =>
             {
                 if (generation != _followGeneration) return;
+                if (!string.IsNullOrWhiteSpace(keyword) && !row.Message.Contains(keyword, StringComparison.OrdinalIgnoreCase)) return;
                 RegisterKbCoverage(new[] { row });
                 Events.Insert(0, row);
                 StatusText = $"{Events.Count} event(s) loaded (following live).";

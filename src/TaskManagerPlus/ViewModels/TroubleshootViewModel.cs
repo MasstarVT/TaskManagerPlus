@@ -679,7 +679,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         {
             new DiagnosticStep
             {
-                Id = "crash.events", Label = "BugCheck (1001) & Kernel-Power (41) events",
+                Id = "crash.events", Label = "BugCheck (1001), Kernel-Power (41) & EventLog (6008) events",
                 Description = "Kernel-Power 41, EventLog 6008 and BugCheck 1001 in the System log, last 30 days.",
                 Timeout = TimeSpan.FromSeconds(20),
                 Check = ct => Task.Run(() => TroubleshootService.CheckCrashEvents(ctx, ct)),
@@ -725,7 +725,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         if (DidNotComplete(events))
             return CouldNotCheck(events, "the event logs for crash-like events");
         if (events!.Status != DiagnosticStepStatus.Warning)
-            return "No crash-like events (BugCheck 1001 / Kernel-Power 41) were found in the last 30 days.";
+            return "No crash-like events (BugCheck 1001 / Kernel-Power 41 / EventLog 6008) were found in the last 30 days.";
         if (drivers?.Status == DiagnosticStepStatus.Warning)
             return drivers.ResultText;
         if (whea?.Status == DiagnosticStepStatus.Warning)
@@ -1062,7 +1062,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             },
             new DiagnosticStep
             {
-                Id = "wifi.events", Label = "WLAN-AutoConfig failure/disconnect events (8002/8003/110xx)",
+                Id = "wifi.events", Label = "WLAN-AutoConfig connection-failure events (8002/110xx)",
                 Timeout = TimeSpan.FromSeconds(15),
                 ShouldRun = run => StepById(run, "wifi.adapter")?.Status == DiagnosticStepStatus.Passed,
                 Check = _ => Task.Run(TroubleshootService.CheckWlanAutoConfigEvents),
@@ -1157,6 +1157,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     private static string BuildDiskVerdict(TroubleshootRun run)
     {
         var process = StepById(run, "disk.process");
+        var media = StepById(run, "disk.mediatype");
         var fragmentation = StepById(run, "disk.fragmentation");
         var background = StepById(run, "disk.background");
         var latency = StepById(run, "disk.latency");
@@ -1164,14 +1165,14 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         if (process?.Status == DiagnosticStepStatus.Warning)
             return "Verdict: a specific process is driving disk I/O. " + process.ResultText;
         if (fragmentation?.Status == DiagnosticStepStatus.Warning)
-            return "Verdict: HDD fragmentation. " + fragmentation.ResultText;
+            return "Verdict: drive fragmentation. " + fragmentation.ResultText;
         if (background?.Status == DiagnosticStepStatus.Warning)
             return "Verdict: background indexing/prefetching. " + background.ResultText;
         if (latency?.Status == DiagnosticStepStatus.Warning)
             return latency.ResultText + " Run the fragmentation step above if this is a spinning disk.";
         // Fragmentation is manual (Pending until clicked), so it isn't part of this gate.
         return "Disk activity looks normal right now - if it's pegged at 100% currently, try running this again while it's happening." +
-            IncompleteNote(latency, process, background);
+            IncompleteNote(latency, process, media, background);
     }
 
     // ---------------------------- 912: Battery dies too fast ----------------------------
@@ -1286,12 +1287,19 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         }
         if (DidNotComplete(pnp))
             return CouldNotCheck(pnp, "Device Manager for problem devices") +
+                (events?.Status == DiagnosticStepStatus.Warning ? " Separately, " + events.ResultText : string.Empty) +
                 (power?.Status == DiagnosticStepStatus.Warning ? " Separately, " + power.ResultText : string.Empty);
+        // An intermittently disconnecting device is usually fine while it's connected, so the
+        // event history is the evidence here even with no current Device Manager problem.
+        if (events?.Status == DiagnosticStepStatus.Warning)
+            return "No device currently reports a Device Manager problem, but recent events point at disconnects or start failures: " + events.ResultText +
+                (power?.Status == DiagnosticStepStatus.Warning ? " " + power.ResultText : string.Empty) +
+                IncompleteNote(power);
         if (power?.Status == DiagnosticStepStatus.Warning)
-            return "No device currently reports a Device Manager problem, but " + power.ResultText;
+            return "No device currently reports a Device Manager problem, but " + power.ResultText + IncompleteNote(events);
         if (DidNotComplete(power))
-            return "No device currently reports a problem in Device Manager. " + CouldNotCheck(power, "the USB root hub power settings");
-        return "No device currently reports a problem in Device Manager, and USB root hub power settings look fine.";
+            return "No device currently reports a problem in Device Manager. " + CouldNotCheck(power, "the USB root hub power settings") + IncompleteNote(events);
+        return "No device currently reports a problem in Device Manager, and USB root hub power settings look fine." + IncompleteNote(events);
     }
 
     public void Dispose()

@@ -38,6 +38,9 @@ public sealed class SubsystemFamilyGroup
     public string FamilyName { get; init; } = string.Empty;
     public string Summary { get; init; } = string.Empty;
     public int TotalCount { get; init; }
+    /// <summary>The read stopped at its page cap with more records left - TotalCount is a lower bound.</summary>
+    public bool CountIsCapped { get; init; }
+    public string TotalCountText => CountIsCapped ? $"{TotalCount:N0}+" : TotalCount.ToString("N0");
     public DateTime? LastSeen { get; init; }
     public List<SubsystemFamilyHit> Hits { get; init; } = new();
 }

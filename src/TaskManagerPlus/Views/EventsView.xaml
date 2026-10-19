@@ -842,14 +842,16 @@
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                    <!-- The numeric level (1 Critical, 2 Error, 3 Warning):
+                                                         Level is EventLogReader's localized display name. -->
                                                     <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding Level}" Value="Critical">
+                                                        <DataTrigger Binding="{Binding LevelValue}" Value="1">
                                                             <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                                         </DataTrigger>
-                                                        <DataTrigger Binding="{Binding Level}" Value="Error">
+                                                        <DataTrigger Binding="{Binding LevelValue}" Value="2">
                                                             <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                                         </DataTrigger>
-                                                        <DataTrigger Binding="{Binding Level}" Value="Warning">
+                                                        <DataTrigger Binding="{Binding LevelValue}" Value="3">
                                                             <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
