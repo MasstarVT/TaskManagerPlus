@@ -78,6 +78,9 @@ public static class HandleInspectionService
             foreach (var entry in mine)
             {
                 if (checkedCount >= maxHandlesToCheck || DateTime.UtcNow > overallDeadline) break;
+                // A zero Object is a redacted pointer (see ReadSystemHandles), not an address -
+                // every other redacted entry would "match" it and name an arbitrary process.
+                if (entry.Object == IntPtr.Zero) continue;
                 checkedCount++;
 
                 string typeName = ResolveHandleType(sourceProcess, entry.HandleValue);
@@ -463,7 +466,8 @@ public static class HandleInspectionService
             IntPtr buffer = Marshal.AllocHGlobal(size);
             try
             {
-                int status = NtQuerySystemInformation(SystemExtendedHandleInformation, buffer, size, out int returnLength);
+                int returnLength = 0;
+                int status = WithDebugPrivilege(() => NtQuerySystemInformation(SystemExtendedHandleInformation, buffer, size, out returnLength));
                 if (status == StatusInfoLengthMismatch)
                 {
                     size = returnLength > size ? returnLength + 0x10000 : size * 2;
@@ -495,6 +499,32 @@ public static class HandleInspectionService
             }
         }
         return new List<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>();
+    }
+
+    private static readonly object DebugPrivilegeLock = new();
+
+    /// <summary>Windows 11 24H2 and later zero the kernel-address fields of the system handle and
+    /// module tables (a handle's Object, a driver's ImageBase) unless the caller has
+    /// SeDebugPrivilege *enabled*. The elevated token holds it disabled, so it's enabled for just
+    /// this one query and dropped again - left on, it would quietly widen every other tab's
+    /// OpenProcess access for the rest of the session. Not held (an unelevated run): the query
+    /// still runs, and callers treat a zero pointer as unknown.</summary>
+    internal static T WithDebugPrivilege<T>(Func<T> query)
+    {
+        lock (DebugPrivilegeLock)
+        {
+            bool enabled = false;
+            try { Process.EnterDebugMode(); enabled = true; }
+            catch { /* not held */ }
+            try { return query(); }
+            finally
+            {
+                if (enabled)
+                {
+                    try { Process.LeaveDebugMode(); } catch { /* best-effort */ }
+                }
+            }
+        }
     }
 
     // Class 64 - the extended table. The legacy SystemHandleInformation (class 16) carries 16-bit

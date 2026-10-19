@@ -55,6 +55,9 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     private int _rollingCoreCountAtStart;
     private List<(string Identifier, SensorType Type)> _rollingSensorColumnsAtStart = new();
     private int _rollingFlushCountdown;
+    private DateTime _rollingBufferStartedUtc;
+    // How long after the buffer starts its column set may still widen - see WriteRollingBufferRow.
+    private static readonly TimeSpan RollingColumnSettleWindow = TimeSpan.FromMinutes(2);
     // Round 12, #87: routed through AppPaths so portable mode redirects this next to the exe.
     private static string RollingBufferPath => AppPaths.GetPath("Logs", "rolling-buffer.csv");
 
@@ -234,7 +237,10 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     /// pumps the dispatcher, so this timer keeps ticking while it's up.</summary>
     private void StopAfterWriteFailure(string? path, Exception ex)
     {
-        _logging.Stop();
+        // Closing re-flushes the row that just failed, which fails the same way - that's the
+        // error being reported below, not a second one for the app-wide dialog.
+        try { _logging.Stop(); }
+        catch { /* already stopped - see LoggingService.Stop */ }
         RaiseLoggingChanged();
         System.Windows.MessageBox.Show(
             $"Logging stopped - couldn't write to {path ?? "the log file"}:\n\n{ex.Message}",
@@ -247,6 +253,12 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
             .Select(s => (s.Identifier, s.Type)).ToList();
 
     private void StartRollingBuffer()
+    {
+        _rollingBufferStartedUtc = DateTime.UtcNow;
+        SnapshotRollingColumns();
+    }
+
+    private void SnapshotRollingColumns()
     {
         _rollingCoreCountAtStart = _performance.Cores.Count;
         _rollingSensorColumnsAtStart = CurrentSensorColumns();
@@ -265,11 +277,15 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         // lists fill asynchronously), which left the per-core and sensor columns out for the whole
         // session. Re-snapshot when more columns become available - growth only, so a sensor that
         // briefly drops out just leaves a blank cell instead of wiping the buffer. Rows built
-        // against the narrower column set no longer match the new header, so they're dropped.
-        if (_performance.Cores.Count > _rollingCoreCountAtStart ||
-            CurrentSensorColumns().Count > _rollingSensorColumnsAtStart.Count)
+        // against the narrower column set no longer match the new header, so they're dropped -
+        // which is why this only happens while the buffer is new. Later, a sensor appearing (a
+        // power reading leaving 0 or a dGPU waking - i.e. exactly when load starts) would wipe the
+        // lead-up the buffer exists to keep, so the columns then stay fixed like a manual session's.
+        if (DateTime.UtcNow - _rollingBufferStartedUtc < RollingColumnSettleWindow &&
+            (_performance.Cores.Count > _rollingCoreCountAtStart ||
+             CurrentSensorColumns().Count > _rollingSensorColumnsAtStart.Count))
         {
-            StartRollingBuffer();
+            SnapshotRollingColumns();
         }
 
         var row = BuildRow(_rollingCoreCountAtStart, _rollingSensorColumnsAtStart);
@@ -461,8 +477,8 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     {
         if (IsLogging)
         {
-            _logging.Stop();
-            RaiseLoggingChanged();
+            try { _logging.Stop(); }
+            finally { RaiseLoggingChanged(); }
             return;
         }
 

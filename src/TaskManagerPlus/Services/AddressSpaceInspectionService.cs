@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -32,6 +34,12 @@ public static class AddressSpaceInspectionService
     // VirtualQueryEx returning 0.
     private const long UserModeAddressLimit = 0x7FFFFFFEFFFFL;
 
+    // A WOW64 (32-bit) process can only address its low 4 GB (2 GB unless its exe is large-address
+    // aware), but this 64-bit walk sees the ~128 TB above that as free - which swamped the Free
+    // total and the largest-free-block figure fragmentation is judged by.
+    private const long Wow64LargeAddressAwareLimit = 0x1_0000_0000L;
+    private const long Wow64DefaultLimit = 0x8000_0000L;
+
     public static AddressSpaceSummary Walk(int pid)
     {
         var summary = new AddressSpaceSummary { Pid = pid };
@@ -63,7 +71,11 @@ public static class AddressSpaceInspectionService
             int regions = 0;
             int structSize = Marshal.SizeOf<MEMORY_BASIC_INFORMATION>();
 
-            while (address < UserModeAddressLimit)
+            long limit = UserModeAddressLimit;
+            if (IsWow64Process(process, out bool isWow64) && isWow64)
+                limit = IsLargeAddressAware(process) == false ? Wow64DefaultLimit : Wow64LargeAddressAwareLimit;
+
+            while (address < limit)
             {
                 if (regions >= MaxRegions || DateTime.UtcNow > deadline)
                 {
@@ -76,15 +88,17 @@ public static class AddressSpaceInspectionService
 
                 regions++;
                 long regionSize = info.RegionSize.ToInt64();
+                // Only the part below the limit counts (the WOW64 free region runs straight past 4 GB).
+                long countedSize = Math.Min(regionSize, limit - info.BaseAddress.ToInt64());
 
                 if (info.State == MemFree)
                 {
-                    Add("Free", regionSize);
-                    if (regionSize > summary.LargestFreeBlockBytes) summary.LargestFreeBlockBytes = regionSize;
+                    Add("Free", countedSize);
+                    if (countedSize > summary.LargestFreeBlockBytes) summary.LargestFreeBlockBytes = countedSize;
                 }
                 else if (info.State == MemReserve)
                 {
-                    Add("Reserved (not committed)", regionSize);
+                    Add("Reserved (not committed)", countedSize);
                 }
                 else if (info.State == MemCommit)
                 {
@@ -95,11 +109,11 @@ public static class AddressSpaceInspectionService
                         MemPrivate => "Private committed",
                         _ => "Committed (other)",
                     };
-                    Add(category, regionSize);
+                    Add(category, countedSize);
                 }
                 else
                 {
-                    Add("(unknown state)", regionSize);
+                    Add("(unknown state)", countedSize);
                 }
 
                 // Guard against a zero-size region (shouldn't happen, but would spin forever).
@@ -145,6 +159,39 @@ public static class AddressSpaceInspectionService
         public uint Protect;
         public uint Type;
     }
+
+    /// <summary>Reads IMAGE_FILE_LARGE_ADDRESS_AWARE from the process's exe header; null when the
+    /// image path or header can't be read (the caller then assumes the wider 4 GB limit).</summary>
+    private static bool? IsLargeAddressAware(IntPtr process)
+    {
+        try
+        {
+            var path = new StringBuilder(1024);
+            int size = path.Capacity;
+            if (!QueryFullProcessImageName(process, 0, path, ref size)) return null;
+
+            using var stream = new FileStream(path.ToString(), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new BinaryReader(stream);
+            stream.Position = 0x3C; // IMAGE_DOS_HEADER.e_lfanew
+            int peOffset = reader.ReadInt32();
+            stream.Position = peOffset;
+            if (reader.ReadUInt32() != 0x00004550) return null; // "PE\0\0"
+            stream.Position = peOffset + 4 + 18; // IMAGE_FILE_HEADER.Characteristics
+            return (reader.ReadUInt16() & 0x0020) != 0;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWow64Process(IntPtr hProcess, [MarshalAs(UnmanagedType.Bool)] out bool wow64Process);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryFullProcessImageName(IntPtr hProcess, uint flags, StringBuilder exeName, ref int size);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr VirtualQueryEx(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength);

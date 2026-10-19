@@ -34,6 +34,8 @@ public static class ProcessDumpService
 {
     public enum DumpKind { Mini, Full }
 
+    private static readonly TimeSpan FullDumpWait = TimeSpan.FromMinutes(10);
+
     // MINIDUMP_TYPE flags (dbghelp.h) - only the handful this feature actually combines.
     private const int MiniDumpWithDataSegs = 0x00000001;
     private const int MiniDumpWithFullMemory = 0x00000002;
@@ -61,6 +63,7 @@ public static class ProcessDumpService
                 ? MiniDumpWithFullMemory | MiniDumpWithHandleData | MiniDumpWithThreadInfo
                 : MiniDumpWithDataSegs | MiniDumpWithHandleData | MiniDumpWithThreadInfo;
 
+            string failure;
             using (var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write))
             {
                 // SafeFileHandle (not DangerousGetHandle()'s raw IntPtr) so the CLR marshaler keeps
@@ -68,14 +71,14 @@ public static class ProcessDumpService
                 // ahead of time has no such guarantee and could, in principle, be finalized out
                 // from under a long-running call like a Full dump.
                 bool ok = MiniDumpWriteDump(processHandle, (uint)pid, stream.SafeFileHandle, dumpType, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
-                if (!ok)
-                {
-                    int err = Marshal.GetLastWin32Error();
-                    return (false, $"MiniDumpWriteDump failed (Win32 error {err}).");
-                }
+                if (ok) return (true, null);
+                failure = $"MiniDumpWriteDump failed (Win32 error {Marshal.GetLastWin32Error()}).";
             }
 
-            return (true, null);
+            // A failed write leaves a truncated .dmp that a debugger can't open - don't leave it
+            // looking like a real dump.
+            try { File.Delete(filePath); } catch { /* best-effort */ }
+            return (false, failure);
         }
         catch (Exception ex)
         {
@@ -101,22 +104,25 @@ public static class ProcessDumpService
             if (!File.Exists(comsvcs))
                 return (false, "comsvcs.dll wasn't found on this system - can't create a dump this way.");
 
+            // rundll32 writes nothing to stdout/stderr, so nothing is redirected (an unread pipe
+            // is just a way to stall it).
             var psi = new ProcessStartInfo("rundll32.exe", $"\"{comsvcs}\", MiniDump {pid} \"{outputPath}\" full")
             {
                 UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
                 CreateNoWindow = true,
             };
             using var proc = Process.Start(psi);
             if (proc is null) return (false, "Couldn't start rundll32.exe.");
 
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            // A full dump writes the target's whole address space, which takes minutes for a
+            // multi-GB process. MiniDumpWriteDump suspends the target's threads while it works, so
+            // killing rundll32 mid-dump can leave the (already hung) process suspended for good -
+            // on timeout it's left to finish instead of being killed.
+            using var cts = new CancellationTokenSource(FullDumpWait);
             try { await proc.WaitForExitAsync(cts.Token); }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-                return (false, "Dump timed out after 30 seconds.");
+                return (false, $"The dump is still being written after {FullDumpWait.TotalMinutes:0} minutes. rundll32 was left running so the process isn't left suspended - {outputPath} is complete only once rundll32.exe exits.");
             }
 
             if (!File.Exists(outputPath))

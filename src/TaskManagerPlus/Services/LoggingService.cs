@@ -78,9 +78,10 @@ public sealed class LoggingService : IDisposable
         var justClosedPath = FilePath!;
         // Cleared before reopening: if the next part can't be opened, IsLogging must read false
         // rather than leave a disposed writer that throws ObjectDisposedException on every row.
-        _writer!.Dispose();
+        var closing = _writer!;
         _writer = null;
         FilePath = null;
+        closing.Dispose();
         _part++;
         var dir = Path.GetDirectoryName(_basePath!) ?? string.Empty;
         var name = Path.GetFileNameWithoutExtension(_basePath!);
@@ -150,12 +151,17 @@ public sealed class LoggingService : IDisposable
         }
     }
 
+    /// <summary>State is cleared before the writer is disposed: disposing re-flushes whatever a
+    /// failed write left buffered, which throws again on a full or removed disk - IsLogging must
+    /// still read false afterwards rather than leave a disposed writer behind. That final-flush
+    /// exception is then rethrown to the caller.</summary>
     public void Stop()
     {
-        _writer?.Dispose();
+        var writer = _writer;
         _writer = null;
         FilePath = null;
         _basePath = null;
+        writer?.Dispose();
     }
 
     private static string Escape(string value)

@@ -13,8 +13,6 @@
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Toolbar row 1: search/filters + destructive actions -->
@@ -419,9 +417,10 @@
                 <DataGridTemplateColumn Header="Protection" Width="110" SortMemberPath="ProtectionLevel">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding ProtectionLevel}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                            <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="{Binding ProtectionLevel}" />
                                         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding ProtectionLevel}" Value="None">
@@ -600,7 +599,7 @@
                         <DataTemplate>
                             <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                                 <Run Text="{Binding Publisher, Mode=OneWay}" />
-                                <Run Text=" (self-signed)" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}">
+                                <Run Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}">
                                     <Run.Style>
                                         <Style TargetType="Run">
                                             <Setter Property="Text" Value="" />
@@ -685,18 +684,18 @@
                 <DataGridTemplateColumn Header="Crashes (30d)" Width="100" SortMemberPath="CrashCount30d">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding CrashCount30d}" VerticalAlignment="Center"
+                            <TextBlock VerticalAlignment="Center"
                                        ToolTip="Application Error (1000) / Application Hang (1002) events logged for this executable in the last 30 days">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
-                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <!-- Any crash/hang at all is highlighted; zero reads as a dash. -->
+                                        <Setter Property="Text" Value="{Binding CrashCount30d}" />
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding CrashCount30d}" Value="0">
                                                 <Setter Property="Text" Value="—" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                             </DataTrigger>
-                                            <Trigger Property="Text" Value="1">
-                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                            </Trigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -792,617 +791,622 @@
 
         <!-- On-demand inspector results for the selected process (#39/#3/#12/#17) - each section
              independently collapses when empty, the same pattern the original modules-only panel
-             established. -->
-        <StackPanel Grid.Row="3" Margin="0,10,0,0">
-            <!-- #39, extended by Round 15 #849 with signature/publisher/user-writable-location trust
-                 columns - a real (sortable) DataGrid now instead of a plain string list, so "show me
-                 every unsigned DLL loaded here" is one click on the Signature column header. -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedProcessModules.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Loaded modules" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <!-- Round 15, #850: the process's own application directory being user-writable. -->
-                    <TextBlock Text="{Binding SelectedProcessAppDirWarning}" Foreground="{DynamicResource WarningBrush}"
-                               FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,6">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Visibility" Value="Visible" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding SelectedProcessAppDirWarning}" Value="{x:Null}">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                    <DataGrid ItemsSource="{Binding SelectedProcessModules}" MaxHeight="220" IsReadOnly="True"
-                              AutoGenerateColumns="False" HeadersVisibility="Column">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="Module" Binding="{Binding ModuleName}" Width="1.3*" />
-                            <DataGridTemplateColumn Header="Signature" Width="90" SortMemberPath="SignatureStatus">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding SignatureStatus}" VerticalAlignment="Center">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding SignatureStatus}" Value="Unsigned">
-                                                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Publisher" Binding="{Binding Publisher}" Width="1*" />
-                            <DataGridTemplateColumn Header="Writable loc." Width="90" SortMemberPath="IsUserWritableLocation">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="User-writable" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" VerticalAlignment="Center">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsUserWritableLocation}" Value="True">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="Side-load risk" Width="90" SortMemberPath="IsSideLoadSuspect">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="Check this" Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" VerticalAlignment="Center">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsSideLoadSuspect}" Value="True">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="2*" />
-                        </DataGrid.Columns>
-                    </DataGrid>
-                </StackPanel>
-            </Border>
-
-            <!-- Round 15, #850: DLL side-loading findings - a same-named file also exists directly
-                 under System32, but this module was actually loaded from somewhere else. -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SideLoadFindings.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Side-loading risk" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <ItemsControl ItemsSource="{Binding SideLoadFindings}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Margin="0,0,0,6">
-                                    <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}">
-                                        <Run Text="{Binding ModuleName, Mode=OneWay}" />
-                                        <Run Text=" - a same-named file exists in System32 but this wasn't loaded from there" />
-                                    </TextBlock>
-                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
-                                        <Run Text="System32: " /><Run Text="{Binding System32CounterpartPath, Mode=OneWay}" />
-                                    </TextBlock>
-                                    <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
-                                        <Run Text="Actually loaded from: " /><Run Text="{Binding FilePath, Mode=OneWay}" />
-                                    </TextBlock>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- Round 15, #846: unbacked executable memory scan. -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedProcessUnbackedMemory.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Unbacked executable memory" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <ItemsControl ItemsSource="{Binding SelectedProcessUnbackedMemory}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- Round 15, #847: hollowed-image indicator for the main module. -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedProcessHollowingCheck.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Image integrity check (main module)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <ItemsControl ItemsSource="{Binding SelectedProcessHollowingCheck}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- Round 15, #848: foreign (unbacked) thread start-address findings. -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedProcessForeignThreads.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Thread origin scan" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <ItemsControl ItemsSource="{Binding SelectedProcessForeignThreads}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- Round 15, #851: mitigation-policy badge row. -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedProcessMitigations.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Mitigation policies" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <ItemsControl ItemsSource="{Binding SelectedProcessMitigations}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Background="{DynamicResource BgBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,6">
-                                    <TextBlock FontSize="{StaticResource FontBody}">
-                                        <Run Text="{Binding Name, Mode=OneWay}" />
-                                        <Run Text=": " />
-                                        <Run Text="{Binding StateText, Mode=OneWay}" FontWeight="SemiBold">
-                                            <Run.Style>
-                                                <Style TargetType="Run">
-                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsEnabled}" Value="True">
-                                                            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Run.Style>
-                                        </Run>
-                                    </TextBlock>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- Round 16, #853: token privilege audit results. -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedProcessPrivileges.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Token privileges" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"
-                               Text="Highlighted entries are on the dangerous-if-unexpected watch list, currently enabled, and held by a process that isn't Microsoft-signed. Quick flag, not a verdict - plenty of legitimate system processes hold these." />
-                    <ItemsControl ItemsSource="{Binding SelectedProcessPrivileges}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Background="{DynamicResource BgBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,6">
-                                    <TextBlock FontSize="{StaticResource FontBody}">
-                                        <Run Text="{Binding Name, Mode=OneWay}" />
-                                        <Run Text=": " />
-                                        <Run Text="{Binding StateText, Mode=OneWay}" FontWeight="SemiBold">
-                                            <Run.Style>
-                                                <Style TargetType="Run">
-                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsFlagged}" Value="True">
-                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Run.Style>
-                                        </Run>
-                                    </TextBlock>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <!-- Round 16, #856: decoded -EncodedCommand text. -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding DecodedCommandLineText}" Value="{x:Null}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Decoded -EncodedCommand" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
-                        <TextBlock FontFamily="Consolas" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding DecodedCommandLineText}" />
-                    </ScrollViewer>
-                </StackPanel>
-            </Border>
-
-            <!-- Round 7 #3 -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedProcessEnvironment.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Environment variables" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
-                        <ItemsControl ItemsSource="{Binding SelectedProcessEnvironment}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" />
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-
-                    <!-- #799: whether this process's own PATH/TEMP has drifted from the current
-                         machine+user environment - computed alongside the dump above, no extra query. -->
-                    <Border CornerRadius="6" Padding="8,4" Margin="0,8,0,0"
-                            Visibility="{Binding SelectedProcessEnvironmentDrift, Converter={StaticResource NullToVisibilityConverter}}">
-                        <Border.Style>
-                            <Style TargetType="Border">
-                                <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding SelectedProcessEnvironmentDrift.HasDrift}" Value="True">
-                                        <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Border.Style>
-                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding SelectedProcessEnvironmentDrift.Detail}">
+             established. The inspector, file-lock lookup and "Recently exited" share one bounded,
+             scrollable area: as separate Auto rows they squeezed the process grid above to a couple
+             of rows (or none, once a process was inspected) at the default window size. -->
+        <ScrollViewer Grid.Row="3" Margin="0,10,0,0" MaxHeight="170"
+                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+                <!-- #39, extended by Round 15 #849 with signature/publisher/user-writable-location trust
+                     columns - a real (sortable) DataGrid now instead of a plain string list, so "show me
+                     every unsigned DLL loaded here" is one click on the Signature column header. -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedProcessModules.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Loaded modules" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <!-- Round 15, #850: the process's own application directory being user-writable. -->
+                        <TextBlock Text="{Binding SelectedProcessAppDirWarning}" Foreground="{DynamicResource WarningBrush}"
+                                   FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,6">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
-                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                    <Setter Property="Visibility" Value="Visible" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding SelectedProcessEnvironmentDrift.HasDrift}" Value="True">
-                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                        <DataTrigger Binding="{Binding SelectedProcessAppDirWarning}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </TextBlock.Style>
                         </TextBlock>
-                    </Border>
-                </StackPanel>
-            </Border>
+                        <DataGrid ItemsSource="{Binding SelectedProcessModules}" MaxHeight="220" IsReadOnly="True"
+                                  AutoGenerateColumns="False" HeadersVisibility="Column">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Module" Binding="{Binding ModuleName}" Width="1.3*" />
+                                <DataGridTemplateColumn Header="Signature" Width="90" SortMemberPath="SignatureStatus">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding SignatureStatus}" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SignatureStatus}" Value="Unsigned">
+                                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Publisher" Binding="{Binding Publisher}" Width="1*" />
+                                <DataGridTemplateColumn Header="Writable loc." Width="90" SortMemberPath="IsUserWritableLocation">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="User-writable" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsUserWritableLocation}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Side-load risk" Width="90" SortMemberPath="IsSideLoadSuspect">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="Check this" Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsSideLoadSuspect}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="2*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </StackPanel>
+                </Border>
 
-            <!-- Round 7 #12 -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedProcessHandleTypes.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Open handles by type (best-effort)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <ItemsControl ItemsSource="{Binding SelectedProcessHandleTypes}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Margin="0,0,16,2" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
+                <!-- Round 15, #850: DLL side-loading findings - a same-named file also exists directly
+                     under System32, but this module was actually loaded from somewhere else. -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SideLoadFindings.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Side-loading risk" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding SideLoadFindings}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="0,0,0,6">
+                                        <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}">
+                                            <Run Text="{Binding ModuleName, Mode=OneWay}" />
+                                            <Run Text=" - a same-named file exists in System32 but this wasn't loaded from there" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <Run Text="System32: " /><Run Text="{Binding System32CounterpartPath, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
+                                            <Run Text="Actually loaded from: " /><Run Text="{Binding FilePath, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
 
-            <!-- Round 7 #17 -->
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedProcessHostedServices.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Hosted services" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <ItemsControl ItemsSource="{Binding SelectedProcessHostedServices}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Margin="0,0,0,2" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
+                <!-- Round 15, #846: unbacked executable memory scan. -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedProcessUnbackedMemory.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Unbacked executable memory" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding SelectedProcessUnbackedMemory}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
 
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedProcessWaitBreakdown.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="Thread state / wait-reason breakdown" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <ItemsControl ItemsSource="{Binding SelectedProcessWaitBreakdown}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,16,2">
-                                    <Run Text="{Binding BucketName, Mode=OneWay}" />
-                                    <Run Text=": " />
-                                    <Run Text="{Binding ThreadCount, Mode=OneWay}" FontWeight="SemiBold" />
-                                </TextBlock>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
+                <!-- Round 15, #847: hollowed-image indicator for the main module. -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedProcessHollowingCheck.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Image integrity check (main module)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding SelectedProcessHollowingCheck}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
 
-            <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding SelectedProcessAddressSpace}" Value="{x:Null}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6">
-                        <Run Text="Address space — " />
-                        <Run Text="{Binding SelectedProcessAddressSpace.ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
-                        <Run Text=" (PID " /><Run Text="{Binding SelectedProcessAddressSpace.Pid, Mode=OneWay}" /><Run Text=")" />
-                    </TextBlock>
-                    <TextBlock Text="{Binding SelectedProcessAddressSpace.Error}" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,0,0,6">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                <!-- Round 15, #848: foreign (unbacked) thread start-address findings. -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedProcessForeignThreads.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Thread origin scan" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding SelectedProcessForeignThreads}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <!-- Round 15, #851: mitigation-policy badge row. -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedProcessMitigations.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Mitigation policies" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding SelectedProcessMitigations}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,6">
+                                        <TextBlock FontSize="{StaticResource FontBody}">
+                                            <Run Text="{Binding Name, Mode=OneWay}" />
+                                            <Run Text=": " />
+                                            <Run Text="{Binding StateText, Mode=OneWay}" FontWeight="SemiBold">
+                                                <Run.Style>
+                                                    <Style TargetType="Run">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsEnabled}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Run.Style>
+                                            </Run>
+                                        </TextBlock>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <!-- Round 16, #853: token privilege audit results. -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedProcessPrivileges.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Token privileges" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,6"
+                                   Text="Highlighted entries are on the dangerous-if-unexpected watch list, currently enabled, and held by a process that isn't Microsoft-signed. Quick flag, not a verdict - plenty of legitimate system processes hold these." />
+                        <ItemsControl ItemsSource="{Binding SelectedProcessPrivileges}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,6">
+                                        <TextBlock FontSize="{StaticResource FontBody}">
+                                            <Run Text="{Binding Name, Mode=OneWay}" />
+                                            <Run Text=": " />
+                                            <Run Text="{Binding StateText, Mode=OneWay}" FontWeight="SemiBold">
+                                                <Run.Style>
+                                                    <Style TargetType="Run">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsFlagged}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Run.Style>
+                                            </Run>
+                                        </TextBlock>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <!-- Round 16, #856: decoded -EncodedCommand text. -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding DecodedCommandLineText}" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Decoded -EncodedCommand" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                            <TextBlock FontFamily="Consolas" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding DecodedCommandLineText}" />
+                        </ScrollViewer>
+                    </StackPanel>
+                </Border>
+
+                <!-- Round 7 #3 -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedProcessEnvironment.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Environment variables" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding SelectedProcessEnvironment}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+
+                        <!-- #799: whether this process's own PATH/TEMP has drifted from the current
+                             machine+user environment - computed alongside the dump above, no extra query. -->
+                        <Border CornerRadius="6" Padding="8,4" Margin="0,8,0,0"
+                                Visibility="{Binding SelectedProcessEnvironmentDrift, Converter={StaticResource NullToVisibilityConverter}}">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedProcessEnvironmentDrift.HasDrift}" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding SelectedProcessEnvironmentDrift.Detail}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SelectedProcessEnvironmentDrift.HasDrift}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <!-- Round 7 #12 -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedProcessHandleTypes.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Open handles by type (best-effort)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding SelectedProcessHandleTypes}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Margin="0,0,16,2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <!-- Round 7 #17 -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedProcessHostedServices.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Hosted services" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding SelectedProcessHostedServices}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Margin="0,0,0,2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedProcessWaitBreakdown.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Thread state / wait-reason breakdown" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ItemsControl ItemsSource="{Binding SelectedProcessWaitBreakdown}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,16,2">
+                                        <Run Text="{Binding BucketName, Mode=OneWay}" />
+                                        <Run Text=": " />
+                                        <Run Text="{Binding ThreadCount, Mode=OneWay}" FontWeight="SemiBold" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedProcessAddressSpace}" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6">
+                            <Run Text="Address space — " />
+                            <Run Text="{Binding SelectedProcessAddressSpace.ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
+                            <Run Text=" (PID " /><Run Text="{Binding SelectedProcessAddressSpace.Pid, Mode=OneWay}" /><Run Text=")" />
+                        </TextBlock>
+                        <TextBlock Text="{Binding SelectedProcessAddressSpace.Error}" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" Margin="0,0,0,6">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedProcessAddressSpace.Error}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <ItemsControl ItemsSource="{Binding SelectedProcessAddressSpace.Buckets}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgPanelBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,6">
+                                        <TextBlock FontSize="{StaticResource FontBody}">
+                                            <Run Text="{Binding Category, Mode=OneWay}" FontWeight="SemiBold" />
+                                            <Run Text=": " />
+                                            <Run Text="{Binding TotalBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                            <Run Text=" (" /><Run Text="{Binding RegionCount, Mode=OneWay}" /><Run Text=" regions)" />
+                                        </TextBlock>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock FontSize="{StaticResource FontBody}" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
+                            <Run Text="Largest contiguous free block: " />
+                            <Run Text="{Binding SelectedProcessAddressSpace.LargestFreeBlockBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" FontWeight="SemiBold" />
+                            <Run Text=" — a small largest-block figure despite a large total free figure above points to fragmentation, not a leak." />
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+
+                <!-- Round 7 #5/#9: CPU affinity editor + "what has this file open" lookup. -->
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="16" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                        <Border.Style>
+                            <Style TargetType="Border">
                                 <Setter Property="Visibility" Value="Visible" />
                                 <Style.Triggers>
-                                    <DataTrigger Binding="{Binding SelectedProcessAddressSpace.Error}" Value="{x:Null}">
+                                    <DataTrigger Binding="{Binding AffinityCores.Count}" Value="0">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                    <ItemsControl ItemsSource="{Binding SelectedProcessAddressSpace.Buckets}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Background="{DynamicResource BgPanelBrush}" CornerRadius="4" Padding="8,4" Margin="0,0,8,6">
-                                    <TextBlock FontSize="{StaticResource FontBody}">
-                                        <Run Text="{Binding Category, Mode=OneWay}" FontWeight="SemiBold" />
-                                        <Run Text=": " />
-                                        <Run Text="{Binding TotalBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
-                                        <Run Text=" (" /><Run Text="{Binding RegionCount, Mode=OneWay}" /><Run Text=" regions)" />
-                                    </TextBlock>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <TextBlock FontSize="{StaticResource FontBody}" Margin="0,4,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
-                        <Run Text="Largest contiguous free block: " />
-                        <Run Text="{Binding SelectedProcessAddressSpace.LargestFreeBlockBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" FontWeight="SemiBold" />
-                        <Run Text=" — a small largest-block figure despite a large total free figure above points to fragmentation, not a leak." />
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-        </StackPanel>
+                        </Border.Style>
+                        <StackPanel>
+                            <TextBlock Text="CPU affinity" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <ItemsControl ItemsSource="{Binding AffinityCores}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <CheckBox Content="{Binding Index}" IsChecked="{Binding IsSelected}" Margin="0,0,10,4" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <Button Content="Apply affinity" HorizontalAlignment="Left" Margin="0,6,0,0" Command="{Binding ApplyAffinityCommand}" />
+                        </StackPanel>
+                    </Border>
 
-        <!-- Round 7 #5/#9: CPU affinity editor + "what has this file open" lookup. -->
-        <Grid Grid.Row="4" Margin="0,10,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="16" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+                    <Border Grid.Column="2" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                        <StackPanel>
+                            <TextBlock Text="What has this file open?" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="Check" Margin="8,0,0,0" Command="{Binding LookupFileLockCommand}" />
+                                <TextBox Text="{Binding FileLockPath, UpdateSourceTrigger=PropertyChanged}" Height="28" VerticalContentAlignment="Center" />
+                            </DockPanel>
+                            <ItemsControl ItemsSource="{Binding FileLockResults}" Margin="0,6,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Margin="0,0,0,2" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                </Grid>
 
-            <Border Grid.Column="0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Visibility" Value="Visible" />
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding AffinityCores.Count}" Value="0">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <StackPanel>
-                    <TextBlock Text="CPU affinity" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <ItemsControl ItemsSource="{Binding AffinityCores}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <CheckBox Content="{Binding Index}" IsChecked="{Binding IsSelected}" Margin="0,0,10,4" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <Button Content="Apply affinity" HorizontalAlignment="Left" Margin="0,6,0,0" Command="{Binding ApplyAffinityCommand}" />
-                </StackPanel>
-            </Border>
-
-            <Border Grid.Column="2" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
-                <StackPanel>
-                    <TextBlock Text="What has this file open?" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                    <DockPanel>
-                        <Button DockPanel.Dock="Right" Content="Check" Margin="8,0,0,0" Command="{Binding LookupFileLockCommand}" />
-                        <TextBox Text="{Binding FileLockPath, UpdateSourceTrigger=PropertyChanged}" Height="28" VerticalContentAlignment="Center" />
-                    </DockPanel>
-                    <ItemsControl ItemsSource="{Binding FileLockResults}" Margin="0,6,0,0">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Margin="0,0,0,2" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-        </Grid>
-
-        <!-- Round 17, item 63: processes seen in a previous poll tick and gone in the current one -
-             "my app closed itself" turned into "exit code 0xC0000005" wherever a code was
-             actually captured. Collapsed entirely when nothing has exited yet this session. -->
-        <Border Grid.Row="5" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,10,0,0">
-            <Border.Style>
-                <Style TargetType="Border">
-                    <Setter Property="Visibility" Value="Visible" />
-                    <Style.Triggers>
-                        <DataTrigger Binding="{Binding RecentlyExited.Count}" Value="0">
-                            <Setter Property="Visibility" Value="Collapsed" />
-                        </DataTrigger>
-                    </Style.Triggers>
-                </Style>
-            </Border.Style>
-            <StackPanel>
-                <TextBlock Text="Recently exited" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
-                <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding RecentlyExited}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Margin="0,0,0,3">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}">
-                                        <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
-                                        <Run Text=" (PID " /><Run Text="{Binding Pid, Mode=OneWay}" /><Run Text=") — " />
-                                        <Run Text="{Binding ExitCodeText, Mode=OneWay}" />
-                                    </TextBlock>
-                                    <TextBlock Grid.Column="1" Text="{Binding ExitTime, StringFormat={}{0:T}}" FontSize="{StaticResource FontBody}"
-                                               Foreground="{DynamicResource TextSecondaryBrush}" />
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
+                <!-- Round 17, item 63: processes seen in a previous poll tick and gone in the current one -
+                     "my app closed itself" turned into "exit code 0xC0000005" wherever a code was
+                     actually captured. Collapsed entirely when nothing has exited yet this session. -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,10,0,0">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding RecentlyExited.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Recently exited" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding RecentlyExited}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,3">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}">
+                                                <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                                <Run Text=" (PID " /><Run Text="{Binding Pid, Mode=OneWay}" /><Run Text=") — " />
+                                                <Run Text="{Binding ExitCodeText, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Grid.Column="1" Text="{Binding ExitTime, StringFormat={}{0:T}}" FontSize="{StaticResource FontBody}"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </StackPanel>
+                </Border>
             </StackPanel>
-        </Border>
+        </ScrollViewer>
 
-        <TextBlock Grid.Row="6" Text="{Binding StatusMessage}" Margin="0,8,0,0"
+        <TextBlock Grid.Row="4" Text="{Binding StatusMessage}" Margin="0,8,0,0"
                    Foreground="{DynamicResource TextSecondaryBrush}" />
     </Grid>
 </UserControl>

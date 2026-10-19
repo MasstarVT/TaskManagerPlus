@@ -826,18 +826,42 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     {
         var nodesByPid = Processes.ToDictionary(r => r.Pid, r => new ProcessTreeNode(r));
         var roots = new List<ProcessTreeNode>();
+        var linkedParent = new Dictionary<ProcessTreeNode, ProcessTreeNode>();
 
         foreach (var node in nodesByPid.Values)
         {
-            if (node.Row.ParentPid > 0 && nodesByPid.TryGetValue(node.Row.ParentPid, out var parentNode) && parentNode != node)
+            // ParentPid is only a number: once the real parent exits, Windows can hand that PID to
+            // an unrelated - even a descendant - process. A "parent" that started after the child
+            // is such a reuse, and a link that would close a loop (possible when a start time
+            // couldn't be read) would leave every node on it unreachable from any root.
+            if (node.Row.ParentPid > 0 && nodesByPid.TryGetValue(node.Row.ParentPid, out var parentNode) && parentNode != node &&
+                !(parentNode.Row.StartTime is { } parentStart && node.Row.StartTime is { } childStart && parentStart > childStart) &&
+                !IsLinkedAncestor(node, parentNode, linkedParent))
+            {
                 parentNode.Children.Add(node);
+                linkedParent[node] = parentNode;
+            }
             else
+            {
                 roots.Add(node);
+            }
         }
 
         ProcessTree.Clear();
         foreach (var root in roots.OrderBy(n => n.Row.Name, StringComparer.OrdinalIgnoreCase))
             ProcessTree.Add(root);
+    }
+
+    /// <summary>True when <paramref name="node"/> is <paramref name="candidateParent"/> or one of
+    /// its already-linked ancestors - linking them would form a cycle. The links made so far are a
+    /// forest (this check is what keeps them one), so the walk always terminates.</summary>
+    private static bool IsLinkedAncestor(ProcessTreeNode node, ProcessTreeNode candidateParent, Dictionary<ProcessTreeNode, ProcessTreeNode> linkedParent)
+    {
+        for (ProcessTreeNode? p = candidateParent; p is not null; p = linkedParent.GetValueOrDefault(p))
+        {
+            if (p == node) return true;
+        }
+        return false;
     }
 
     private void EndSelected(bool tree)
@@ -854,6 +878,15 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             MessageBoxImage.Warning);
 
         if (confirm != MessageBoxResult.Yes) return;
+
+        // The confirm dialog can sit open across many poll ticks - re-check the PID still belongs
+        // to the process that was shown, so a reused PID never takes down an unrelated process.
+        if (!ProcessMonitorService.IsSameProcess(target.Pid, target.Name, target.StartTime))
+        {
+            StatusMessage = $"Couldn't confirm PID {target.Pid} is still \"{target.Name}\" (it may have exited, or the PID was reused) - nothing was ended.";
+            _ = RefreshAsync();
+            return;
+        }
 
         var (success, error) = tree
             ? ProcessMonitorService.EndProcessTree(target.Pid)

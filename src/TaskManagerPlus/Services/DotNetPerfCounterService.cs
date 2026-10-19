@@ -106,9 +106,16 @@ public sealed class DotNetPerfCounterService : IDisposable
 
             foreach (var inst in instanceNames)
             {
-                // The ".NET CLR *" categories publish under the same "processname#N" instance-name
-                // scheme as "Process", so "Process(<instance>)\ID Process" resolves the PID.
-                int pid = (int)_processSampler.Value("ID Process", inst);
+                // The ".NET CLR *" categories use the same "processname#N" naming as "Process", but
+                // number duplicate names independently - "app#1" here can be a different process
+                // than "Process(app#1)". The CLR category's own "Process ID" is authoritative; it
+                // reads 0 until that process's first GC, and only then is the Process-category
+                // lookup used - and only for a name no other managed instance shares, where the
+                // two categories can't disagree.
+                int pid = (int)_memorySampler.Value("Process ID", inst);
+                if (pid <= 0 && !inst.Contains('#') &&
+                    !instanceNames.Any(n => n.StartsWith(inst + "#", StringComparison.OrdinalIgnoreCase)))
+                    pid = (int)_processSampler.Value("ID Process", inst);
                 if (pid <= 0) continue;
                 seenPids.Add(pid);
 

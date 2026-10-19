@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Text;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -91,7 +92,7 @@ public static class ProcessEnvironmentDriftService
         var mismatches = new List<string>();
         if (procPath is not null && !PathsEquivalent(procPath, effectivePath))
             mismatches.Add("PATH");
-        if (procTemp is not null && !string.Equals(procTemp.TrimEnd('\\'), effectiveTemp.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+        if (procTemp is not null && !string.Equals(LongPath(procTemp).TrimEnd('\\'), LongPath(effectiveTemp).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
             mismatches.Add("TEMP");
 
         bool hasDrift = mismatches.Count > 0;
@@ -100,6 +101,29 @@ public static class ProcessEnvironmentDriftService
             : "Matches the current machine+user environment.";
 
         return new ProcessEnvironmentDrift { Pid = pid, ProcessName = processName, HasDrift = hasDrift, Detail = detail };
+    }
+
+    /// <summary>Windows builds a logon's TEMP/TMP in 8.3 short form whenever the profile path has
+    /// a long component (C:\Users\ADMINI~1\AppData\Local\Temp), while the registry value expands to
+    /// the long form - the same directory, so compare both long. Falls back to the input when the
+    /// path doesn't exist or can't be resolved.</summary>
+    private static string LongPath(string path)
+    {
+        try
+        {
+            var buffer = new StringBuilder(512);
+            uint length = GetLongPathName(path, buffer, (uint)buffer.Capacity);
+            if (length >= buffer.Capacity)
+            {
+                buffer = new StringBuilder((int)length + 1);
+                length = GetLongPathName(path, buffer, (uint)buffer.Capacity);
+            }
+            return length > 0 && length < buffer.Capacity ? buffer.ToString() : path;
+        }
+        catch
+        {
+            return path;
+        }
     }
 
     private static string? FindValue(List<string> env, string name)
@@ -189,6 +213,9 @@ public static class ProcessEnvironmentDriftService
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetLongPathName(string shortPath, StringBuilder longPath, uint bufferLength);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);

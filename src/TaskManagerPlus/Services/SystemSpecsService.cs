@@ -300,10 +300,11 @@ public sealed class SystemSpecsService
     private static List<MemoryModuleInfo> ReadMemoryModules()
     {
         var modules = new List<MemoryModuleInfo>();
+        var bankLabels = new Dictionary<MemoryModuleInfo, string>();
         try
         {
             using var searcher = new ManagementObjectSearcher(
-                "SELECT DeviceLocator, Capacity, Speed, ConfiguredClockSpeed, Manufacturer, SMBIOSMemoryType FROM Win32_PhysicalMemory");
+                "SELECT DeviceLocator, BankLabel, Capacity, Speed, ConfiguredClockSpeed, Manufacturer, SMBIOSMemoryType FROM Win32_PhysicalMemory");
             foreach (ManagementObject mo in searcher.Get())
             {
                 long capacity = 0;
@@ -320,7 +321,7 @@ public sealed class SystemSpecsService
                 int smBiosType = 0;
                 try { smBiosType = System.Convert.ToInt32(mo["SMBIOSMemoryType"] ?? 0); } catch { /* leave 0 */ }
 
-                modules.Add(new MemoryModuleInfo
+                var module = new MemoryModuleInfo
                 {
                     Location = (mo["DeviceLocator"] as string ?? "RAM").Trim(),
                     CapacityBytes = capacity,
@@ -328,7 +329,10 @@ public sealed class SystemSpecsService
                     ConfiguredSpeedMhz = configuredSpeed,
                     Manufacturer = (mo["Manufacturer"] as string ?? string.Empty).Trim(),
                     MemoryType = DdrGenerationName(smBiosType),
-                });
+                };
+                modules.Add(module);
+                // Win32_PhysicalMemory.BankLabel is SMBIOS Type 17's Bank Locator string.
+                bankLabels[module] = (mo["BankLabel"] as string ?? string.Empty).Trim();
             }
         }
         catch
@@ -337,24 +341,38 @@ public sealed class SystemSpecsService
         }
 
         // #440: merge in the raw-SMBIOS-only fields (part number, serial, rank, voltages, form
-        // factor, memory technology), matched to the WMI row above by DeviceLocator - the one
-        // identifier both sources report the same way. A WMI module with no SMBIOS match (raw
-        // table unreadable, or a locator string that genuinely doesn't line up) simply keeps its
-        // defaults for every field below, i.e. "Unknown", never a guess.
-        var smbiosByLocator = SmbiosMemoryService.ReadMemoryDevices()
+        // factor, memory technology), matched to the WMI row above by DeviceLocator plus, where
+        // the locator alone is ambiguous, BankLocator (WMI's BankLabel) - AMD boards name each
+        // channel's slots "DIMM 1"/"DIMM 2" and tell the channels apart only by bank ("P0 CHANNEL
+        // A" vs "P0 CHANNEL B"), so a locator-only match handed both modules channel A's data. A
+        // WMI module with no unambiguous SMBIOS match (raw table unreadable, or locator strings
+        // that genuinely don't line up) keeps its defaults for every field below, i.e. "Unknown",
+        // never a guess.
+        var smbiosDevices = SmbiosMemoryService.ReadMemoryDevices()
             .Where(d => !string.IsNullOrWhiteSpace(d.DeviceLocator))
-            .GroupBy(d => d.DeviceLocator, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            .ToList();
 
         foreach (var m in modules)
         {
-            if (smbiosByLocator.TryGetValue(m.Location, out var s))
+            string bankLabel = bankLabels.TryGetValue(m, out var label) ? label : string.Empty;
+            var candidates = smbiosDevices
+                .Where(d => string.Equals(d.DeviceLocator.Trim(), m.Location, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (candidates.Count > 1)
+                candidates = candidates.Where(d => string.Equals(d.BankLocator.Trim(), bankLabel, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            if (candidates.Count == 1)
             {
-                ApplySmbiosData(m, s);
+                ApplySmbiosData(m, candidates[0]);
             }
-            // #444: channel label, from whichever locator strings are available - independent of
-            // whether an SMBIOS match was found, since WMI's own DeviceLocator/BankLocator already
-            // carry the same vendor slot-naming convention.
+            else
+            {
+                // #444: channel label, from whichever locator strings are available - independent
+                // of whether an SMBIOS match was found, since WMI's own DeviceLocator/BankLabel
+                // already carry the same vendor slot-naming convention.
+                m.BankLocator = bankLabel;
+                m.ChannelLabel = MemoryDiagnosticsService.ExtractChannelLabel(m.Location, bankLabel);
+            }
         }
 
         return modules.OrderBy(m => m.Location, StringComparer.OrdinalIgnoreCase).ToList();

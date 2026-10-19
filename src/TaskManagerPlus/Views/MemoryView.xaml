@@ -243,8 +243,20 @@
                              override configures a size; live session pool usage isn't exposed by any
                              documented API, so only the configured limit is shown, never a guessed usage. -->
                         <views:VfdMeter Title="Session pool" Glow="False" Margin="3,0,3,0"
-                                        ValueText="{Binding Performance.SessionPoolValueText}" Unit="MB"
-                                        SubText="{Binding Performance.SessionPoolSubText}" AccentBrush="{DynamicResource AccentBrush}" />
+                                        ValueText="{Binding Performance.SessionPoolValueText}"
+                                        SubText="{Binding Performance.SessionPoolSubText}" AccentBrush="{DynamicResource AccentBrush}">
+                            <!-- No unit on "Auto" - there's no configured size to measure. -->
+                            <views:VfdMeter.Style>
+                                <Style TargetType="views:VfdMeter">
+                                    <Setter Property="Unit" Value="MB" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Performance.SessionPoolLimitMb}" Value="{x:Null}">
+                                            <Setter Property="Unit" Value="" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </views:VfdMeter.Style>
+                        </views:VfdMeter>
                         <views:VfdMeter Title="Page faults" Glow="False" Margin="6,0,0,0"
                                         ValueText="{Binding Performance.HardFaultsPerSec, StringFormat={}{0:0}}" Unit="hard/s"
                                         SubText="{Binding Performance.SoftFaultsPerSec, StringFormat={}+{0:0} soft/s}"
@@ -577,33 +589,35 @@
                             <TextBlock Text="Top memory consumers" Style="{StaticResource CardTitle}" />
                             <CheckBox Content="Rank by private working set (excludes memory shared with other processes)"
                                       IsChecked="{Binding SortTopMemoryByPrivateWorkingSet}" Margin="0,4,0,10" FontSize="{StaticResource FontBody}" />
-                            <ItemsControl ItemsSource="{Binding TopMemoryProcesses}" MaxHeight="240">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
-                                                    <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
-                                                    <Run Text=" · " /><Run Text="{Binding CpuPercent, StringFormat={}{0:0.0}% CPU, Mode=OneWay}" />
-                                                </TextBlock>
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="1" HorizontalAlignment="Right">
-                                                <TextBlock Text="{Binding MemoryMb, StringFormat={}{0:0} MB}"
-                                                           FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" HorizontalAlignment="Right" />
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}" HorizontalAlignment="Right">
-                                                    <Run Text="{Binding PrivateWorkingSetBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
-                                                    <Run Text=" private" />
-                                                </TextBlock>
-                                            </StackPanel>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding TopMemoryProcesses}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
+                                                        <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                                        <Run Text=" · " /><Run Text="{Binding CpuPercent, StringFormat={}{0:0.0}% CPU, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                                                    <TextBlock Text="{Binding MemoryMb, StringFormat={}{0:0} MB}"
+                                                               FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}" HorizontalAlignment="Right">
+                                                        <Run Text="{Binding PrivateWorkingSetBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                                        <Run Text=" private" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                     <!-- #413: commit-charge ranking (private bytes) - a separate failure mode from the
@@ -614,26 +628,28 @@
                             <TextBlock Text="Top commit consumers" Style="{StaticResource CardTitle}" />
                             <TextBlock Text="Ranked by private bytes - each process's contribution to the system commit charge. Commit exhaustion and physical-RAM exhaustion are different failures, so this can disagree with the working-set ranking above."
                                        Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
-                            <ItemsControl ItemsSource="{Binding TopCommitProcesses}" MaxHeight="240">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
-                                                    <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
-                                                </TextBlock>
-                                            </StackPanel>
-                                            <TextBlock Grid.Column="1" Text="{Binding PrivateBytes, Converter={StaticResource BytesToReadableConverter}}"
-                                                       FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding TopCommitProcesses}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
+                                                        <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Text="{Binding PrivateBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                                           FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                     <!-- Round 8 #32: top nonpaged/paged-pool consumers - re-presents the Processes tab's
@@ -644,27 +660,29 @@
                             <TextBlock Text="Top kernel-pool consumers" Style="{StaticResource CardTitle}" />
                             <TextBlock Text="A slow, sustained climb here (rather than a stable baseline) usually points to a leaking driver, not an app."
                                        Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
-                            <ItemsControl ItemsSource="{Binding TopPoolProcesses}" MaxHeight="240">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
-                                                    <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
-                                                    <Run Text=" · paged " /><Run Text="{Binding PagedPoolBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
-                                                </TextBlock>
-                                            </StackPanel>
-                                            <TextBlock Grid.Column="1" Text="{Binding NonpagedPoolBytes, Converter={StaticResource BytesToReadableConverter}}"
-                                                       FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding TopPoolProcesses}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
+                                                        <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                                        <Run Text=" · paged " /><Run Text="{Binding PagedPoolBytes, Converter={StaticResource BytesToReadableConverter}, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Text="{Binding NonpagedPoolBytes, Converter={StaticResource BytesToReadableConverter}}"
+                                                           FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                     <!-- #411: system-wide named-section (pagefile- or file-backed shared memory)
@@ -694,40 +712,42 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
-                            <ItemsControl ItemsSource="{Binding SharedMemorySections}" MaxHeight="260">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
-                                            <StackPanel>
-                                                <Grid>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
-                                                    <TextBlock Grid.Column="1" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold">
-                                                        <TextBlock.Style>
-                                                            <Style TargetType="TextBlock">
-                                                                <Setter Property="Text" Value="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}}" />
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding SizeBytes}" Value="{x:Null}">
-                                                                        <Setter Property="Text" Value="(size unknown)" />
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </TextBlock.Style>
+                            <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding SharedMemorySections}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Padding="10,8" Margin="0,0,0,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+                                                <StackPanel>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                                                        <TextBlock Grid.Column="1" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Text" Value="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}}" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding SizeBytes}" Value="{x:Null}">
+                                                                            <Setter Property="Text" Value="(size unknown)" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </Grid>
+                                                    <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
+                                                        <Run Text="{Binding HandleCount, StringFormat={}{0} handle(s), Mode=OneWay}" />
+                                                        <Run Text=" across: " />
+                                                        <Run Text="{Binding ProcessNames, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
                                                     </TextBlock>
-                                                </Grid>
-                                                <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap">
-                                                    <Run Text="{Binding HandleCount, StringFormat={}{0} handle(s), Mode=OneWay}" />
-                                                    <Run Text=" across: " />
-                                                    <Run Text="{Binding ProcessNames, Converter={StaticResource StringListJoinConverter}, Mode=OneWay}" />
-                                                </TextBlock>
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                 </StackPanel>
@@ -757,27 +777,29 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
-                            <ItemsControl ItemsSource="{Binding HandleLeakWatch}" MaxHeight="200">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
-                                                    <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
-                                                    <Run Text=" · slope " /><Run Text="{Binding LeakSlopeMbPerHour, StringFormat={}{0:0.00} MB/hr, Mode=OneWay}" />
-                                                </TextBlock>
-                                            </StackPanel>
-                                            <TextBlock Grid.Column="1" Text="{Binding HandleCount, StringFormat={}{0:N0} handles}"
-                                                       FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding HandleLeakWatch}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
+                                                        <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                                        <Run Text=" · slope " /><Run Text="{Binding LeakSlopeMbPerHour, StringFormat={}{0:0.00} MB/hr, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Text="{Binding HandleCount, StringFormat={}{0:N0} handles}"
+                                                           FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                     <!-- #404: GDI/USER object quota alerts - processes at/above 80% of the per-process
@@ -798,29 +820,31 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
-                            <ItemsControl ItemsSource="{Binding GdiUserQuotaWatch}" MaxHeight="200">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
-                                                    <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                            <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding GdiUserQuotaWatch}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
+                                                        <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}">
+                                                    <Run Text="{Binding GdiHandleCount, Mode=OneWay, StringFormat={}GDI {0:N0}}" />
+                                                    <Run Text=" · " />
+                                                    <Run Text="{Binding UserHandleCount, Mode=OneWay, StringFormat={}USER {0:N0}}" />
                                                 </TextBlock>
-                                            </StackPanel>
-                                            <TextBlock Grid.Column="1" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}">
-                                                <Run Text="{Binding GdiHandleCount, Mode=OneWay, StringFormat={}GDI {0:N0}}" />
-                                                <Run Text=" · " />
-                                                <Run Text="{Binding UserHandleCount, Mode=OneWay, StringFormat={}USER {0:N0}}" />
-                                            </TextBlock>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                     <!-- #409: working set vs private bytes divergence - a large gap means a meaningful
@@ -843,26 +867,28 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
-                            <ItemsControl ItemsSource="{Binding WorkingSetDivergenceWatch}" MaxHeight="200">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
-                                                    <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
-                                                </TextBlock>
-                                            </StackPanel>
-                                            <TextBlock Grid.Column="1" Text="{Binding WorkingSetPrivateGapBytes, Converter={StaticResource BytesToReadableConverter}, StringFormat={}{0} paged out}"
-                                                       FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding WorkingSetDivergenceWatch}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
+                                                        <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Text="{Binding WorkingSetPrivateGapBytes, Converter={StaticResource BytesToReadableConverter}, StringFormat={}{0} paged out}"
+                                                           FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                     <!-- #415: uptime-normalized leak growth summary - MB/day per flagged image name, next
@@ -894,38 +920,40 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
-                            <ItemsControl ItemsSource="{Binding LeakGrowthProjections}" MaxHeight="220">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Text="{Binding ImageName}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}" Text="{Binding RSquared, StringFormat=fit R² {0:0.00}}" />
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="1" HorizontalAlignment="Right">
-                                                <TextBlock Text="{Binding GrowthMbPerDay, StringFormat={}{0:0.0} MB/day}"
-                                                           FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" HorizontalAlignment="Right" Foreground="{DynamicResource WarningBrush}" />
-                                                <TextBlock FontSize="{StaticResource FontCaption}" HorizontalAlignment="Right" Foreground="{DynamicResource TextSecondaryBrush}">
-                                                    <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
-                                                            <Setter Property="Text" Value="{Binding HoursToCommitExhaustion, StringFormat=~{0:0} hrs to commit exhaustion (projected)}" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding HoursToCommitExhaustion}" Value="{x:Null}">
-                                                                    <Setter Property="Text" Value="No commit exhaustion projected at this rate" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
-                                            </StackPanel>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding LeakGrowthProjections}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding ImageName}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}" Text="{Binding RSquared, StringFormat=fit R² {0:0.00}}" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                                                    <TextBlock Text="{Binding GrowthMbPerDay, StringFormat={}{0:0.0} MB/day}"
+                                                               FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" HorizontalAlignment="Right" Foreground="{DynamicResource WarningBrush}" />
+                                                    <TextBlock FontSize="{StaticResource FontCaption}" HorizontalAlignment="Right" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="{Binding HoursToCommitExhaustion, StringFormat=~{0:0} hrs to commit exhaustion (projected)}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding HoursToCommitExhaustion}" Value="{x:Null}">
+                                                                        <Setter Property="Text" Value="No commit exhaustion projected at this rate" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                     <!-- #406: pinned leak-watch list - right-click a process in the Processes tab
@@ -999,27 +1027,29 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
-                            <ItemsControl ItemsSource="{Binding PageFaultAttributionRows}" MaxHeight="280">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Text="{Binding ProcessName}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
-                                                    <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
-                                                    <Run Text=" · peak " /><Run Text="{Binding PeakPageFaultsPerSec, StringFormat={}{0:0} faults/s, Mode=OneWay}" />
-                                                </TextBlock>
-                                            </StackPanel>
-                                            <TextBlock Grid.Column="1" Text="{Binding AvgPageFaultsPerSec, StringFormat={}{0:0} faults/s avg}"
-                                                       FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="280" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding PageFaultAttributionRows}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding ProcessName}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
+                                                        <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                                        <Run Text=" · peak " /><Run Text="{Binding PeakPageFaultsPerSec, StringFormat={}{0:0} faults/s, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Text="{Binding AvgPageFaultsPerSec, StringFormat={}{0:0} faults/s avg}"
+                                                           FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                 </StackPanel>
@@ -1124,29 +1154,31 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
-                            <ItemsControl ItemsSource="{Binding PoolTagGrowthRows}" MaxHeight="260">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock FontSize="{StaticResource FontStrong}" FontFamily="Consolas" FontWeight="SemiBold">
-                                                    <Run Text="{Binding Tag, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding Description, Mode=OneWay}" FontFamily="Segoe UI" FontWeight="Normal" />
-                                                </TextBlock>
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
-                                                    <Run Text="{Binding LikelyDriver, TargetNullValue=Unknown, Mode=OneWay}" />
-                                                    <Run Text=" · outstanding allocs " /><Run Text="{Binding OutstandingAllocDelta, StringFormat=+{0:N0}, Mode=OneWay}" />
-                                                </TextBlock>
-                                            </StackPanel>
-                                            <TextBlock Grid.Column="1" Text="{Binding TotalByteDelta, Converter={StaticResource BytesToReadableConverter}, StringFormat={}+{0}}"
-                                                       FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding PoolTagGrowthRows}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock FontSize="{StaticResource FontStrong}" FontFamily="Consolas" FontWeight="SemiBold">
+                                                        <Run Text="{Binding Tag, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding Description, Mode=OneWay}" FontFamily="Segoe UI" FontWeight="Normal" />
+                                                    </TextBlock>
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
+                                                        <Run Text="{Binding LikelyDriver, TargetNullValue=Unknown, Mode=OneWay}" />
+                                                        <Run Text=" · outstanding allocs " /><Run Text="{Binding OutstandingAllocDelta, StringFormat='{}{0:+#,0;-#,0;0}', Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Text="{Binding TotalByteDelta, Converter={StaticResource BytesToReadableConverter}, StringFormat={}+{0}}"
+                                                           FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource WarningBrush}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                     <!-- #424: loaded kernel module (driver) list, sorted by image size - lives here
@@ -1182,11 +1214,31 @@
                                     <DataGridTextColumn Header="Name" Binding="{Binding FileName}" Width="1.3*" />
                                     <DataGridTextColumn Header="Friendly name" Binding="{Binding FriendlyName, TargetNullValue=''}" Width="1.6*" />
                                     <DataGridTextColumn Header="Image size" Binding="{Binding ImageSizeBytes, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
-                                    <DataGridTextColumn Header="Base address" Width="120">
-                                        <DataGridTextColumn.Binding>
-                                            <Binding Path="BaseAddress" StringFormat="0x{0:X16}" />
-                                        </DataGridTextColumn.Binding>
-                                    </DataGridTextColumn>
+                                    <!-- Windows 11 24H2+ zeroes kernel module addresses for a caller without
+                                         SeDebugPrivilege enabled - a 0 is "not disclosed", not a real address. -->
+                                    <DataGridTemplateColumn Header="Base address" Width="120" SortMemberPath="BaseAddress">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text">
+                                                                <Setter.Value>
+                                                                    <Binding Path="BaseAddress" StringFormat="0x{0:X16}" />
+                                                                </Setter.Value>
+                                                            </Setter>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding BaseAddress}" Value="0">
+                                                                    <Setter Property="Text" Value="Unknown" />
+                                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                     <DataGridTextColumn Header="Path" Binding="{Binding FullPath}" Width="2.5*" />
                                 </DataGrid.Columns>
                             </DataGrid>
@@ -1221,38 +1273,40 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
-                            <ItemsControl ItemsSource="{Binding ObjectTypeCounts}" MaxHeight="320">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Text="{Binding TypeName}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
-                                                    <Run Text="handles " /><Run Text="{Binding TotalNumberOfHandles, StringFormat=N0, Mode=OneWay}" />
-                                                    <Run Text=" · high-water " /><Run Text="{Binding HighWaterNumberOfObjects, StringFormat=N0, Mode=OneWay}" />
+                            <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding ObjectTypeCounts}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding TypeName}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" />
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
+                                                        <Run Text="handles " /><Run Text="{Binding TotalNumberOfHandles, StringFormat=N0, Mode=OneWay}" />
+                                                        <Run Text=" · high-water " /><Run Text="{Binding HighWaterNumberOfObjects, StringFormat=N0, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Text="{Binding TotalNumberOfObjects, StringFormat={}{0:N0}}"
+                                                           FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsNearHighWaterMark}" Value="True">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
                                                 </TextBlock>
-                                            </StackPanel>
-                                            <TextBlock Grid.Column="1" Text="{Binding TotalNumberOfObjects, StringFormat={}{0:N0}}"
-                                                       FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsNearHighWaterMark}" Value="True">
-                                                                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                 </StackPanel>

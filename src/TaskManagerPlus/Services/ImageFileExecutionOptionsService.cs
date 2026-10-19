@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
 
@@ -44,7 +45,7 @@ public static class ImageFileExecutionOptionsService
                         if (exeKey is null) continue;
 
                         string? debugger = exeKey.GetValue("Debugger") as string;
-                        int? globalFlag = exeKey.GetValue("GlobalFlag") as int?;
+                        long? globalFlag = ParseGlobalFlag(exeKey.GetValue("GlobalFlag"));
                         silentMonitors.TryGetValue(exeName, out string? monitorProcess);
 
                         bool hasDebugger = !string.IsNullOrEmpty(debugger);
@@ -87,6 +88,24 @@ public static class ImageFileExecutionOptionsService
         }
 
         return result.OrderBy(e => e.ExecutableName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>GlobalFlag is a REG_DWORD when written with reg.exe, but gflags and .reg exports
+    /// commonly store it as a REG_SZ hex string ("0x02000000"), which the loader honours too - an
+    /// `as int?` read silently skipped that form. Null when absent or unparseable.</summary>
+    private static long? ParseGlobalFlag(object? raw)
+    {
+        switch (raw)
+        {
+            case int dword: return unchecked((uint)dword);
+            case long qword: return qword;
+            case string text:
+                text = text.Trim();
+                if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                    return long.TryParse(text[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out long hex) ? hex : null;
+                return long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long dec) ? dec : null;
+            default: return null;
+        }
     }
 
     /// <summary>Reads the whole SilentProcessExit tree once: exe name -> its MonitorProcess

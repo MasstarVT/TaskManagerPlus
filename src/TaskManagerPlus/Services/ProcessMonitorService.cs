@@ -506,12 +506,13 @@ public sealed class ProcessMonitorService : IDisposable
     }
 
     /// <summary>
-    /// Sums each process's GPU engine utilization (#36) - Task Manager's own "GPU" column reads
+    /// Each process's GPU engine utilization (#36) - Task Manager's own "GPU" column reads
     /// this same "GPU Engine" perf-counter category, since there's no other public API for
     /// per-process GPU usage. Instance names look like
     /// "pid_1234_luid_0x...0x..._phys_0_eng_0_engtype_3D" - a process can own several engine
-    /// instances at once (3D, Copy, VideoDecode, ...), summed here the same way Task Manager
-    /// totals them for its single GPU column. Unlike the static per-core CPU counters in
+    /// instances at once (3D, Copy, VideoDecode, ...), and like Task Manager's single GPU column
+    /// the process reports its busiest engine, not the sum (which could exceed 100% across
+    /// engines that run in parallel). Unlike the static per-core CPU counters in
     /// HardwareMonitorService, engine instances churn constantly as processes start/stop using
     /// the GPU, so counters are created lazily and kept only as long as their instance still
     /// exists; a newly-seen instance is skipped for one tick (same "prime before trusting a rate
@@ -549,7 +550,7 @@ public sealed class ProcessMonitorService : IDisposable
                 if (!match.Success || !int.TryParse(match.Groups[1].Value, out int pid)) continue;
 
                 double value = CounterSample.Calculate(previous, sample);
-                result[pid] = result.TryGetValue(pid, out var existing) ? existing + value : value;
+                result[pid] = result.TryGetValue(pid, out var existing) ? Math.Max(existing, value) : value;
             }
 
             foreach (var stale in _gpuEngineSamples.Keys.Where(k => !seen.Contains(k)).ToList())
@@ -775,6 +776,28 @@ public sealed class ProcessMonitorService : IDisposable
 
         _parentPidCache[pid] = parentPid;
         return parentPid;
+    }
+
+    /// <summary>True only when <paramref name="pid"/> is still running under <paramref name="name"/>
+    /// and, when one was captured, the same start time - so a PID reused while a confirmation
+    /// dialog sat open is never acted on. Anything unreadable counts as "can't confirm".</summary>
+    public static bool IsSameProcess(int pid, string name, DateTime? startTime)
+    {
+        try
+        {
+            using var proc = Process.GetProcessById(pid);
+            if (!string.Equals(proc.ProcessName, name, StringComparison.OrdinalIgnoreCase)) return false;
+            if (startTime is { } expected)
+            {
+                try { return proc.StartTime == expected; }
+                catch { return false; }
+            }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>Ends a single process.</summary>

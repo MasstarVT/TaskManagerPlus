@@ -699,25 +699,37 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         try
         {
             var current = await Task.Run(PoolTagInspectionService.ReadPoolTags);
-            var baselineByTag = _poolSnapshotBaseline.Tags.ToDictionary(t => t.Tag, StringComparer.Ordinal);
+
+            // The displayed tag string masks each byte's high bit and turns non-printable bytes into
+            // '.', so two distinct raw tags can share one string - sum both sides per displayed tag
+            // rather than assume it's unique (a duplicate key used to throw here).
+            static Dictionary<string, (long Paged, long Nonpaged, int Allocs)> SumByTag(IEnumerable<PoolTagDriverRow> rows) =>
+                rows.GroupBy(r => r.Tag, StringComparer.Ordinal).ToDictionary(
+                    g => g.Key,
+                    g => (g.Sum(r => r.PagedBytes), g.Sum(r => r.NonpagedBytes), g.Sum(r => r.OutstandingAllocs)),
+                    StringComparer.Ordinal);
+            var baselineByTag = SumByTag(_poolSnapshotBaseline.Tags);
+            var driverCache = PoolTagDriverCacheService.Load();
 
             var growth = new List<PoolTagGrowth>();
-            foreach (var now in current)
+            foreach (var (tag, now) in SumByTag(current))
             {
-                baselineByTag.TryGetValue(now.Tag, out var before);
-                long pagedDelta = now.PagedBytes - (before?.PagedBytes ?? 0);
-                long nonpagedDelta = now.NonpagedBytes - (before?.NonpagedBytes ?? 0);
-                int allocDelta = now.OutstandingAllocs - (before?.OutstandingAllocs ?? 0);
-                if (pagedDelta == 0 && nonpagedDelta == 0) continue;
+                baselineByTag.TryGetValue(tag, out var before);
+                long pagedDelta = now.Paged - before.Paged;
+                long nonpagedDelta = now.Nonpaged - before.Nonpaged;
+                // Growth only - a shrinking tag isn't a leak candidate.
+                if (pagedDelta + nonpagedDelta <= 0) continue;
 
                 growth.Add(new PoolTagGrowth
                 {
-                    Tag = now.Tag,
-                    LikelyDriver = now.LikelyDriver,
-                    Description = now.Description ?? PoolTagInspectionService.LookupDescription(now.Tag),
+                    Tag = tag,
+                    // ReadPoolTags never fills LikelyDriver - it comes from the attribution cache,
+                    // the same source the pool tag table above uses.
+                    LikelyDriver = driverCache.TagToDriver.TryGetValue(tag, out var driver) ? driver : null,
+                    Description = PoolTagInspectionService.LookupDescription(tag),
                     PagedByteDelta = pagedDelta,
                     NonpagedByteDelta = nonpagedDelta,
-                    OutstandingAllocDelta = allocDelta,
+                    OutstandingAllocDelta = now.Allocs - before.Allocs,
                 });
             }
 
@@ -726,7 +738,7 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
                 PoolTagGrowthRows.Add(g);
 
             var elapsed = DateTime.UtcNow - _poolSnapshotBaseline.CapturedAtUtc;
-            PoolSnapshotStatusText = $"Compared against the baseline from {elapsed.TotalMinutes:0.#} minute(s) ago. Showing tags with any change, largest growth first.";
+            PoolSnapshotStatusText = $"Compared against the baseline from {elapsed.TotalMinutes:0.#} minute(s) ago. Showing tags that grew, largest growth first.";
         }
         finally
         {

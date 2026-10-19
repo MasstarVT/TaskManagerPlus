@@ -53,7 +53,10 @@ public static class KernelModuleService
             IntPtr buffer = Marshal.AllocHGlobal(size);
             try
             {
-                int status = NtQuerySystemInformation(SystemModuleInformation, buffer, size, out int returnLength);
+                // 24H2+ reports every ImageBase as 0 without SeDebugPrivilege enabled - see
+                // HandleInspectionService.WithDebugPrivilege. A 0 that survives shows as Unknown.
+                int returnLength = 0;
+                int status = HandleInspectionService.WithDebugPrivilege(() => NtQuerySystemInformation(SystemModuleInformation, buffer, size, out returnLength));
                 if (status == StatusInfoLengthMismatch)
                 {
                     size = returnLength > size ? returnLength + 0x10000 : size * 2;

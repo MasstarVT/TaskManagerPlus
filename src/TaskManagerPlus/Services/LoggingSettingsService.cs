@@ -19,7 +19,7 @@ public static class LoggingSettingsService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var settings = JsonSerializer.Deserialize<LoggingSettings>(json);
-                if (settings is not null) return settings;
+                if (settings is not null) return Sanitize(settings);
             }
         }
         catch
@@ -27,6 +27,19 @@ public static class LoggingSettingsService
             // Corrupt/unreadable settings file - fall back to defaults.
         }
         return LoggingSettings.Defaults;
+    }
+
+    /// <summary>A hand-edited or damaged file can hold values the UI would never write: a
+    /// non-positive interval throws from DispatcherTimer.Interval (or ticks continuously) while the
+    /// main window is being built, and AutoCleanupDays &lt;= 0 deletes every rotated log part at
+    /// launch. Out-of-range values fall back to the same choices the setters allow.</summary>
+    private static LoggingSettings Sanitize(LoggingSettings settings)
+    {
+        if (settings.SampleIntervalSeconds is not (1 or 5 or 10)) settings.SampleIntervalSeconds = 1;
+        if (settings.AutoCleanupDays < 1) settings.AutoCleanupDays = LoggingSettings.Defaults.AutoCleanupDays;
+        // No UI sets this; the upper bound keeps the in-memory buffer (one row per sample) sane.
+        settings.RollingBufferMinutes = Math.Clamp(settings.RollingBufferMinutes, 1, 1440);
+        return settings;
     }
 
     public static void Save(LoggingSettings settings)
