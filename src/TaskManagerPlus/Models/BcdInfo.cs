@@ -122,7 +122,7 @@ public sealed class BootStatusPolicyInfo
 
     public bool DisablesStartupRepair =>
         (BootStatusPolicy?.Equals("IgnoreAllFailures", StringComparison.OrdinalIgnoreCase) == true)
-        && (RecoveryEnabled?.Equals("No", StringComparison.OrdinalIgnoreCase) == true);
+        && RecoveryEnabled is { } recovery && Services.BcdInspectorService.IsBcdOffValue(recovery); // localized "No" too
 
     public string PolicyText => string.IsNullOrWhiteSpace(BootStatusPolicy) ? "Not set (Windows default - display all failures)" : BootStatusPolicy!;
     public string RecoveryText => string.IsNullOrWhiteSpace(RecoveryEnabled) ? "Not set (Windows default - Yes)" : RecoveryEnabled!;
