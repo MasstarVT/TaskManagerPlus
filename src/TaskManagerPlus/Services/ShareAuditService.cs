@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Management;
+using System.Security.Principal;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -32,9 +33,28 @@ public static class ShareAuditService
         public bool HasWeakNtfs => NtfsWeakGrants.Count > 0;
     }
 
+    // Everyone, Authenticated Users. Get-SmbShareAccess reports AccountName in the OS language
+    // ("Jeder", "NT-AUTORITÄT\Authentifizierte Benutzer"), so the name is resolved to its SID;
+    // the English names are only the fallback when that lookup fails.
+    private static readonly string[] WeakShareSids = { "S-1-1-0", "S-1-5-11" };
     private static readonly string[] WeakSharePrincipals = { "Everyone", "Authenticated Users" };
 
-    private static bool IsWeakPrincipal(string account) => WeakSharePrincipals.Any(p => account.Contains(p, StringComparison.OrdinalIgnoreCase));
+    // HasWeakShareAccess is re-read by the findings pass and the UI; a domain name lookup is a
+    // round trip to the DC, so each name is resolved once.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> WeakPrincipalCache = new(StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsWeakPrincipal(string account) => WeakPrincipalCache.GetOrAdd(account, static name =>
+    {
+        try
+        {
+            string sid = new NTAccount(name).Translate(typeof(SecurityIdentifier)).Value;
+            return WeakShareSids.Contains(sid, StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return WeakSharePrincipals.Any(p => name.Contains(p, StringComparison.OrdinalIgnoreCase));
+        }
+    });
 
     private static bool IsAllowWriteRight(ShareAccessEntry a) =>
         a.AccessControlType.Equals("Allow", StringComparison.OrdinalIgnoreCase) &&

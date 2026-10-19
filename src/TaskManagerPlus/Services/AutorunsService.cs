@@ -1000,16 +1000,23 @@ public static class AutorunsService
                             if (string.IsNullOrWhiteSpace(driver)) continue;
 
                             // Print processor DLLs live under a per-architecture prtprocs
-                            // subfolder, not directly in System32 - the folder name follows the
-                            // environment subkey's own architecture naming.
-                            var archFolder = envName.Contains("x64", StringComparison.OrdinalIgnoreCase) ? "w64x86"
-                                : envName.Contains("Itanium", StringComparison.OrdinalIgnoreCase) ? "ia64"
-                                : "w32x86";
-                            var resolved = System.IO.Path.IsPathRooted(driver)
-                                ? driver
-                                : System.IO.Path.Combine(Environment.SystemDirectory, "spool", "prtprocs", archFolder, driver);
+                            // subfolder, not directly in System32: "Windows x64" -> x64,
+                            // "Windows ARM64" -> arm64, "Windows IA64" -> ia64, "Windows NT x86" ->
+                            // W32X86 (spool\prtprocs\x64\winprint.dll on every x64 install).
+                            var archFolder = envName.Contains("x64", StringComparison.OrdinalIgnoreCase) ? "x64"
+                                : envName.Contains("ARM64", StringComparison.OrdinalIgnoreCase) ? "arm64"
+                                : envName.Contains("IA64", StringComparison.OrdinalIgnoreCase) || envName.Contains("Itanium", StringComparison.OrdinalIgnoreCase) ? "ia64"
+                                : "W32X86";
+                            bool guessed = !System.IO.Path.IsPathRooted(driver);
+                            var resolved = guessed
+                                ? System.IO.Path.Combine(Environment.SystemDirectory, "spool", "prtprocs", archFolder, driver)
+                                : driver;
                             var location = $@"HKLM\{keyPath}\{envName}\Print Processors\{procName}\Driver";
-                            AddSpoolerEntry(items, findings, "Print Processor", procName, driver, resolved, location);
+                            // Another architecture's environment (e.g. "Windows NT x86" on x64) can
+                            // register a processor whose DLL is never installed locally - a path this
+                            // code guessed and didn't find stays Unknown without a finding.
+                            AddSpoolerEntry(items, findings, "Print Processor", procName, driver, resolved, location,
+                                flagMissing: !guessed);
                         }
                         catch
                         {
@@ -1058,9 +1065,11 @@ public static class AutorunsService
         }
     }
 
-    private static void AddSpoolerEntry(List<AutorunEntry> items, List<SecurityFinding> findings, string category, string name, string rawDriver, string resolvedPath, string location)
+    private static void AddSpoolerEntry(List<AutorunEntry> items, List<SecurityFinding> findings, string category, string name, string rawDriver, string resolvedPath, string location,
+        bool flagMissing = true)
     {
-        var status = System.IO.File.Exists(resolvedPath) ? SignatureCheckService.GetStatus(resolvedPath) : "Unknown";
+        bool exists = System.IO.File.Exists(resolvedPath);
+        var status = exists ? SignatureCheckService.GetStatus(resolvedPath) : "Unknown";
         var entry = new AutorunEntry
         {
             Category = category,
@@ -1075,6 +1084,7 @@ public static class AutorunsService
         items.Add(entry);
 
         if (status.Equals("Signed", StringComparison.OrdinalIgnoreCase)) return;
+        if (!exists && !flagMissing) return;
 
         findings.Add(new SecurityFinding
         {
@@ -2555,6 +2565,35 @@ public static class AutorunsService
     // report for why (Implemented-partially).
     private static readonly string[] ScheduledTaskScriptHosts = { "powershell", "wscript", "cscript", "mshta", "rundll32" };
 
+    private static readonly Lazy<string?> CurrentUserSid = new(() =>
+    {
+        try
+        {
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            return identity.User?.Value;
+        }
+        catch { return null; }
+    });
+
+    /// <summary>True when a task principal is a specific user account (S-1-5-21-...) other than
+    /// the one running this app. Groups (Users, INTERACTIVE) run as whoever is logged on, so they
+    /// don't count; an unresolvable name doesn't either.</summary>
+    private static bool IsOtherUserAccount(string runAs)
+    {
+        if (runAs.Length == 0 || CurrentUserSid.Value is not { } me) return false;
+        string sid = runAs;
+        if (!runAs.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                sid = new System.Security.Principal.NTAccount(runAs)
+                    .Translate(typeof(System.Security.Principal.SecurityIdentifier)).Value;
+            }
+            catch { return false; }
+        }
+        return sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase) && !sid.Equals(me, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static void AddScheduledTaskSecurityFindings(List<SecurityFinding> findings)
     {
         List<ScheduledTaskXmlInfo> tasks;
@@ -2579,15 +2618,6 @@ public static class AutorunsService
                     || task.FolderPath.StartsWith(@"\Microsoft\", StringComparison.OrdinalIgnoreCase);
                 bool isSystem = task.RunAsUser.Equals("S-1-5-18", StringComparison.OrdinalIgnoreCase)
                     || task.RunAsUser.Contains("SYSTEM", StringComparison.OrdinalIgnoreCase);
-                // A user-writable binary only crosses a privilege boundary when the task runs as
-                // someone more privileged than the user who can rewrite it.
-                bool runsPrivileged = isSystem
-                    || task.RunAsUser.Equals("S-1-5-19", StringComparison.OrdinalIgnoreCase)
-                    || task.RunAsUser.Equals("S-1-5-20", StringComparison.OrdinalIgnoreCase)
-                    || task.RunAsUser.Equals("S-1-5-32-544", StringComparison.OrdinalIgnoreCase)
-                    || task.RunAsUser.Contains("LOCAL SERVICE", StringComparison.OrdinalIgnoreCase)
-                    || task.RunAsUser.Contains("NETWORK SERVICE", StringComparison.OrdinalIgnoreCase)
-                    || task.RunAsUser.Contains("Administrators", StringComparison.OrdinalIgnoreCase);
                 bool isScriptHost = ScheduledTaskScriptHosts.Any(h => task.ActionCommand.Contains(h, StringComparison.OrdinalIgnoreCase));
 
                 var actionExePath = StartupManagerService.ExtractPath(task.ActionCommand);
@@ -2595,12 +2625,27 @@ public static class AutorunsService
                 bool isUserWritable = !string.IsNullOrWhiteSpace(expandedActionPath) &&
                     userWritableRoots.Any(root => !string.IsNullOrWhiteSpace(root) && expandedActionPath.StartsWith(root, StringComparison.OrdinalIgnoreCase));
 
+                // A user-writable binary only crosses a privilege boundary when the task runs as
+                // someone more privileged than the user who can rewrite it: a service account,
+                // Administrators, "run with highest privileges" (elevated for an admin account -
+                // the classic UAC bypass), or another user's account.
+                bool highestAvailable = task.RunLevel.Equals("HighestAvailable", StringComparison.OrdinalIgnoreCase);
+                bool runsPrivileged = isSystem
+                    || task.RunAsUser.Equals("S-1-5-19", StringComparison.OrdinalIgnoreCase)
+                    || task.RunAsUser.Equals("S-1-5-20", StringComparison.OrdinalIgnoreCase)
+                    || task.RunAsUser.Equals("S-1-5-32-544", StringComparison.OrdinalIgnoreCase)
+                    || task.RunAsUser.Contains("LOCAL SERVICE", StringComparison.OrdinalIgnoreCase)
+                    || task.RunAsUser.Contains("NETWORK SERVICE", StringComparison.OrdinalIgnoreCase)
+                    || task.RunAsUser.Contains("Administrators", StringComparison.OrdinalIgnoreCase)
+                    || highestAvailable
+                    || (isUserWritable && IsOtherUserAccount(task.RunAsUser));
+
                 var issues = new List<string>();
                 if (task.IsHidden) issues.Add("is hidden from Task Scheduler's default view (Hidden flag set)");
                 if (!underMicrosoftWindows) issues.Add($"is registered outside \\Microsoft\\Windows\\ (folder: {task.FolderPath})");
                 if (isScriptHost) issues.Add($"runs a script host in its action (\"{task.ActionCommand}\")");
                 if (isUserWritable) issues.Add(runsPrivileged
-                    ? $"its action executable lives in a user-writable location (\"{expandedActionPath}\") but runs as {task.RunAsUser}"
+                    ? $"its action executable lives in a user-writable location (\"{expandedActionPath}\") but runs as {(task.RunAsUser.Length > 0 ? task.RunAsUser : "its registering user")}{(highestAvailable ? " with highest privileges" : string.Empty)}"
                     : $"its action executable lives in a user-writable location (\"{expandedActionPath}\")");
                 if (isSystem && !underMicrosoft) issues.Add("runs as SYSTEM but its registered folder isn't under \\Microsoft\\");
 
@@ -3099,7 +3144,25 @@ public static class AutorunsService
     // "expensive, so make it explicit" discipline this app already uses for Scheduled Tasks/
     // browser extensions/shell extensions and the #818 netsh Winsock catalog walk.
     // Compared against the account part of an ACE's principal ("BUILTIN\Users" -> "Users").
-    private static readonly HashSet<string> WeakAclPrincipalNames = new(StringComparer.OrdinalIgnoreCase) { "Users", "Authenticated Users", "Everyone" };
+    // icacls prints names in the OS language ("VORDEFINIERT\Benutzer", "Jeder"), so the local
+    // names of the same well-known SIDs are added to the English ones.
+    private static readonly Lazy<HashSet<string>> WeakAclPrincipalNames = new(() =>
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Users", "Authenticated Users", "Everyone" };
+        foreach (var sid in new[] { System.Security.Principal.WellKnownSidType.BuiltinUsersSid,
+                                    System.Security.Principal.WellKnownSidType.AuthenticatedUserSid,
+                                    System.Security.Principal.WellKnownSidType.WorldSid })
+        {
+            try
+            {
+                string account = new System.Security.Principal.SecurityIdentifier(sid, null)
+                    .Translate(typeof(System.Security.Principal.NTAccount)).Value;
+                names.Add(account[(account.LastIndexOf('\\') + 1)..]);
+            }
+            catch { /* untranslatable here - the English name still matches */ }
+        }
+        return names;
+    });
 
     /// <summary>Quotes a path for icacls. A trailing backslash (a drive root) would escape the
     /// closing quote - icacls then reads "C:\" as C:" and fails - so it's doubled.</summary>
@@ -3132,7 +3195,7 @@ public static class AutorunsService
 
             string principal = line[..separator];
             string account = principal[(principal.LastIndexOf('\\') + 1)..];
-            if (!WeakAclPrincipalNames.Contains(account)) continue;
+            if (!WeakAclPrincipalNames.Value.Contains(account)) continue;
 
             // icacls prints rights as parenthesised groups, either a shorthand ("(F)") or a
             // comma-separated list of specific rights ("(CI)(WD,AD,WEA,WA)", "(RX,W)"). Deny ACEs

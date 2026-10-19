@@ -28,6 +28,11 @@ public sealed class ScheduledTaskXmlInfo
     /// (e.g. "S-1-5-18" for SYSTEM), a DOMAIN\user account name, or a well-known name like "SYSTEM".</summary>
     public string RunAsUser { get; init; } = string.Empty;
 
+    /// <summary>Raw &lt;RunLevel&gt; text from the same Principal - "HighestAvailable" (runs
+    /// elevated when the account is an administrator) or "LeastPrivilege"; empty when absent
+    /// (Task Scheduler's default is LeastPrivilege).</summary>
+    public string RunLevel { get; init; } = string.Empty;
+
     /// <summary>Every &lt;Exec&gt; action's Command + Arguments, joined with " ; " for a task with
     /// multiple actions - empty for a task with no Exec action at all (e.g. a COM handler action).</summary>
     public string ActionCommand { get; init; } = string.Empty;

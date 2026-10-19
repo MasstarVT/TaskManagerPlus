@@ -55,8 +55,8 @@ public static class SecurityEvidenceBundleService
 
             File.WriteAllText(Path.Combine(folder, "README.txt"), readme.ToString());
 
-            try { Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true }); }
-            catch { /* best-effort - the bundle itself is already built either way */ }
+            // Best-effort and unelevated - the bundle itself is already built either way.
+            SafeLaunchService.RevealInExplorer(folder);
 
             return (true, folder, null);
         }
@@ -72,7 +72,8 @@ public static class SecurityEvidenceBundleService
 /// other services: EventTimelineService (the unified timeline), WerReportService (crash report
 /// copies), EventLogService (the minidump list), EventKnowledgeBaseService (KB explanations for the
 /// top signatures), and EventLogExplorerService (the actual .evtx exports). Produces a timestamped
-/// folder under AppPaths.GetPath("EvidenceBundles") - a plain folder, not a .zip: item #200 allows
+/// folder under %ProgramData%\TaskManagerPlus\EvidenceBundles (see CreateBundleFolder) - a plain
+/// folder, not a .zip: item #200 allows
 /// either, and a folder is the simpler deliverable with nothing extra to verify (System.IO.
 /// Compression.ZipFile would be a one-line wrap around the finished folder if a caller ever wants
 /// one, but nothing in this app currently needs it). Every sub-step is wrapped independently and
@@ -139,10 +140,17 @@ public sealed class EventLogEvidenceBundleService
         return new EvidenceBundleResult { FolderPath = folder, Steps = steps };
     }
 
+    /// <summary>The bundle is written by elevated tools (wevtutil, msinfo32, dxdiag) and elevated
+    /// copies of admin-only files (Report.wer, minidumps), so it goes in AdminDataPaths' admin-only
+    /// area rather than the user-writable settings folder, where a planted junction would redirect
+    /// those writes. The user can still read (and attach) everything in it.</summary>
     private static string CreateBundleFolder()
     {
-        string root = AppPaths.GetPath("EvidenceBundles");
+        string root = AdminDataPaths.TryGetArea("EvidenceBundles", out string? error)
+            ?? throw new InvalidOperationException($"couldn't prepare a protected folder for the bundle ({error})");
         string folder = Path.Combine(root, $"Bundle-{DateTime.Now:yyyyMMdd-HHmmss}");
+        for (int n = 2; Directory.Exists(folder); n++)
+            folder = Path.Combine(root, $"Bundle-{DateTime.Now:yyyyMMdd-HHmmss}-{n}");
         Directory.CreateDirectory(folder);
         return folder;
     }
@@ -316,7 +324,7 @@ public sealed class EventLogEvidenceBundleService
         string outPath = Path.Combine(folder, "msinfo32.txt");
         try
         {
-            var psi = new ProcessStartInfo("msinfo32.exe", $"/report \"{outPath}\"") { UseShellExecute = false, CreateNoWindow = true };
+            var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "msinfo32.exe"), $"/report \"{outPath}\"") { UseShellExecute = false, CreateNoWindow = true };
             using var proc = Process.Start(psi);
             if (proc is null) return new EvidenceBundleStepResult { StepName = stepName, Succeeded = false, Detail = "Couldn't start msinfo32.exe." };
 
@@ -341,7 +349,7 @@ public sealed class EventLogEvidenceBundleService
         string outPath = Path.Combine(folder, "dxdiag.txt");
         try
         {
-            var psi = new ProcessStartInfo("dxdiag.exe", $"/t \"{outPath}\"") { UseShellExecute = false, CreateNoWindow = true };
+            var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "dxdiag.exe"), $"/t \"{outPath}\"") { UseShellExecute = false, CreateNoWindow = true };
             using var proc = Process.Start(psi);
             if (proc is null) return new EvidenceBundleStepResult { StepName = stepName, Succeeded = false, Detail = "Couldn't start dxdiag.exe." };
 

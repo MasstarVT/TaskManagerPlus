@@ -52,10 +52,13 @@ public static class ScrubRulesService
                 if (loaded is not null)
                 {
                     // Valid JSON can still carry "Rules": null, null rows, or nulls in the required
-                    // strings (System.Text.Json doesn't enforce non-null) - drop those rows only.
-                    loaded.Rules = (loaded.Rules ?? new List<ScrubRule>())
+                    // strings (System.Text.Json doesn't enforce non-null) - drop those rows only,
+                    // and keep a copy of the file before a save writes the set back without them.
+                    var rawRules = loaded.Rules ?? new List<ScrubRule>();
+                    loaded.Rules = rawRules
                         .Where(r => r is not null && r.Id is not null && r.Label is not null && r.PlaceholderPrefix is not null)
                         .ToList();
+                    if (loaded.Rules.Count != rawRules.Count) AppPaths.MarkUnreadable(SettingsPath);
                     var existingKinds = loaded.Rules.Where(r => r.IsBuiltIn).Select(r => r.Kind).ToHashSet();
                     var missing = BuiltInRules().Where(b => !existingKinds.Contains(b.Kind)).ToList();
                     if (missing.Count > 0)
@@ -71,8 +74,9 @@ public static class ScrubRulesService
                 // Corrupt/unreadable (or transiently locked) file - fall through to built-ins.
             }
 
-            // Built-ins for this session only, never saved over the existing file: it may hold the
-            // user's custom redaction rules, and overwriting it would silently stop redacting them.
+            // Built-ins for this session only. The file may hold the user's custom redaction rules,
+            // so a later Save (e.g. "also redact this text") first keeps a copy of it.
+            AppPaths.MarkUnreadable(SettingsPath);
             return new ScrubRuleSet { Rules = BuiltInRules() };
         }
 
@@ -86,11 +90,10 @@ public static class ScrubRulesService
         try
         {
             Directory.CreateDirectory(AppPaths.SettingsDirectory);
+            if (!AppPaths.PreserveUnreadable(SettingsPath)) return;
             var json = JsonSerializer.Serialize(set, new JsonSerializerOptions { WriteIndented = true });
             // Write-then-rename so an interrupted save can't leave a truncated file behind.
-            string tempPath = SettingsPath + ".tmp";
-            File.WriteAllText(tempPath, json);
-            File.Move(tempPath, SettingsPath, overwrite: true);
+            AppPaths.WriteAllTextAtomic(SettingsPath, json);
         }
         catch
         {

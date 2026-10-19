@@ -132,6 +132,19 @@
                     </TextBlock.Style>
                 </TextBlock>
                 <ItemsControl ItemsSource="{Binding ScrubResults}" ItemTemplate="{StaticResource ScrubResultRowTemplate}" />
+                <!-- Files the scrub can't cover are left out, never shipped unscrubbed. -->
+                <TextBlock Text="{Binding ScrubSkippedText}" TextWrapping="Wrap" Margin="0,8,0,0" FontSize="{StaticResource FontBody}"
+                           Foreground="{DynamicResource WarningBrush}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ScrubSkippedText}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
 
                 <!-- #985: "also redact this text" - a simple type-or-paste-and-add row, not a full
                      text-selection UI over the preview. -->

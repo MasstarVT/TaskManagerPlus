@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 
 namespace TaskManagerPlus.Services;
@@ -21,23 +20,32 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class ExternalLinkService
 {
-    /// <summary>Opens a URL or local file path in the OS's default handler. Best-effort - a
-    /// missing browser association or a malformed URL just means nothing happens, not a crash.
-    /// Only an absolute http/https URL or an existing local .html/.htm file is accepted: DocsUrl
-    /// comes from user-writable rule packs, and ShellExecute from this elevated process would
-    /// otherwise run any executable path written there with admin rights.</summary>
+    /// <summary>Opens a URL or local file path with the user's default handler, unelevated (through
+    /// SafeLaunchService - an elevated ShellExecute resolves the browser through HKCU associations
+    /// any unelevated process can rewrite). Only an absolute http/https URL or an existing local
+    /// .html/.htm file is accepted: DocsUrl comes from user-writable rule packs. False when nothing
+    /// was opened.</summary>
     public static bool TryOpen(string urlOrPath)
     {
         if (string.IsNullOrWhiteSpace(urlOrPath)) return false;
-        if (!IsWebUrl(urlOrPath) && !IsLocalHtmlFile(urlOrPath)) return false;
+        if (IsWebUrl(urlOrPath)) return SafeLaunchService.OpenUrl(urlOrPath);
+        return IsLocalHtmlFile(urlOrPath) && SafeLaunchService.OpenDocument(urlOrPath);
+    }
+
+    /// <summary>Opens an http/https URL unelevated; when that isn't possible, copies it to the
+    /// clipboard instead. Null when the browser was asked to open it, otherwise the text to show
+    /// the user.</summary>
+    public static string? OpenUrlOrCopy(string url)
+    {
+        if (IsWebUrl(url) && SafeLaunchService.OpenUrl(url)) return null;
         try
         {
-            Process.Start(new ProcessStartInfo(urlOrPath) { UseShellExecute = true });
-            return true;
+            System.Windows.Clipboard.SetText(url);
+            return $"Couldn't open your browser, so the link was copied to the clipboard: {url}";
         }
         catch
         {
-            return false;
+            return $"Couldn't open your browser. The link is: {url}";
         }
     }
 

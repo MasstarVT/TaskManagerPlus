@@ -774,7 +774,8 @@ public sealed class SecurityViewModel : ObservableObject
                 return;
             }
 
-            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{entry.ResolvedPath}\"") { UseShellExecute = true });
+            if (!SafeLaunchService.RevealInExplorer(entry.ResolvedPath))
+                StatusMessage = "Couldn't open the containing folder in Explorer.";
         }
         catch (Exception ex)
         {
@@ -884,14 +885,9 @@ public sealed class SecurityViewModel : ObservableObject
     private void LookUpHash()
     {
         if (string.IsNullOrWhiteSpace(HashResultSha256)) return;
-        try
-        {
-            Process.Start(new ProcessStartInfo($"https://www.virustotal.com/gui/search/{HashResultSha256}") { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Couldn't open browser: {ex.Message}";
-        }
+        // Opened unelevated - see SafeLaunchService.
+        if (ExternalLinkService.OpenUrlOrCopy($"https://www.virustotal.com/gui/search/{HashResultSha256}") is { } problem)
+            StatusMessage = problem;
     }
 
     /// <summary>#843: Mark of the Web / Zone.Identifier for the selected entry's file - a small
@@ -1454,7 +1450,9 @@ public sealed class SecurityViewModel : ObservableObject
         try
         {
             string path = HostsFileAudit?.HostsPath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"drivers\etc\hosts");
-            Process.Start(new ProcessStartInfo("notepad.exe", $"\"{path}\"") { UseShellExecute = true });
+            // System32's Notepad by full path, elevated (the hosts file is admin-only to edit).
+            if (!SafeLaunchService.OpenInNotepad(path))
+                HostsFileScanStatus = $"Couldn't open Notepad on {path}.";
         }
         catch (Exception ex)
         {
@@ -1593,7 +1591,9 @@ public sealed class SecurityViewModel : ObservableObject
     {
         try
         {
-            Process.Start(new ProcessStartInfo("certlm.msc") { UseShellExecute = true });
+            // System32\mmc.exe with System32\certlm.msc - no .msc file association involved.
+            if (!SafeLaunchService.OpenSnapIn("certlm.msc"))
+                CertificateScanStatus = "Couldn't open Certificate Manager (certlm.msc).";
         }
         catch (Exception ex)
         {
@@ -2048,7 +2048,7 @@ public sealed class SecurityViewModel : ObservableObject
         }
 
         var confirm = MessageBox.Show(
-            $"Move \"{entry.ResolvedPath}\" to a timestamped quarantine folder under this app's own settings folder?\n\nThe file is MOVED, never deleted - use \"Undo\" in the action journal below to move it back.",
+            $"Move \"{entry.ResolvedPath}\" to a timestamped quarantine folder under {Path.Combine(AdminDataPaths.RootPath, "Quarantine")} (admin-only)?\n\nThe file is MOVED, never deleted - use \"Undo\" in the action journal below to move it back.",
             "Quarantine this file", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
@@ -2150,14 +2150,8 @@ public sealed class SecurityViewModel : ObservableObject
     private void OpenSecondOpinionTool(SecondOpinionTool? tool)
     {
         if (tool is null) return;
-        try
-        {
-            Process.Start(new ProcessStartInfo(tool.Url) { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Couldn't open browser: {ex.Message}";
-        }
+        if (ExternalLinkService.OpenUrlOrCopy(tool.Url) is { } problem)
+            StatusMessage = problem;
     }
 
     /// <summary>#900: writes out only what's ALREADY been loaded/computed this session - never

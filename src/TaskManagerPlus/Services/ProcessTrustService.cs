@@ -47,7 +47,10 @@ public static class ProcessTrustService
             // explorer.exe's home is %SystemRoot% itself, not System32.
             bool underSystemDir = IsUnderSystemDirectory(filePath)
                 || (expected == "explorer" && IsWindowsDirectoryExplorer(filePath));
-            var sig = SignatureCheckService.GetResult(filePath);
+            // Runs per process per tick on the sampling thread: the cached result or Unknown (with a
+            // background verify queued) - never a synchronous WinVerifyTrust here. Unknown in a
+            // system directory isn't flagged below, and the outside-System32 flag doesn't need it.
+            var sig = SignatureCheckService.GetResultOrQueue(filePath);
             // Windows' own system binaries are catalog-signed (no embedded cert, so no CN to read);
             // in a system directory that is the normal Microsoft shape, not a missing signature.
             bool microsoftSigned = sig.Verification == SignatureVerification.SignedCatalog

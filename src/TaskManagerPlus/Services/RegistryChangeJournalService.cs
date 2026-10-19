@@ -281,15 +281,20 @@ public static class RegistryChangeJournalService
             if (!File.Exists(FilePath)) return new List<RegistryChangeEntry>();
             string json = File.ReadAllText(FilePath);
             // Valid JSON can still carry null elements or null strings; drop those rows so no
-            // consumer (MarkUndone's e.Id, FullKeyText, Undo) can throw on them.
-            var entries = (JsonSerializer.Deserialize<List<RegistryChangeEntry>>(json) ?? new List<RegistryChangeEntry>())
+            // consumer (MarkUndone's e.Id, FullKeyText, Undo) can throw on them - and keep a copy
+            // of the file before the next save writes the history back without them.
+            var parsed = JsonSerializer.Deserialize<List<RegistryChangeEntry>>(json);
+            var entries = (parsed ?? new List<RegistryChangeEntry>())
                 .Where(e => e is not null && e.Hive is not null && e.SubKeyPath is not null && e.ValueName is not null && e.ValueKind is not null)
                 .ToList();
+            if (parsed is null || entries.Count != parsed.Count) AppPaths.MarkUnreadable(FilePath);
             foreach (var e in entries) e.IsVerified = Verify(e);
             return entries;
         }
         catch
         {
+            // Unreadable: empty for now, but the next save keeps a copy of the file first.
+            AppPaths.MarkUnreadable(FilePath);
             return new List<RegistryChangeEntry>();
         }
     }
@@ -299,12 +304,11 @@ public static class RegistryChangeJournalService
         try
         {
             Directory.CreateDirectory(AppPaths.SettingsDirectory);
+            if (!AppPaths.PreserveUnreadable(FilePath)) return;
             // #1026: write-to-temp-then-rename instead of truncating the real file in place - a
             // crash/power loss mid-write would otherwise leave partial JSON, which LoadHistoryUnlocked
             // silently degrades to an empty history, permanently destroying the whole undo record.
-            string tempPath = FilePath + ".tmp";
-            File.WriteAllText(tempPath, JsonSerializer.Serialize(history, JsonOptions));
-            File.Move(tempPath, FilePath, overwrite: true);
+            AppPaths.WriteAllTextAtomic(FilePath, JsonSerializer.Serialize(history, JsonOptions));
         }
         catch
         {

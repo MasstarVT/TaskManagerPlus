@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.IO;
 using System.Text;
 using Microsoft.Win32;
@@ -97,8 +96,14 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
     public RelayCommand OpenContainingFolderCommand { get; }
     public AsyncRelayCommand CopyForumPostCommand { get; }
 
+    private string _scrubSkippedText = string.Empty;
+    /// <summary>Review-screen note naming how many scrubbable files couldn't be read, and so will
+    /// be left out of the bundle rather than shipped unscrubbed. Empty when there are none.</summary>
+    public string ScrubSkippedText { get => _scrubSkippedText; private set => SetProperty(ref _scrubSkippedText, value); }
+
     // In-flight run state - reset by ResetToSetup/CancelScrub.
     private string? _stagingDir;
+    private DirectoryInfo? _stagingDirInfo;
     private string? _destinationZipPath;
     private EvidenceBundleManifest? _manifest;
     private List<HealthIssue> _findingsSnapshot = new();
@@ -136,7 +141,7 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
 
     /// <summary>#981: the whole "Collect everything" flow - picks a destination up front (so
     /// nothing is collected if the user backs out of the save dialog), runs every selected
-    /// collector into a temp staging folder, then either goes straight to #986's finalize step or,
+    /// collector into an admin-only staging folder, then either goes straight to #986's finalize step or,
     /// if #984's scrub toggle is on, previews the scrub and stops at the review screen.</summary>
     private async Task CollectAsync()
     {
@@ -153,9 +158,20 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
         if (dialog.ShowDialog() != true) return;
         _destinationZipPath = dialog.FileName;
 
-        _stagingDir = Path.Combine(Path.GetTempPath(), "TaskManagerPlus-EvidenceBundle-" + Guid.NewGuid().ToString("N"));
         ProgressLines.Clear();
         ScrubResults.Clear();
+        ScrubSkippedText = string.Empty;
+        // Admin-only staging: elevated tools write here and the scrub/finalize step rewrites these
+        // files later, so a folder the user's own unelevated processes can swap (%TEMP%) won't do.
+        var staging = AdminDataPaths.CreatePrivateTempDirectory("EvidenceBundle", out string? stagingError);
+        if (staging is null)
+        {
+            ProgressLines.Add($"Couldn't create a protected staging folder, so nothing was collected: {stagingError}");
+            _destinationZipPath = null;
+            return;
+        }
+        _stagingDirInfo = staging;
+        _stagingDir = staging.FullName;
         Stage = EvidenceBundleStage.Collecting;
 
         IProgress<string> progress = new Progress<string>(line =>
@@ -229,11 +245,13 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
             var files = _scrubbableFiles;
             // A full read plus several regex passes per file (msinfo32's report alone is MBs) - off
             // the dispatcher.
-            var (byPath, summaries) = await Task.Run(() => EvidenceBundleService.PreviewScrub(files, scrubber));
+            var (byPath, summaries, unreadable) = await Task.Run(() => EvidenceBundleService.PreviewScrub(files, scrubber));
             if (generation != _scrubPreviewGeneration) return;
             _pendingScrubbedText = byPath;
             ScrubResults.Clear();
             foreach (var s in summaries) ScrubResults.Add(s);
+            ScrubSkippedText = unreadable.Count == 0 ? string.Empty
+                : $"{unreadable.Count} file(s) couldn't be read to scrub, so they'll be left out of the bundle: {string.Join(", ", unreadable.Select(Path.GetFileName))}";
         }
         finally
         {
@@ -276,22 +294,23 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
         var findings = _findingsSnapshot;
         var timeline = _timelineSnapshot;
         var specs = _ctx.SystemSpecs;
+        var scrubbableFiles = _scrubbableFiles;
 
         try
         {
-            await Task.Run(() =>
+            int leftOut = await Task.Run(() =>
             {
-                // File rewrites and re-hashes - off the dispatcher like the zip itself.
-                if (wasScrubbed)
-                {
-                    EvidenceBundleService.ApplyScrubResults(pendingScrubbedText);
-                    RehashScrubbedEntries(manifest, stagingDir, pendingScrubbedText);
-                }
+                // File rewrites and re-hashes - off the dispatcher like the zip itself. A file the
+                // scrub couldn't cover is dropped from the manifest, and so from the zip.
+                int unscrubbed = wasScrubbed
+                    ? EvidenceBundleService.ApplyScrub(manifest, stagingDir, scrubbableFiles, pendingScrubbedText)
+                    : 0;
                 EvidenceBundleService.WriteManifest(manifest, stagingDir);
                 var theme = SummarySettingsService.Load().ReportTheme;
                 var html = EvidenceBundleService.BuildIndexHtml(manifest, findings, timeline, specs, theme);
                 File.WriteAllText(Path.Combine(stagingDir, "index.html"), html);
                 EvidenceBundleService.CreateZip(stagingDir, destinationZipPath, manifest);
+                return unscrubbed;
             });
 
             int successCount = manifest.Entries.Count(e => e.Success);
@@ -300,7 +319,8 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
             int redactions = ScrubResults.Sum(s => s.OccurrenceCount);
 
             ResultSummaryText = $"Bundle saved: {successCount} item(s) collected, {failCount} not collected, {Formatting.FormatBytes(totalSize)} zipped." +
-                (wasScrubbed ? $" Personal info was scrubbed ({redactions} replacement(s))." : string.Empty);
+                (wasScrubbed ? $" Personal info was scrubbed ({redactions} replacement(s))." : string.Empty) +
+                (leftOut > 0 ? $" {leftOut} file(s) couldn't be scrubbed and were left out." : string.Empty);
             ResultPath = destinationZipPath;
             Stage = EvidenceBundleStage.Done;
         }
@@ -312,18 +332,6 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
         finally
         {
             CleanupStaging();
-        }
-    }
-
-    private static void RehashScrubbedEntries(EvidenceBundleManifest manifest, string stagingDir, Dictionary<string, string> scrubbedTextByPath)
-    {
-        var scrubbedPaths = new HashSet<string>(scrubbedTextByPath.Keys, StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in manifest.Entries.Where(e => e.Success))
-        {
-            string fullPath = Path.Combine(stagingDir, entry.FileName.Replace('/', Path.DirectorySeparatorChar));
-            if (!scrubbedPaths.Contains(fullPath) || !File.Exists(fullPath)) continue;
-            entry.SizeBytes = new FileInfo(fullPath).Length;
-            entry.Sha256 = EvidenceBundleService.ComputeSha256(fullPath);
         }
     }
 
@@ -341,20 +349,19 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
     private void OpenContainingFolder()
     {
         if (_destinationZipPath is not { Length: > 0 } path || !File.Exists(path)) return;
-        try { Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true }); }
-        catch { /* best-effort */ }
+        SafeLaunchService.RevealInExplorer(path); // best-effort, unelevated
     }
 
     private void CleanupStaging()
     {
-        if (_stagingDir is null) return;
-        try { if (Directory.Exists(_stagingDir)) Directory.Delete(_stagingDir, recursive: true); }
-        catch { /* best-effort - a leftover temp folder isn't worth failing over */ }
+        // Best-effort - a leftover folder is swept later by AdminDataPaths.PurgeStaleTemp.
+        AdminDataPaths.TryDelete(_stagingDirInfo);
+        _stagingDirInfo = null;
         _stagingDir = null;
     }
 
     /// <summary>App exit: a run left at the scrub-review screen still has its staging folder
-    /// (unscrubbed logs, dumps) in %TEMP% - delete it rather than leave it behind.</summary>
+    /// (unscrubbed logs, dumps) - delete it rather than leave it behind.</summary>
     public void Dispose() => CleanupStaging();
 
     private List<HealthIssue> BuildFindingsSnapshot()

@@ -30,7 +30,8 @@ public sealed class EventLogEvidenceBundleViewModel : ObservableObject
     /// date-time pair, since every other on-demand scan in this app already expresses its window
     /// this way.</summary>
     private int _lookbackDays = 7;
-    public int LookbackDays { get => _lookbackDays; set => SetProperty(ref _lookbackDays, value); }
+    // A free-typed box: clamped so DateTime.AddDays can't overflow (about 10 years is plenty).
+    public int LookbackDays { get => _lookbackDays; set => SetProperty(ref _lookbackDays, Math.Clamp(value, 1, 3650)); }
 
     private bool _isExporting;
     // Note: ExportCommand is an AsyncRelayCommand, which has no RaiseCanExecuteChanged - its
@@ -58,7 +59,7 @@ public sealed class EventLogEvidenceBundleViewModel : ObservableObject
     public EventLogEvidenceBundleViewModel()
     {
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => !IsExporting);
-        RevealFolderCommand = new RelayCommand(_ => EtwTraceService.RevealInExplorer(ResultFolderPath ?? string.Empty), _ => ResultFolderPath is not null);
+        RevealFolderCommand = new RelayCommand(_ => SafeLaunchService.RevealInExplorer(ResultFolderPath ?? string.Empty), _ => ResultFolderPath is not null);
     }
 
     private async Task ExportAsync()

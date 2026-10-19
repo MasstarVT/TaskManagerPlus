@@ -235,7 +235,11 @@ public static class CliDumpService
         await Task.Delay(2500);
 
         var ctx = new EvidenceBundleService.CollectContext(performance, processes, energyThermals, systemSpecs, services, rulesEngine);
-        string stagingDir = Path.Combine(Path.GetTempPath(), "TaskManagerPlus-CliCollect-" + Guid.NewGuid().ToString("N"));
+        // Admin-only staging (not %TEMP%): elevated tools write here, and the scrub rewrites and
+        // the zip read these files back.
+        var staging = AdminDataPaths.CreatePrivateTempDirectory("CliCollect", out string? stagingError)
+            ?? throw new IOException($"Couldn't create a protected staging folder: {stagingError}");
+        string stagingDir = staging.FullName;
         try
         {
             var items = EvidenceBundleService.BuildCatalog();
@@ -247,16 +251,10 @@ public static class CliDumpService
                 string? ssid = await ScrubRulesService.TryGetCurrentSsidAsync();
                 var scrubber = PiiScrubber.Build(ruleSet, ssid);
                 var scrubbableFiles = EvidenceBundleService.GetScrubbableFiles(items, manifest, stagingDir);
-                var (scrubbedTextByPath, _) = EvidenceBundleService.PreviewScrub(scrubbableFiles, scrubber);
-                EvidenceBundleService.ApplyScrubResults(scrubbedTextByPath);
+                var (scrubbedTextByPath, _, _) = EvidenceBundleService.PreviewScrub(scrubbableFiles, scrubber);
+                // Fails closed: anything that couldn't be scrubbed is left out of the zip.
+                EvidenceBundleService.ApplyScrub(manifest, stagingDir, scrubbableFiles, scrubbedTextByPath);
                 manifest.WasScrubbed = true;
-                foreach (var entry in manifest.Entries.Where(e => e.Success))
-                {
-                    string fullPath = Path.Combine(stagingDir, entry.FileName.Replace('/', Path.DirectorySeparatorChar));
-                    if (!scrubbedTextByPath.ContainsKey(fullPath) || !File.Exists(fullPath)) continue;
-                    entry.SizeBytes = new FileInfo(fullPath).Length;
-                    entry.Sha256 = EvidenceBundleService.ComputeSha256(fullPath);
-                }
             }
 
             EvidenceBundleService.WriteManifest(manifest, stagingDir);
@@ -277,12 +275,11 @@ public static class CliDumpService
 
             var dir = Path.GetDirectoryName(Path.GetFullPath(outputZipPath));
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            EvidenceBundleService.CreateZip(stagingDir, outputZipPath);
+            EvidenceBundleService.CreateZip(stagingDir, outputZipPath, manifest);
         }
         finally
         {
-            try { if (Directory.Exists(stagingDir)) Directory.Delete(stagingDir, recursive: true); }
-            catch { /* best-effort - see EvidenceBundleViewModel.CleanupStaging's own remarks */ }
+            AdminDataPaths.TryDelete(staging); // best-effort - see EvidenceBundleViewModel.CleanupStaging
         }
     }
 

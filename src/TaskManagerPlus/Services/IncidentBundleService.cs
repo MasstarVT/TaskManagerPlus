@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -85,13 +84,9 @@ public static class IncidentBundleService
         });
     }
 
-    /// <summary>Matches WprCaptureService.OpenInDefaultApp's own shell-out-to-open pattern -
-    /// `explorer.exe /select,<path>` highlights the item rather than just opening the folder.</summary>
-    public static void RevealInExplorer(string path)
-    {
-        try { Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true }); }
-        catch { /* best-effort */ }
-    }
+    /// <summary>Highlights the item in an unelevated Explorer window (SafeLaunchService) rather
+    /// than just opening the folder. Best-effort.</summary>
+    public static void RevealInExplorer(string path) => SafeLaunchService.RevealInExplorer(path);
 
     private static string BuildMarkdown(SystemStateSnapshot state, IReadOnlyList<FlightRecorderSample> ring, bool hasEtl)
     {

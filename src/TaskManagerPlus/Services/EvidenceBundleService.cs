@@ -145,10 +145,15 @@ public static class EvidenceBundleService
             // HashSet check below regardless).
             var kind = IdToKind(entry.Id);
             if (kind is { } k && scrubbableKinds.Contains(k))
-                files.Add(Path.Combine(stagingDir, entry.FileName));
+                files.Add(EntryPath(stagingDir, entry));
         }
         return files;
     }
+
+    // Manifest file names use '/', so this is the one way to turn one back into a staging path -
+    // the scrub pass and the re-hash must agree on it.
+    private static string EntryPath(string stagingDir, EvidenceBundleManifestEntry entry) =>
+        Path.Combine(stagingDir, entry.FileName.Replace('/', Path.DirectorySeparatorChar));
 
     private static EvidenceBundleCollectorKind? IdToKind(string id)
     {
@@ -177,31 +182,65 @@ public static class EvidenceBundleService
     }
 
     /// <summary>#984: runs `scrubber` over every file in `filePaths` *in memory only* - nothing on
-    /// disk changes yet. Returns the would-be scrubbed text per file (for ApplyScrubResults to
+    /// disk changes yet. Returns the would-be scrubbed text per file (for ApplyScrub to
     /// write once the user confirms) plus the replacement summary the review screen renders -
     /// #984 is explicit this is a REVIEW step, so nothing is finalized until the caller has shown
-    /// this list and the user has confirmed it.</summary>
-    public static (Dictionary<string, string> ScrubbedTextByPath, List<ScrubReplacementSummary> Summaries) PreviewScrub(
+    /// this list and the user has confirmed it. A file that couldn't be read is listed in
+    /// Unreadable - ApplyScrub leaves it out of the bundle rather than ship it unscrubbed.</summary>
+    public static (Dictionary<string, string> ScrubbedTextByPath, List<ScrubReplacementSummary> Summaries, List<string> Unreadable) PreviewScrub(
         IEnumerable<string> filePaths, PiiScrubber scrubber)
     {
-        var byPath = new Dictionary<string, string>();
+        var byPath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var unreadable = new List<string>();
         foreach (var path in filePaths)
         {
             try { byPath[path] = scrubber.Scrub(File.ReadAllText(path)); }
-            catch { /* best-effort - an unreadable/locked file just isn't previewed/scrubbed */ }
+            catch { unreadable.Add(path); }
         }
-        return (byPath, scrubber.Summaries.ToList());
+        return (byPath, scrubber.Summaries.ToList(), unreadable);
     }
 
     /// <summary>#984: writes the already-previewed scrub results to disk - only ever called after
-    /// the user has confirmed the review screen built from PreviewScrub above.</summary>
-    public static void ApplyScrubResults(Dictionary<string, string> scrubbedTextByPath)
+    /// the user has confirmed the review screen built from PreviewScrub above - and re-hashes each
+    /// rewritten file (the rewrite changes both size and hash). Fails closed: any scrubbable file
+    /// that wasn't previewed or couldn't be rewritten is marked not collected, so CreateZip leaves
+    /// it out instead of shipping it unscrubbed in a bundle labelled scrubbed. Returns how many
+    /// were left out.</summary>
+    public static int ApplyScrub(EvidenceBundleManifest manifest, string stagingDir,
+        IReadOnlyCollection<string> scrubbableFiles, Dictionary<string, string> scrubbedTextByPath)
     {
-        foreach (var (path, text) in scrubbedTextByPath)
+        var scrubbable = new HashSet<string>(scrubbableFiles, StringComparer.OrdinalIgnoreCase);
+        int leftOut = 0;
+        for (int i = 0; i < manifest.Entries.Count; i++)
         {
-            try { File.WriteAllText(path, text); }
-            catch { /* best-effort - see PreviewScrub's remarks */ }
+            var entry = manifest.Entries[i];
+            if (!entry.Success || entry.FileName.Length == 0) continue;
+            string fullPath = EntryPath(stagingDir, entry);
+            if (!scrubbable.Contains(fullPath)) continue;
+
+            bool scrubbed = false;
+            if (scrubbedTextByPath.TryGetValue(fullPath, out var text))
+            {
+                try
+                {
+                    File.WriteAllText(fullPath, text);
+                    scrubbed = true;
+                }
+                catch { /* handled below */ }
+            }
+
+            if (scrubbed)
+            {
+                entry.SizeBytes = new FileInfo(fullPath).Length;
+                entry.Sha256 = ComputeSha256(fullPath);
+                continue;
+            }
+
+            leftOut++;
+            manifest.Entries[i] = FailureEntry(entry.Id, entry.Title, entry.SourceCommand,
+                "Couldn't be scrubbed of personal info, so it was left out of the bundle.");
         }
+        return leftOut;
     }
 
     public static void WriteManifest(EvidenceBundleManifest manifest, string stagingDir)
@@ -321,7 +360,7 @@ public static class EvidenceBundleService
     {
         const string fileName = "msinfo32-report.nfo";
         string sourceCommand = $"msinfo32.exe /nfo \"{fileName}\"";
-        var (completed, error) = await RunProcessWithTimeoutAsync("msinfo32.exe", $"/nfo \"{Path.Combine(stagingDir, fileName)}\"", timeoutMs: 170_000);
+        var (completed, error) = await RunProcessWithTimeoutAsync(Path.Combine(Environment.SystemDirectory, "msinfo32.exe"), $"/nfo \"{Path.Combine(stagingDir, fileName)}\"", timeoutMs: 170_000);
         return One(BuildEntry("msinfo32", "System information (msinfo32)", sourceCommand, stagingDir, fileName, completed, error));
     }
 
@@ -329,7 +368,7 @@ public static class EvidenceBundleService
     {
         const string fileName = "dxdiag-report.txt";
         string sourceCommand = $"dxdiag.exe /t \"{fileName}\"";
-        var (completed, error) = await RunProcessWithTimeoutAsync("dxdiag.exe", $"/t \"{Path.Combine(stagingDir, fileName)}\"", timeoutMs: 50_000);
+        var (completed, error) = await RunProcessWithTimeoutAsync(Path.Combine(Environment.SystemDirectory, "dxdiag.exe"), $"/t \"{Path.Combine(stagingDir, fileName)}\"", timeoutMs: 50_000);
         return One(BuildEntry("dxdiag", "DirectX diagnostics (dxdiag)", sourceCommand, stagingDir, fileName, completed, error));
     }
 

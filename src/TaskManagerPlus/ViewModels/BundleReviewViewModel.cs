@@ -22,8 +22,6 @@ namespace TaskManagerPlus.ViewModels;
 /// </summary>
 public sealed class BundleReviewViewModel : ObservableObject, IDisposable
 {
-    private string? _extractedDirectory;
-
     public ObservableCollection<HealthIssue> Findings { get; } = new();
     public ObservableCollection<TimelineEvent> TimelineEvents { get; } = new();
     public ObservableCollection<PerformanceBaseline> Baselines { get; } = new();
@@ -60,14 +58,12 @@ public sealed class BundleReviewViewModel : ObservableObject, IDisposable
 
         try
         {
-            CloseBundle(); // release any previously loaded bundle's temp folder first
+            CloseBundle();
             StatusText = $"Opening \"{System.IO.Path.GetFileName(dialog.FileName)}\"...";
 
-            // Unzipping (a bundle can carry minidumps and .evtx exports) and the JSON parse run
-            // off the dispatcher.
+            // Reading the archive and the JSON parse run off the dispatcher.
             string zipPath = dialog.FileName;
-            var loaded = await Task.Run(() => BundleReviewService.Extract(zipPath));
-            _extractedDirectory = loaded.ExtractedDirectory;
+            var loaded = await Task.Run(() => BundleReviewService.Load(zipPath));
 
             Findings.Clear();
             foreach (var f in loaded.Findings) Findings.Add(f);
@@ -93,8 +89,6 @@ public sealed class BundleReviewViewModel : ObservableObject, IDisposable
 
     private void CloseBundle()
     {
-        BundleReviewService.Cleanup(_extractedDirectory);
-        _extractedDirectory = null;
         Findings.Clear();
         TimelineEvents.Clear();
         Baselines.Clear();
@@ -104,11 +98,8 @@ public sealed class BundleReviewViewModel : ObservableObject, IDisposable
         StatusText = "No bundle loaded yet - use \"Open bundle...\" to review one someone sent you.";
     }
 
-    /// <summary>App exit: the extracted folder can hold someone else's minidumps/.evtx exports,
-    /// so it's deleted rather than left in %TEMP%.</summary>
+    /// <summary>Nothing to clean up: a bundle is read straight from its .zip, never extracted.</summary>
     public void Dispose()
     {
-        BundleReviewService.Cleanup(_extractedDirectory);
-        _extractedDirectory = null;
     }
 }

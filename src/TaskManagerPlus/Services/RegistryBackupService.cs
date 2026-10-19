@@ -14,23 +14,27 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class RegistryBackupService
 {
+    private const string AreaName = "Undo";
+
     /// <summary>Exports `keyPath` (a full, hive-qualified path like
     /// "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run") to
-    /// AppPaths.SettingsDirectory\Undo\&lt;timestamp&gt;\&lt;safe-name&gt;.reg. Returns the saved
-    /// file's path on success - null on failure (reg.exe missing, key inaccessible, ...), with a
-    /// human-readable error rather than a thrown exception, matching every other Services/*.cs
-    /// mutation method's (bool, string?) shape in this app.</summary>
+    /// %ProgramData%\TaskManagerPlus\Undo\&lt;timestamp&gt;\&lt;safe-name&gt;.reg (AdminDataPaths'
+    /// admin-only area, so neither reg.exe's write nor a later import can be redirected or fed a
+    /// swapped file). Returns the saved file's path on success - null on failure (reg.exe missing,
+    /// key inaccessible, no admin-only folder, ...), with a human-readable error rather than a
+    /// thrown exception, matching every other Services/*.cs mutation method's (bool, string?)
+    /// shape in this app.</summary>
     public static async Task<(bool Success, string? Path, string? Error)> BackupKeyAsync(string keyPath)
     {
         try
         {
             string safeName = SanitizeFileName(keyPath);
-            string dir = AppPaths.GetPath("Undo", DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
-            Directory.CreateDirectory(AppPaths.GetPath("Undo"));
-            // Admin-only, so the backup's content can't be swapped before a restore imports it. A
-            // same-second folder that already exists must pass the same check.
+            string? undoRoot = AdminDataPaths.TryGetArea(AreaName, out string? areaError);
+            if (undoRoot is null) return (false, null, $"Couldn't prepare a protected backup folder ({areaError}).");
+            string dir = Path.Combine(undoRoot, DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
+            // A same-second folder that already exists must pass the same check.
             var backupDir = QuarantineService.CreateAdminOnlyDirectory(dir);
-            if ((QuarantineService.FindReparsePoint(dir) ?? QuarantineService.CheckAdminOnly(backupDir)) is { } problem)
+            if (QuarantineService.CheckAdminOnly(backupDir) is { } problem)
                 return (false, null, $"Couldn't create a protected backup folder ({problem}).");
             string filePath = Path.Combine(dir, safeName + ".reg");
 
@@ -51,45 +55,26 @@ public static class RegistryBackupService
     /// <summary>`reg import "&lt;path&gt;"` - restores a previously exported key from
     /// BackupKeyAsync, used by #973's Undo panel as a secondary restore option alongside a
     /// journal entry's primary same-service-method inverse call.</summary>
-    /// <remarks>The backup path comes from change-journal.jsonl and the file sits in the user's
-    /// own %AppData%, both writable by any unelevated process, while reg import runs elevated. So
-    /// the file must be under Undo\ with no junctions, every key it names must be one this app
-    /// backs up, and what reg.exe imports is a copy of the checked text in an admin-only folder
-    /// (it re-reads by path, so importing the original would let it change after the check).
-    /// Before any of that, the entry itself must carry this app's MAC (JournalIntegrityService),
-    /// and the backup's folder must be admin-only as BackupKeyAsync creates it.</remarks>
+    /// <remarks>The backup path comes from change-journal.jsonl, which any unelevated process can
+    /// write, while reg import runs elevated. So the entry must carry this app's MAC
+    /// (JournalIntegrityService), the file must be in the admin-only Undo area, every key it names
+    /// must be one this app backs up, and what reg.exe imports is a copy of the checked text.
+    /// Backups an earlier version wrote under the settings folder (user-writable) are refused
+    /// with the folder named, for the user to import by hand.</remarks>
     public static async Task<(bool Success, string? Error)> RestoreKeyAsync(ChangeJournalEntry entry)
     {
-        if (entry.RegistryBackupPath is not { Length: > 0 } regFilePath)
-            return (false, "This entry has no registry backup.");
-        if (!ChangeJournalService.Verify(entry))
-            return (false, JournalIntegrityService.UnverifiedMessage);
-
         string? importDir = null;
         FileStream? pin = null;
         try
         {
-            string undoRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppPaths.GetPath("Undo")));
-            if (!Path.IsPathFullyQualified(regFilePath) || !regFilePath.EndsWith(".reg", StringComparison.OrdinalIgnoreCase)
-                || !Path.GetFullPath(regFilePath).StartsWith(undoRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                return (false, "That isn't a backup in this app's Undo folder - not importing it.");
-            string fullPath = Path.GetFullPath(regFilePath);
-
-            if (!File.Exists(fullPath))
-                return (false, "That backup file no longer exists.");
-            if ((QuarantineService.FindReparsePoint(fullPath)
-                 ?? QuarantineService.CheckAdminOnly(new DirectoryInfo(Path.GetDirectoryName(fullPath)!))) is { } unsafeReason)
-                return (false, $"Not importing: {unsafeReason}.");
-
-            string content = await File.ReadAllTextAsync(fullPath);
-            if (ValidateBackupContent(content) is { } refusal)
+            if (ReadVerifiedBackup(entry, out _, out string content) is { } refusal)
                 return (false, refusal);
+            string undoRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(AdminDataPaths.RootPath, AreaName)));
 
             importDir = Path.Combine(undoRoot, "import-" + Guid.NewGuid().ToString("N"));
             var dir = QuarantineService.CreateAdminOnlyDirectory(importDir);
-            // An open file inside stops the folder being renamed and swapped for a lookalike.
             pin = new FileStream(Path.Combine(importDir, "in-use"), FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            if ((QuarantineService.FindReparsePoint(importDir) ?? QuarantineService.CheckAdminOnly(dir)) is { } problem)
+            if (QuarantineService.CheckAdminOnly(dir) is { } problem)
                 return (false, $"Couldn't prepare a protected copy to import ({problem}).");
 
             string copyPath = Path.Combine(importDir, "restore.reg");
@@ -112,6 +97,63 @@ public static class RegistryBackupService
                 try { Directory.Delete(importDir, recursive: true); } catch { /* best-effort cleanup of the app's own copy */ }
             }
         }
+    }
+
+    /// <summary>For the confirmation before RestoreKeyAsync: the backup's path and every key and
+    /// value line reg import would write, after the same checks the restore runs. Null
+    /// Description (with the reason) when the restore would refuse.</summary>
+    public static (string? Description, string? Error) DescribeBackup(ChangeJournalEntry entry)
+    {
+        try
+        {
+            if (ReadVerifiedBackup(entry, out string fullPath, out string content) is { } refusal)
+                return (null, refusal);
+            var lines = content.Split('\n').Select(l => l.Trim()).Where(l => l.StartsWith('[') || l.StartsWith('"') || l.StartsWith('@')).ToList();
+            var shown = lines.Take(25).Select(l => l.Length > 160 ? l[..160] + "…" : l);
+            string more = lines.Count > 25 ? $"\n(+{lines.Count - 25} more line(s))" : string.Empty;
+            return ($"Backup: {fullPath}\n\n{string.Join("\n", shown)}{more}", null);
+        }
+        catch (Exception ex)
+        {
+            return (null, ex.Message);
+        }
+    }
+
+    /// <summary>Null with the backup's verified path and text, or the reason it won't be used.</summary>
+    private static string? ReadVerifiedBackup(ChangeJournalEntry entry, out string fullPath, out string content)
+    {
+        fullPath = string.Empty;
+        content = string.Empty;
+        if (entry.RegistryBackupPath is not { Length: > 0 } regFilePath)
+            return "This entry has no registry backup.";
+        if (!ChangeJournalService.Verify(entry))
+            return JournalIntegrityService.UnverifiedMessage;
+
+        if (!Path.IsPathFullyQualified(regFilePath) || !regFilePath.EndsWith(".reg", StringComparison.OrdinalIgnoreCase))
+            return "That isn't a backup in this app's Undo folder - not importing it.";
+        fullPath = Path.GetFullPath(regFilePath);
+
+        string legacyRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppPaths.GetPath(AreaName)));
+        if (fullPath.StartsWith(legacyRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            return $"This backup was written by an earlier version into {legacyRoot}, a folder other programs running as you can change, so it won't be imported automatically. If you trust it, import \"{fullPath}\" by hand.";
+
+        string undoRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(AdminDataPaths.RootPath, AreaName)));
+        if (!fullPath.StartsWith(undoRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            return "That isn't a backup in this app's Undo folder - not importing it.";
+        if (AdminDataPaths.TryGetArea(AreaName, out string? areaError) is null)
+            return $"Not importing: {areaError}.";
+
+        if (!File.Exists(fullPath))
+            return "That backup file no longer exists.";
+        string backupFolder = Path.GetDirectoryName(fullPath)!;
+        if ((File.GetAttributes(fullPath) & FileAttributes.ReparsePoint) != 0
+            || (File.GetAttributes(backupFolder) & FileAttributes.ReparsePoint) != 0)
+            return "Not importing: the backup is a junction or symbolic link.";
+        if (QuarantineService.CheckAdminOnly(new DirectoryInfo(backupFolder)) is { } unsafeReason)
+            return $"Not importing: {unsafeReason}.";
+
+        content = File.ReadAllText(fullPath);
+        return ValidateBackupContent(content);
     }
 
     // BackupKeyAsync's only caller is RemediationActionCatalog.DisableStartupItem, which backs up

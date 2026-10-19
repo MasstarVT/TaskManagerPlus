@@ -253,29 +253,43 @@ public static class WmiHealthService
             var cmdConsumers = ReadCommandLineConsumers();
             var scriptConsumers = ReadScriptConsumers();
             var bindings = ReadBindings();
+            var reachedConsumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+            WmiEventConsumerEntry Bound(string filterName, string query, string consumerPath)
+            {
+                reachedConsumers.Add(consumerPath);
+                if (cmdConsumers.TryGetValue(consumerPath, out var cmdInfo))
+                    return new WmiEventConsumerEntry { FilterName = filterName, Query = query, ConsumerType = "CommandLineEventConsumer", ConsumerName = cmdInfo.Name, ConsumerDetail = cmdInfo.CommandLine, BindingFound = true };
+                if (scriptConsumers.TryGetValue(consumerPath, out var scriptInfo))
+                    return new WmiEventConsumerEntry { FilterName = filterName, Query = query, ConsumerType = "ActiveScriptEventConsumer", ConsumerName = scriptInfo.Name, ConsumerDetail = scriptInfo.ScriptText, BindingFound = true };
+                return new WmiEventConsumerEntry { FilterName = filterName, Query = query, ConsumerType = "(other consumer type)", ConsumerDetail = consumerPath, BindingFound = true };
+            }
+
+            // One row per binding, not per filter: a second consumer bound to a stock filter (the
+            // in-box "SCM Event Log Filter") is a known way to blend in.
+            var filterPaths = new HashSet<string>(filters.Select(f => f.Path), StringComparer.OrdinalIgnoreCase);
             foreach (var (filterPath, filterName, query) in filters)
             {
-                var boundConsumerPath = bindings.FirstOrDefault(b => b.FilterPath.Equals(filterPath, StringComparison.OrdinalIgnoreCase)).ConsumerPath;
-                if (boundConsumerPath is null)
+                var bound = bindings.Where(b => b.FilterPath.Equals(filterPath, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (bound.Count == 0)
                 {
                     result.Add(new WmiEventConsumerEntry { FilterName = filterName, Query = query, ConsumerType = "(none)", ConsumerDetail = "No __FilterToConsumerBinding found for this filter.", BindingFound = false });
                     continue;
                 }
-
-                if (cmdConsumers.TryGetValue(boundConsumerPath, out var cmdInfo))
-                {
-                    result.Add(new WmiEventConsumerEntry { FilterName = filterName, Query = query, ConsumerType = "CommandLineEventConsumer", ConsumerName = cmdInfo.Name, ConsumerDetail = cmdInfo.CommandLine, BindingFound = true });
-                }
-                else if (scriptConsumers.TryGetValue(boundConsumerPath, out var scriptInfo))
-                {
-                    result.Add(new WmiEventConsumerEntry { FilterName = filterName, Query = query, ConsumerType = "ActiveScriptEventConsumer", ConsumerName = scriptInfo.Name, ConsumerDetail = scriptInfo.ScriptText, BindingFound = true });
-                }
-                else
-                {
-                    result.Add(new WmiEventConsumerEntry { FilterName = filterName, Query = query, ConsumerType = "(unknown consumer type)", ConsumerDetail = boundConsumerPath, BindingFound = true });
-                }
+                foreach (var b in bound) result.Add(Bound(filterName, query, b.ConsumerPath));
             }
+
+            // Bindings whose filter isn't one of the root\subscription filters above (it lives in
+            // another namespace, or was deleted) still fire their consumer.
+            foreach (var b in bindings.Where(b => !filterPaths.Contains(b.FilterPath)))
+                result.Add(Bound(b.FilterPath, "(filter not found in root\\subscription - it was deleted or lives in another namespace)", b.ConsumerPath));
+
+            // Command-line/script consumers no binding reaches - inert on their own, but left-over
+            // persistence (or one half of a subscription being staged) is worth seeing.
+            foreach (var (_, info) in cmdConsumers.Where(c => !reachedConsumers.Contains(c.Key)))
+                result.Add(new WmiEventConsumerEntry { FilterName = "(no filter bound to this consumer)", ConsumerType = "CommandLineEventConsumer", ConsumerName = info.Name, ConsumerDetail = info.CommandLine, BindingFound = false });
+            foreach (var (_, info) in scriptConsumers.Where(c => !reachedConsumers.Contains(c.Key)))
+                result.Add(new WmiEventConsumerEntry { FilterName = "(no filter bound to this consumer)", ConsumerType = "ActiveScriptEventConsumer", ConsumerName = info.Name, ConsumerDetail = info.ScriptText, BindingFound = false });
         }
         catch
         {
@@ -354,10 +368,20 @@ public static class WmiHealthService
         return list;
     }
 
+    /// <summary>A reference is either relative (`__EventFilter.Name="Foo"`, same namespace) or
+    /// namespace-qualified (`\\HOST\root\subscription:__EventFilter.Name="Foo"`). Only a
+    /// root\subscription prefix is cut off; a reference into another namespace stays whole so it
+    /// can't match a same-named filter here. A colon inside the key value isn't a prefix.</summary>
     private static string StripNamespacePrefix(string objectPath)
     {
-        int idx = objectPath.IndexOf(":", StringComparison.Ordinal);
-        return idx >= 0 ? objectPath[(idx + 1)..] : objectPath;
+        int idx = objectPath.IndexOf(':');
+        if (idx < 0) return objectPath;
+        string prefix = objectPath[..idx];
+        if (prefix.Contains('=') || prefix.Contains('"')) return objectPath;
+        return prefix.Equals(@"root\subscription", StringComparison.OrdinalIgnoreCase)
+            || prefix.EndsWith(@"\root\subscription", StringComparison.OrdinalIgnoreCase)
+            ? objectPath[(idx + 1)..]
+            : objectPath;
     }
 
     #endregion

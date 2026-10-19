@@ -193,7 +193,7 @@
                                      quarantine folder - confirmed, and reversible via the action journal
                                      ("Owner-initiated cleanup" section, near the bottom of this tab). -->
                                 <Button Content="Quarantine this file" Style="{StaticResource DangerButton}" Command="{Binding QuarantineSelectedFileCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,8"
-                                        ToolTip="Moves the file to Quarantine\&lt;timestamp&gt; under this app's own settings folder - never deletes it. Reversible from the action journal below." />
+                                        ToolTip="Moves the file to %ProgramData%\TaskManagerPlus\Quarantine\&lt;timestamp&gt; (an admin-only folder) - never deletes it. Reversible from the action journal below." />
                                 <!-- #841: on-demand hashing - computed only on click, never during a scan. -->
                                 <Button Command="{Binding HashSelectedCommand}" CommandParameter="{Binding SelectedAutorunEntry}" Margin="0,0,8,8">
                                     <TextBlock>

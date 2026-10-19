@@ -13,58 +13,53 @@ public sealed class LoadedBundle
     public List<HealthIssue> Findings { get; init; } = new();
     public List<TimelineEvent> TimelineEvents { get; init; } = new();
     public List<PerformanceBaseline> Baselines { get; init; } = new();
-    public string ExtractedDirectory { get; init; } = string.Empty;
 }
 
 /// <summary>
-/// suggestions.md #995: "Open bundle" - extracts a previously exported evidence bundle .zip
+/// suggestions.md #995: "Open bundle" - reads a previously exported evidence bundle .zip
 /// (EvidenceBundleService's own output shape: manifest.json + index.html at the root, plus
 /// AppData\findings.json / AppData\timeline.json / AppData\Baselines\*.json for this app's own
-/// data) into a temp folder and loads its JSON contents into a read-only view. A bundle collected
-/// from an older build without one of those AppData files just degrades to an empty list for that
-/// section (JSON parse failures are swallowed the same way SnapshotService.Load/BaselineService.
-/// LoadAll already degrade on a malformed/missing file) rather than refusing to open the bundle at
-/// all - a partial bundle is still worth reviewing.
+/// data) and loads its JSON contents into a read-only view. A bundle collected from an older build
+/// without one of those AppData files just degrades to an empty list for that section (JSON parse
+/// failures are swallowed the same way SnapshotService.Load/BaselineService.LoadAll already degrade
+/// on a malformed/missing file) rather than refusing to open the bundle at all - a partial bundle is
+/// still worth reviewing.
+///
+/// A bundle is someone else's file, opened by an elevated process: only those few JSON entries are
+/// read, straight out of the archive and each under a size cap - nothing is extracted to disk, so
+/// a crafted entry name or a zip bomb has nowhere to write.
 /// </summary>
 public static class BundleReviewService
 {
-    public static LoadedBundle Extract(string zipPath)
-    {
-        string extractDir = Path.Combine(Path.GetTempPath(), "TaskManagerPlus-BundleReview-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(extractDir);
-        try
-        {
-            ZipFile.ExtractToDirectory(zipPath, extractDir, overwriteFiles: true);
-        }
-        catch
-        {
-            // Not a zip / truncated / disk full: the caller never learns this folder's path, so a
-            // half-extracted copy (possibly GBs of minidumps) would otherwise stay in %TEMP%.
-            Cleanup(extractDir);
-            throw;
-        }
+    // findings/timeline JSON from a real bundle is a few MB at most.
+    private const long MaxEntryBytes = 64L * 1024 * 1024;
 
-        var manifest = ReadJson<EvidenceBundleManifest>(Path.Combine(extractDir, "manifest.json")) ?? new EvidenceBundleManifest();
-        var findings = ReadJson<List<HealthIssue>>(Path.Combine(extractDir, "AppData", "findings.json")) ?? new List<HealthIssue>();
-        var timeline = ReadJson<List<TimelineEvent>>(Path.Combine(extractDir, "AppData", "timeline.json")) ?? new List<TimelineEvent>();
+    public static LoadedBundle Load(string zipPath)
+    {
+        using var zip = ZipFile.OpenRead(zipPath);
+
+        var manifest = ReadJson<EvidenceBundleManifest>(zip, "manifest.json") ?? new EvidenceBundleManifest();
+        var findings = ReadJson<List<HealthIssue>>(zip, "AppData/findings.json") ?? new List<HealthIssue>();
+        var timeline = ReadJson<List<TimelineEvent>>(zip, "AppData/timeline.json") ?? new List<TimelineEvent>();
 
         var baselines = new List<PerformanceBaseline>();
         try
         {
-            string baselinesDir = Path.Combine(extractDir, "AppData", "Baselines");
-            if (Directory.Exists(baselinesDir))
+            foreach (var entry in zip.Entries)
             {
-                foreach (var file in Directory.GetFiles(baselinesDir, "*.json"))
-                {
-                    var b = ReadJson<PerformanceBaseline>(file);
-                    if (b is not null) baselines.Add(BaselineService.Sanitize(b));
-                }
+                string name = NormalizeName(entry.FullName);
+                if (!name.StartsWith("AppData/Baselines/", StringComparison.OrdinalIgnoreCase)
+                    || !name.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+                    || name.IndexOf('/', "AppData/Baselines/".Length) >= 0)
+                    continue;
+                var b = ReadJson<PerformanceBaseline>(entry);
+                if (b is not null) baselines.Add(BaselineService.Sanitize(b));
             }
         }
         catch { /* best-effort - see class remarks */ }
 
-        // A bundle is foreign data: null array elements would throw in the sort below (after the
-        // extraction, leaking its temp folder) or reach the review grids as null rows.
+        // A bundle is foreign data: null array elements would throw in the sort below or reach the
+        // review grids as null rows.
         if (manifest.Entries is null || manifest.Entries.Any(e => e is null))
         {
             manifest = new EvidenceBundleManifest
@@ -83,25 +78,35 @@ public static class BundleReviewService
             Findings = findings.Where(f => f is not null).ToList(),
             TimelineEvents = timeline.Where(e => e is not null).OrderByDescending(e => e.Timestamp).ToList(),
             Baselines = baselines.OrderBy(b => b.CapturedAt).ToList(),
-            ExtractedDirectory = extractDir,
         };
     }
 
-    /// <summary>Deletes the temp extraction folder from a previously loaded bundle - called when
-    /// the review panel closes or a new bundle is opened over an existing one.</summary>
-    public static void Cleanup(string? extractedDirectory)
+    // Bundles written on Windows may use either separator in entry names.
+    private static string NormalizeName(string entryName) => entryName.Replace('\\', '/').TrimStart('/');
+
+    private static T? ReadJson<T>(ZipArchive zip, string name) where T : class
     {
-        if (string.IsNullOrEmpty(extractedDirectory)) return;
-        try { if (Directory.Exists(extractedDirectory)) Directory.Delete(extractedDirectory, recursive: true); }
-        catch { /* best-effort - a locked file just leaves a stray temp folder, same tradeoff EvidenceBundleViewModel's own cleanup already accepts */ }
+        var entry = zip.Entries.FirstOrDefault(e => NormalizeName(e.FullName).Equals(name, StringComparison.OrdinalIgnoreCase));
+        return entry is null ? null : ReadJson<T>(entry);
     }
 
-    private static T? ReadJson<T>(string path) where T : class
+    private static T? ReadJson<T>(ZipArchiveEntry entry) where T : class
     {
         try
         {
-            if (!File.Exists(path)) return null;
-            return JsonSerializer.Deserialize<T>(File.ReadAllText(path), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (entry.Length > MaxEntryBytes) return null;
+            using var stream = entry.Open();
+            // Length is the archive's own claim - cap what is actually decompressed as well.
+            using var buffer = new MemoryStream();
+            var chunk = new byte[81920];
+            int read;
+            while ((read = stream.Read(chunk, 0, chunk.Length)) > 0)
+            {
+                if (buffer.Length + read > MaxEntryBytes) return null;
+                buffer.Write(chunk, 0, read);
+            }
+            buffer.Position = 0;
+            return JsonSerializer.Deserialize<T>(buffer, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         }
         catch
         {

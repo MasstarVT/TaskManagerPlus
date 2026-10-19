@@ -29,15 +29,18 @@ public static class SecurityActionJournalService
                 if (entries is not null)
                 {
                     var kept = entries.Where(e => e is not null && !string.IsNullOrEmpty(e.Id)).ToList();
+                    if (kept.Count != entries.Count) AppPaths.MarkUnreadable(JournalPath);
                     foreach (var e in kept) e.IsVerified = Verify(e);
                     return kept;
                 }
+                AppPaths.MarkUnreadable(JournalPath);
             }
         }
         catch
         {
-            // Corrupt or unreadable journal file - fall back to an empty journal, same as every
-            // other settings file in this app degrades on a bad read.
+            // Corrupt or unreadable journal file - fall back to an empty journal for this session,
+            // and keep a copy of the file before the next Save replaces it.
+            AppPaths.MarkUnreadable(JournalPath);
         }
         return new List<SecurityActionJournalEntry>();
     }
@@ -48,12 +51,11 @@ public static class SecurityActionJournalService
         {
             var dir = Path.GetDirectoryName(JournalPath)!;
             Directory.CreateDirectory(dir);
+            if (!AppPaths.PreserveUnreadable(JournalPath)) return;
             var json = JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true });
             // #1026: write-to-temp-then-rename so a crash mid-write can't leave partial JSON that
             // Load silently degrades to an empty journal, destroying the whole action history.
-            string tempPath = JournalPath + ".tmp";
-            File.WriteAllText(tempPath, json);
-            File.Move(tempPath, JournalPath, overwrite: true);
+            AppPaths.WriteAllTextAtomic(JournalPath, json);
         }
         catch
         {
