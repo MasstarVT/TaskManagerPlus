@@ -68,7 +68,7 @@ public sealed class ReliabilityRecordInfo
 }
 
 /// <summary>#172: whether Reliability Monitor's own WMI aggregation is turned off, read from
-/// HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Reliability Analysis\WMI\WMIEnable. Verified
+/// HKLM\SOFTWARE\Microsoft\Reliability Analysis\WMI\WMIEnable (the key racwmiprov.dll reads). Verified
 /// live while building this: on a stock Windows install the "Reliability Analysis" key doesn't
 /// exist at all (Windows' own default is collection enabled without needing the key present) - only
 /// an explicit value of 0 means "someone turned this off" (common on tuned/debloated systems, per

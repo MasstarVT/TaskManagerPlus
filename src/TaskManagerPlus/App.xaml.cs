@@ -33,6 +33,8 @@ public partial class App : Application
         // mode none of those per-feature try/catches can catch.
         DispatcherUnhandledException += OnDispatcherUnhandledException;
 
+        TaskManagerPlus.Common.ScrollChaining.Register();
+
         // Round 12, #87: must run before any service touches a settings file - AppPaths.Initialize
         // decides once, for the whole process, whether persisted state lives under %AppData% or a
         // "Settings" folder next to the exe (portable mode).
