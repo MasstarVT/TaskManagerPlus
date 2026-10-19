@@ -208,11 +208,6 @@ public static class AppPaths
         lock (UnreadableFiles) UnreadableFiles.Add(path);
     }
 
-    /// <summary>Call right before a Save overwrites <paramref name="path"/>: if Load marked it,
-    /// copies it once to "&lt;file&gt;.corrupt-&lt;yyyyMMddHHmmss&gt;.bak" beside it. Returns false
-    /// when that copy failed - the caller then skips the write rather than destroy the only copy.
-    /// Done at save time, not load time, so a damaged file that is never re-saved doesn't leave a
-    /// new .bak behind on every launch.</summary>
     /// <summary>Writes <paramref name="contents"/> to a sibling ".tmp" file and then moves it over
     /// <paramref name="path"/> (MoveFileEx with replace - atomic on one NTFS volume), so a crash or
     /// power loss mid-save leaves either the old file or the new one, never a truncated mix that the
@@ -224,6 +219,11 @@ public static class AppPaths
         File.Move(tmp, path, overwrite: true);
     }
 
+    /// <summary>Call right before a Save overwrites <paramref name="path"/>: if Load marked it,
+    /// copies it once to "&lt;file&gt;.corrupt-&lt;yyyyMMddHHmmss&gt;.bak" beside it. Returns false
+    /// when that copy failed - the caller then skips the write rather than destroy the only copy.
+    /// Done at save time, not load time, so a damaged file that is never re-saved doesn't leave a
+    /// new .bak behind on every launch.</summary>
     public static bool PreserveUnreadable(string path)
     {
         lock (UnreadableFiles)
