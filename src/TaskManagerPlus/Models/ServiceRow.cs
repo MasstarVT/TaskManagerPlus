@@ -43,7 +43,11 @@ public sealed class ServiceRow : ObservableObject
     /// service, but read alongside IsDelayedAutoStart so StartTypeDisplay doesn't need a second
     /// lookup.</summary>
     private int _autoStartDelaySeconds = 120;
-    public int AutoStartDelaySeconds { get => _autoStartDelaySeconds; set => SetProperty(ref _autoStartDelaySeconds, value); }
+    public int AutoStartDelaySeconds
+    {
+        get => _autoStartDelaySeconds;
+        set { if (SetProperty(ref _autoStartDelaySeconds, value)) OnPropertyChanged(nameof(StartTypeDisplay)); }
+    }
 
     /// <summary>#755: what the Startup type column actually shows - "Automatic (Delayed Start)"
     /// with the machine's configured delay, the same distinction Explorer's own Services snap-in

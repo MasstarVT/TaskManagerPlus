@@ -530,10 +530,10 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         foreach (var row in Services)
         {
             string baseText;
-            if (TryGetByEventName(byName, row, out var d))
+            bool hasDuration = TryGetByEventName(byName, row, out var d);
+            if (hasDuration)
             {
-                baseText = $"~{d.LastStartDurationMs / 1000.0:0.0}s (avg {d.AvgStartDurationMs / 1000.0:0.0}s, {d.SampleCount} samples)";
-                matched++;
+                baseText = $"~{d!.LastStartDurationMs / 1000.0:0.0}s (avg {d.AvgStartDurationMs / 1000.0:0.0}s, {d.SampleCount} samples)";
             }
             else
             {
@@ -542,13 +542,15 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
 
             // #193: append the start-timeout failure case, which 7036 (a stopped/running state
             // transition) never logs at all for a service that timed out instead.
-            if (TryGetByEventName(timeouts, row, out var timeoutHit))
+            bool hasTimeout = TryGetByEventName(timeouts, row, out var timeoutHit);
+            if (hasTimeout)
             {
-                string timeoutNote = $"{timeoutHit.TimeoutCount} start-timeout(s) (SCM 7009) in last 30 days";
+                string timeoutNote = $"{timeoutHit!.TimeoutCount} start-timeout(s) (SCM 7009) in last 30 days";
                 baseText = baseText == "No recent data" ? timeoutNote : $"{baseText} — {timeoutNote}";
-                matched++;
             }
 
+            // One row with both a duration and a timeout is still one service.
+            if (hasDuration || hasTimeout) matched++;
             row.StartDurationText = baseText;
         }
 

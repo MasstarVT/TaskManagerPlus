@@ -34,7 +34,12 @@
     </UserControl.Resources>
     <ScrollViewer VerticalScrollBarVisibility="Auto">
     <Grid Margin="16">
+        <!-- 0 filters, 1 actions, 2 crash-loop card, 3 services/drivers/svchost grids (fixed
+             height: the page scrolls, so a * row would be infinite and an Auto one would turn off
+             the grid's row virtualization), 4 selected-service panel, 5 recovery-audit card,
+             6 config changes/new installs, 7 status. -->
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="420" />
@@ -190,6 +195,10 @@
                         <DataTrigger Binding="{Binding ShowDrivers}" Value="True">
                             <Setter Property="Visibility" Value="Collapsed" />
                         </DataTrigger>
+                        <!-- The svchost breakdown shares this row and replaces this grid. -->
+                        <DataTrigger Binding="{Binding ShowSvcHostGroups}" Value="True">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
                     </Style.Triggers>
                 </Style>
             </DataGrid.Style>
@@ -302,9 +311,13 @@
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <StackPanel Orientation="Vertical" VerticalAlignment="Center">
+                                <!-- ToolTip is object-typed, so a StringFormat on it is ignored (the bare
+                                     value shows) - the formatted text goes through an inner TextBlock. -->
                                 <TextBlock Text="Crash-looping" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource DangerBrush}"
-                                           ToolTip="{Binding CrashLoopCount24H, StringFormat='Terminated unexpectedly {0} time(s) in the last 24h'}">
+                                           Foreground="{DynamicResource DangerBrush}">
+                                    <TextBlock.ToolTip>
+                                        <TextBlock Text="{Binding CrashLoopCount24H, StringFormat='Terminated unexpectedly {0} time(s) in the last 24h'}" />
+                                    </TextBlock.ToolTip>
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -317,8 +330,10 @@
                                     </TextBlock.Style>
                                 </TextBlock>
                                 <TextBlock Text="Orphaned" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource DangerBrush}"
-                                           ToolTip="{Binding OrphanedImagePath, StringFormat='Points at a missing binary: {0}'}">
+                                           Foreground="{DynamicResource DangerBrush}">
+                                    <TextBlock.ToolTip>
+                                        <TextBlock Text="{Binding OrphanedImagePath, StringFormat='Points at a missing binary: {0}'}" />
+                                    </TextBlock.ToolTip>
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -331,8 +346,10 @@
                                     </TextBlock.Style>
                                 </TextBlock>
                                 <TextBlock Text="Unquoted path" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource WarningBrush}"
-                                           ToolTip="{Binding UnquotedPathCorrected, StringFormat='Corrected: {0}'}">
+                                           Foreground="{DynamicResource WarningBrush}">
+                                    <TextBlock.ToolTip>
+                                        <TextBlock Text="{Binding UnquotedPathCorrected, StringFormat='Corrected: {0}'}" />
+                                    </TextBlock.ToolTip>
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -382,6 +399,10 @@
                         <DataTrigger Binding="{Binding ShowDrivers}" Value="True">
                             <Setter Property="Visibility" Value="Visible" />
                         </DataTrigger>
+                        <!-- Declared last so it wins over ShowDrivers when both are on. -->
+                        <DataTrigger Binding="{Binding ShowSvcHostGroups}" Value="True">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
                     </Style.Triggers>
                 </Style>
             </DataGrid.Style>
@@ -396,7 +417,7 @@
 
         <!-- #761/#762: svchost group breakdown sub-view, shown instead of the grid above while
              ShowSvcHostGroups is on. -->
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="3">
             <Grid.Style>
                 <Style TargetType="Grid">
                     <Setter Property="Visibility" Value="Collapsed" />
@@ -651,7 +672,7 @@
 
         <!-- #757: bulk recovery-action audit results, shown only once at least one outlier has
              been found. -->
-        <Border Grid.Row="4" Margin="0,10,0,0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
+        <Border Grid.Row="5" Margin="0,10,0,0" Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
             <Border.Style>
                 <Style TargetType="Border">
                     <Setter Property="Visibility" Value="Visible" />
@@ -683,7 +704,7 @@
 
         <!-- #759/#760: recent start-type changes (event 7040) and newly installed services/drivers
              (event 7045) - each shown only once loaded and non-empty. -->
-        <Grid Grid.Row="5" Margin="0,10,0,0">
+        <Grid Grid.Row="6" Margin="0,10,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="*" />
@@ -737,7 +758,7 @@
             </Border>
         </Grid>
 
-        <TextBlock Grid.Row="6" Text="{Binding StatusMessage}" Margin="0,8,0,0"
+        <TextBlock Grid.Row="7" Text="{Binding StatusMessage}" Margin="0,8,0,0"
                    Foreground="{DynamicResource TextSecondaryBrush}" />
     </Grid>
     </ScrollViewer>

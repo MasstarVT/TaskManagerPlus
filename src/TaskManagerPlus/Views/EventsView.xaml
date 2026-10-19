@@ -73,11 +73,25 @@
                                    ToolTip="Live-tail the selected channel - new matching events are pushed into the grid as they're written." />
                 </Grid>
 
+                <!-- The saved filters and both tool expanders scroll inside a capped height: this
+                     card sits in an Auto row, so expanding "More tools" / "Anomaly detection" used
+                     to grow it until the three panes below were squeezed to nothing. -->
+                <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,10,0,0">
+                <StackPanel>
+
                 <!-- #108: saved filter presets, including the built-in ones (Crash triage / Storage
-                     errors / Service failures / Boot problems). -->
-                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                    <TextBlock Text="Saved filters:" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
-                    <ItemsControl ItemsSource="{Binding SavedFilters}">
+                     errors / Service failures / Boot problems). A Grid rather than a horizontal
+                     StackPanel, which measured the chip WrapPanel with infinite width so it never
+                     wrapped and pushed the name box/Save button off the edge. -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Saved filters:" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" />
+                    <ItemsControl Grid.Column="1" ItemsSource="{Binding SavedFilters}" VerticalAlignment="Center">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <WrapPanel />
@@ -85,7 +99,7 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type models:SavedEventFilter}">
-                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="10" Margin="0,0,6,0" Padding="8,3">
+                                <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="10" Margin="0,2,6,2" Padding="8,3">
                                     <StackPanel Orientation="Horizontal">
                                         <Button Content="{Binding Name}" FontSize="{StaticResource FontBody}" Padding="0"
                                                  Background="Transparent" BorderThickness="0"
@@ -104,9 +118,9 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <TextBox Text="{Binding NewFilterName, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="10,0,8,0" />
-                    <Button Content="Save current as filter" Command="{Binding SaveFilterCommand}" Padding="8,3" />
-                </StackPanel>
+                    <TextBox Grid.Column="2" Text="{Binding NewFilterName, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="10,0,8,0" VerticalAlignment="Center" />
+                    <Button Grid.Column="3" Content="Save current as filter" Command="{Binding SaveFilterCommand}" Padding="8,3" VerticalAlignment="Center" />
+                </Grid>
 
                 <!-- #109-114, #116: everything a power user needs but not every session - import/
                      export, opening external .evtx files, the button-gated cross-channel search,
@@ -440,6 +454,9 @@
                     </StackPanel>
                 </Expander>
 
+                </StackPanel>
+                </ScrollViewer>
+
                 <TextBlock Text="{Binding StatusText}" Margin="0,8,0,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
@@ -716,7 +733,9 @@
                             </Style>
                         </DataGrid.Style>
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="2*" />
+                            <!-- Fixed, like the events grid below: ~560px of fixed columns left a star
+                                 Provider column ~50px wide in this pane. -->
+                            <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="200" />
                             <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70" />
                             <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="70" />
                             <DataGridTextColumn Header="Count" Binding="{Binding Count}" Width="60" />
@@ -838,7 +857,10 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Provider" Binding="{Binding ProviderName}" Width="2*" />
+                            <!-- Every column here is a fixed width: ~540px of fixed columns (~800 with
+                                 the correlation columns) in a ~620px pane left star columns at ~20px
+                                 stubs; all-fixed widths scroll horizontally instead. -->
+                            <DataGridTextColumn Header="Provider" Binding="{Binding ProviderName}" Width="200" />
                             <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70" />
                             <!-- #120: this app's own re-ranked severity, next to (not instead of) Windows'
                                  own Level column above - click to sort so the worst re-ranked events surface
@@ -869,7 +891,7 @@
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Task/Opcode" Width="1.4*">
+                            <DataGridTextColumn Header="Task/Opcode" Width="140">
                                 <DataGridTextColumn.Binding>
                                     <MultiBinding StringFormat="{}{0} / {1}">
                                         <Binding Path="Task" />
@@ -879,7 +901,7 @@
                             </DataGridTextColumn>
                             <DataGridTextColumn Header="Record ID" Binding="{Binding RecordId}" Width="80" />
                             <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="60" />
-                            <DataGridTextColumn Header="User" Binding="{Binding UserSid}" Width="1.2*" />
+                            <DataGridTextColumn Header="User" Binding="{Binding UserSid}" Width="130" />
                             <!-- #116: correlation columns - hidden unless explicitly toggled on via
                                  the filter bar's "More tools" expander, since most events don't set
                                  either field and they add little value by default. -->
@@ -1242,7 +1264,9 @@
                     </WrapPanel>
                     <TextBlock Grid.Row="2" Text="{Binding StatusText}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,10" />
 
-                    <ItemsControl Grid.Row="3" ItemsSource="{Binding Steps}">
+                    <!-- One step per exported channel plus six fixed steps - can outgrow the row. -->
+                    <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding Steps}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type models:EvidenceBundleStepResult}">
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,0,4">
@@ -1274,6 +1298,7 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                    </ScrollViewer>
                 </Grid>
             </Border>
         </Grid>

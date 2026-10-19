@@ -20,7 +20,7 @@ namespace TaskManagerPlus.ViewModels;
 /// refactor (each already assumes a live ViewModel behind it); a clean, real "load and view" flow
 /// for findings/timeline/specs/baselines is the bar this implementation targets.
 /// </summary>
-public sealed class BundleReviewViewModel : ObservableObject
+public sealed class BundleReviewViewModel : ObservableObject, IDisposable
 {
     private string? _extractedDirectory;
 
@@ -102,5 +102,13 @@ public sealed class BundleReviewViewModel : ObservableObject
         BannerText = string.Empty;
         IsBundleLoaded = false;
         StatusText = "No bundle loaded yet - use \"Open bundle...\" to review one someone sent you.";
+    }
+
+    /// <summary>App exit: the extracted folder can hold someone else's minidumps/.evtx exports,
+    /// so it's deleted rather than left in %TEMP%.</summary>
+    public void Dispose()
+    {
+        BundleReviewService.Cleanup(_extractedDirectory);
+        _extractedDirectory = null;
     }
 }

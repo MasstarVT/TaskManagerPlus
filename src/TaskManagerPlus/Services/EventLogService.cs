@@ -76,7 +76,7 @@ public sealed class EventLogService
 
         // Display 4101 is Warning-level, so the Level=1|2 `events` list above never contains one -
         // the count and last-seen time come from the dedicated 4101 query instead.
-        var tdrEvents = ReadTdrEventDetails();
+        var (tdrEvents, tdrTotalCount) = ReadTdrEventDetails();
 
         var crashLikeIds = new HashSet<int> { KernelPowerEventId, LegacyUncleanShutdownEventId, BlueScreenEventId };
         var lastCrash = events.Where(e => crashLikeIds.Contains(e.EventId)).OrderByDescending(e => e.TimeCreated).FirstOrDefault();
@@ -139,7 +139,7 @@ public sealed class EventLogService
             RecentEvents = events.Take(MaxEventsPerLog).ToList(),
             WasLastShutdownUnexpected = wasUnexpected,
             LastUnexpectedShutdown = mostRecentShutdownEvent?.TimeCreated,
-            TdrEventCount = tdrEvents.Count,
+            TdrEventCount = tdrTotalCount,
             LastTdrEvent = tdrEvents.FirstOrDefault()?.TimeCreated,
             LastCrashTime = lastCrash?.TimeCreated,
             Minidumps = ReadMinidumps(shutdownEvents, bugChecks, werBugchecks),
@@ -283,10 +283,13 @@ public sealed class EventLogService
     /// when the named property isn't present. This is a separate targeted query rather than
     /// reusing the Level-filtered `events` list, the same "Warning-level event needs its own
     /// query" shape ReadLowMemoryEvents already uses - and Query() builds the TdrEventCount/
-    /// LastTdrEvent tile from this list too, since 4101 never appears in `events`.</summary>
-    private static List<TdrEventDetail> ReadTdrEventDetails()
+    /// LastTdrEvent tile from this list too, since 4101 never appears in `events`. Only the newest
+    /// 100 get detail; TotalCount keeps counting past them (no message formatting) so the tile
+    /// isn't pinned at exactly 100.</summary>
+    private static (List<TdrEventDetail> Details, int TotalCount) ReadTdrEventDetails()
     {
         var result = new List<TdrEventDetail>();
+        int count = 0;
         try
         {
             long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
@@ -296,13 +299,14 @@ public sealed class EventLogService
                 ReverseDirection = true,
             };
             using var reader = new EventLogReader(query);
-            int count = 0;
-            const int maxEvents = 100;
-            while (count < maxEvents && reader.ReadEvent() is { } record)
+            const int maxDetailEvents = 100;
+            const int maxCountedEvents = 100_000;
+            while (count < maxCountedEvents && reader.ReadEvent() is { } record)
             {
                 using (record)
                 {
                     count++;
+                    if (count > maxDetailEvents) continue;
                     string message;
                     try { message = record.FormatDescription() ?? string.Empty; }
                     catch { message = string.Empty; }
@@ -333,9 +337,9 @@ public sealed class EventLogService
         catch
         {
             // Provider/log unavailable - degrade to "no TDR events found" (the count/last-seen tile
-            // is built from this same list).
+            // is built from this same read).
         }
-        return result;
+        return (result, count);
     }
 
     /// <summary>Item 34: the three registry values that actually control TDR's timeout behavior -
@@ -2041,14 +2045,13 @@ public sealed class EventLogService
     /// nonzero PowerButtonTimestamp means the power button was held; else a Checkpoint of 0 (no
     /// shutdown progress was ever recorded) is reported as looking like a sudden loss of power;
     /// anything else is reported as a hard hang (a shutdown was in progress but never completed).
-    /// "Uptime before crash" scans the remaining numeric properties for a plausible minutes-since-
-    /// boot value instead of trusting one fixed index, since PowerOnMinutes' own position isn't
-    /// consistent across Windows versions either.
+    /// "Uptime before crash" is always null: no version (0-10) of the event-41 template carries an
+    /// uptime field - the properties after Checkpoint are flags/counters such as
+    /// SystemSleepTransitionsToOn, so any value read from them would be fabricated.
     /// </summary>
     private static (ShutdownCause Cause, string? Bugcheck, TimeSpan? Uptime) ClassifyPowerEvent(EventRecord record)
     {
         ulong bugcheckCode = 0, powerButtonTimestamp = 0, checkpoint = 0, sleepInProgress = 0;
-        TimeSpan? uptime = null;
         try
         {
             var props = record.Properties;
@@ -2056,15 +2059,6 @@ public sealed class EventLogService
             if (props.Count > 5) TryToUInt64(props[5].Value, out sleepInProgress);
             if (props.Count > 6) TryToUInt64(props[6].Value, out powerButtonTimestamp);
             if (props.Count > 8) TryToUInt64(props[8].Value, out checkpoint);
-
-            for (int i = 9; i < props.Count; i++)
-            {
-                if (TryToUInt64(props[i].Value, out var v) && v > 0 && v < 5_256_000) // < ~10 years
-                {
-                    uptime = TimeSpan.FromMinutes(v);
-                    break;
-                }
-            }
         }
         catch
         {
@@ -2080,7 +2074,7 @@ public sealed class EventLogService
         else if (checkpoint == 0 && sleepInProgress == 0) cause = ShutdownCause.PowerLoss;
         else cause = ShutdownCause.HardHang;
 
-        return (cause, bugcheckStr, uptime);
+        return (cause, bugcheckStr, null);
     }
 
     private static bool TryToUInt64(object? value, out ulong result)

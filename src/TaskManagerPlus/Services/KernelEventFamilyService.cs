@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.Eventing.Reader;
 using System.Management;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -13,7 +14,8 @@ namespace TaskManagerPlus.Services;
 /// memory-diagnostic, power-transition) and returns an already-summarized/grouped result, feeding
 /// one Stability-tab card apiece. Every log read reuses EventLogExplorerService.ReadPage (via the
 /// private ReadFamily helper below) rather than adding a fifth event-log reading path alongside
-/// EventLogService/EventLogExplorerService/EventAnomalyDetectionService/EventTimelineService.
+/// EventLogService/EventLogExplorerService/EventAnomalyDetectionService/EventTimelineService
+/// (the one exception is ReadWheaErrors' timestamp-only count, see CountFamilyByDay).
 /// Every method here follows the same "degrade to empty/Unknown/hidden, never fabricate, never
 /// throw out of the service" rule as the rest of this app's Services/ layer - a locked-down
 /// channel, an event whose message text doesn't match the expected shape, or a shelled-out tool
@@ -262,7 +264,10 @@ public sealed class KernelEventFamilyService
     /// <summary>#186: Microsoft-Windows-WHEA-Logger 17/18/19/47 per day over the lookback window -
     /// the same Date+Count shape EventLogService.BuildDailyCounts already uses for Reliability
     /// History, so the view can reuse the identical small-column-chart binding pattern. "Quick flag,
-    /// not a verdict" - corrected errors (17/47) are not fatal by themselves.</summary>
+    /// not a verdict" - corrected errors (17/47) are not fatal by themselves. Counted by a
+    /// timestamp-only pass rather than ReadFamily: a chatty corrected-PCIe-error source can log
+    /// thousands of these a day, and ReadFamily's single 1000-row page would report exactly 1000
+    /// and zero-fill every earlier day.</summary>
     public WheaErrorSummary ReadWheaErrors(int lookbackDays = LookbackDays)
     {
         var pairs = new (string, int)[]
@@ -270,22 +275,22 @@ public sealed class KernelEventFamilyService
             ("Microsoft-Windows-WHEA-Logger", 17), ("Microsoft-Windows-WHEA-Logger", 18),
             ("Microsoft-Windows-WHEA-Logger", 19), ("Microsoft-Windows-WHEA-Logger", 47),
         };
-        var rows = ReadFamily("System", pairs, lookbackDays);
+        var (counts, total, lastSeen, cappedAtDay) = CountFamilyByDay("System", pairs, lookbackDays);
 
-        var counts = rows.GroupBy(r => r.TimeCreated.Date).ToDictionary(g => g.Key, g => g.Count());
         var daily = new List<DailyEventCount>();
         var today = DateTime.Now.Date;
-        for (int i = lookbackDays - 1; i >= 0; i--)
-        {
-            var day = today.AddDays(-i);
+        var firstDay = today.AddDays(-(lookbackDays - 1));
+        // Same rule as EventLogService.BuildDailyCounts: when the safety cap stopped the count,
+        // days at or before the oldest (partially) counted day are left out, not shown as zero.
+        if (cappedAtDay is { } cutoff && cutoff.AddDays(1) > firstDay) firstDay = cutoff.AddDays(1);
+        for (var day = firstDay; day <= today; day = day.AddDays(1))
             daily.Add(new DailyEventCount { Date = day, Count = counts.TryGetValue(day, out var c) ? c : 0 });
-        }
 
         return new WheaErrorSummary
         {
             DailyCounts = daily,
-            TotalCount = rows.Count,
-            LastSeen = rows.Count > 0 ? rows.Max(r => r.TimeCreated) : null,
+            TotalCount = total,
+            LastSeen = lastSeen,
         };
     }
 
@@ -521,12 +526,7 @@ public sealed class KernelEventFamilyService
         var list = pairs.ToList();
         if (list.Count == 0) return new List<EventRecordRow>();
 
-        string idsClause = string.Join(" or ", list
-            .GroupBy(f => f.Provider, StringComparer.OrdinalIgnoreCase)
-            .Select(g => $"(Provider[@Name={EventLogExplorerService.QuoteXPathLiteral(g.Key)}] and ({string.Join(" or ", g.Select(f => $"EventID={f.EventId}"))}))"));
-
-        long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
-        string xpath = $"*[System[({idsClause}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]";
+        string xpath = BuildFamilyXPath(list, lookbackDays);
 
         try
         {
@@ -536,6 +536,56 @@ public sealed class KernelEventFamilyService
         catch
         {
             return new List<EventRecordRow>();
+        }
+    }
+
+    private static string BuildFamilyXPath(List<(string Provider, int EventId)> pairs, int lookbackDays)
+    {
+        string idsClause = string.Join(" or ", pairs
+            .GroupBy(f => f.Provider, StringComparer.OrdinalIgnoreCase)
+            .Select(g => $"(Provider[@Name={EventLogExplorerService.QuoteXPathLiteral(g.Key)}] and ({string.Join(" or ", g.Select(f => $"EventID={f.EventId}"))}))"));
+
+        long maxAgeMs = lookbackDays * 24L * 60 * 60 * 1000;
+        return $"*[System[({idsClause}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]";
+    }
+
+    private const int MaxCountedRecords = 100_000;
+
+    /// <summary>Per-day counts for the same XPath ReadFamily uses, reading only each record's
+    /// timestamp (no message formatting, so a very large family stays cheap). CappedAtDay is the
+    /// oldest day reached when MaxCountedRecords stopped the pass early - that day and earlier are
+    /// incomplete - and null when every matching record was counted. Any read failure degrades to
+    /// empty, the same as ReadFamily.</summary>
+    private static (Dictionary<DateTime, int> ByDay, int Total, DateTime? LastSeen, DateTime? CappedAtDay) CountFamilyByDay(
+        string logName, IEnumerable<(string Provider, int EventId)> pairs, int lookbackDays)
+    {
+        var byDay = new Dictionary<DateTime, int>();
+        int total = 0;
+        DateTime? lastSeen = null, oldestDay = null;
+        var list = pairs.ToList();
+        if (list.Count == 0) return (byDay, 0, null, null);
+
+        try
+        {
+            var query = new EventLogQuery(logName, PathType.LogName, BuildFamilyXPath(list, lookbackDays)) { ReverseDirection = true };
+            using var reader = new EventLogReader(query);
+            while (total < MaxCountedRecords && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    if (record.TimeCreated is not { } time) continue;
+                    total++;
+                    lastSeen ??= time;
+                    var day = time.Date;
+                    byDay[day] = byDay.TryGetValue(day, out var c) ? c + 1 : 1;
+                    oldestDay = day;
+                }
+            }
+            return (byDay, total, lastSeen, total >= MaxCountedRecords ? oldestDay : null);
+        }
+        catch
+        {
+            return (new Dictionary<DateTime, int>(), 0, null, null);
         }
     }
 

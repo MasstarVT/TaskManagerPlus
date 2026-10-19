@@ -325,7 +325,7 @@ public sealed class EventLogEvidenceBundleService
             finally { if (!settled) KillIfRunning(proc); }
             return settled
                 ? new EvidenceBundleStepResult { StepName = stepName, Succeeded = true, Detail = "msinfo32.txt" }
-                : new EvidenceBundleStepResult { StepName = stepName, Succeeded = false, Detail = "Timed out waiting for msinfo32's report to finish writing - skipped." };
+                : new EvidenceBundleStepResult { StepName = stepName, Succeeded = false, Detail = TimedOutDetail("msinfo32", outPath) };
         }
         catch (Exception ex)
         {
@@ -350,7 +350,7 @@ public sealed class EventLogEvidenceBundleService
             finally { if (!settled) KillIfRunning(proc); }
             return settled
                 ? new EvidenceBundleStepResult { StepName = stepName, Succeeded = true, Detail = "dxdiag.txt" }
-                : new EvidenceBundleStepResult { StepName = stepName, Succeeded = false, Detail = "Timed out waiting for dxdiag's report to finish writing - skipped." };
+                : new EvidenceBundleStepResult { StepName = stepName, Succeeded = false, Detail = TimedOutDetail("dxdiag", outPath) };
         }
         catch (Exception ex)
         {
@@ -365,6 +365,13 @@ public sealed class EventLogEvidenceBundleService
         try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
     }
 
+    private static string TimedOutDetail(string tool, string outPath) => File.Exists(outPath)
+        ? $"Timed out waiting for {tool}'s report to finish writing - the partial {Path.GetFileName(outPath)} left in the folder is incomplete."
+        : $"Timed out waiting for {tool}'s report to finish writing - skipped.";
+
+    /// <summary>True only once the file's size has held steady; reaching the deadline is a
+    /// failure even when a (still-growing, so partial) file exists, so the caller kills the tool
+    /// and reports the step as incomplete.</summary>
     private static async Task<bool> WaitForFileToSettleAsync(string path, int timeoutMs, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
@@ -390,7 +397,7 @@ public sealed class EventLogEvidenceBundleService
                 lastSize = size;
             }
         }
-        return File.Exists(path); // best-effort - a file that exists at all by the deadline is kept
+        return false;
     }
 
     // ==================== SUMMARY.md ====================
@@ -423,10 +430,8 @@ public sealed class EventLogEvidenceBundleService
                 .Where(e => IsInWindow(e.Timestamp, request.StartUtc, request.EndUtc))
                 .ToList();
 
-            var topSignatures = snapshot.RecentEvents
-                .Where(e => IsInWindow(e.TimeCreated, request.StartUtc, request.EndUtc))
-                .GroupBy(e => (e.ProviderName, e.EventId))
-                .Select(g => new { g.Key.ProviderName, g.Key.EventId, Count = g.Count(), Last = g.Max(e => e.TimeCreated) })
+            var (signatureCounts, signaturesCapped) = await Task.Run(() => CountSignatures(request.StartUtc, request.EndUtc, ct), ct);
+            var topSignatures = signatureCounts
                 .OrderByDescending(x => x.Count)
                 .Take(15)
                 .ToList();
@@ -454,6 +459,10 @@ public sealed class EventLogEvidenceBundleService
             sb.AppendLine();
             sb.AppendLine("## Top event signatures in this window");
             sb.AppendLine();
+            sb.AppendLine(signaturesCapped
+                ? $"_Critical/Error events in System and Application. Capped: only the newest {MaxSignatureRecordsPerLog:N0} events per log were counted, so counts are a minimum._"
+                : "_Critical/Error events in System and Application._");
+            sb.AppendLine();
             if (topSignatures.Count == 0)
             {
                 sb.AppendLine("_No Critical/Error events in this window._");
@@ -464,9 +473,9 @@ public sealed class EventLogEvidenceBundleService
                 sb.AppendLine("|---|---|---|---|---|");
                 foreach (var s in topSignatures)
                 {
-                    var kb = _kb.Lookup(s.ProviderName, s.EventId);
+                    var kb = _kb.Lookup(s.Provider, s.EventId);
                     string kbText = kb is null ? "(no entry)" : $"{kb.SeverityRank}: {kb.Meaning}".Replace('\n', ' ').Replace('|', '/');
-                    sb.AppendLine($"| {s.ProviderName} | {s.EventId} | {s.Count} | {s.Last:g} | {kbText} |");
+                    sb.AppendLine($"| {s.Provider} | {s.EventId} | {s.Count} | {s.Last:g} | {kbText} |");
                 }
             }
 
@@ -477,6 +486,49 @@ public sealed class EventLogEvidenceBundleService
         {
             return new EvidenceBundleStepResult { StepName = stepName, Succeeded = false, Detail = ex.Message };
         }
+    }
+
+    private const int MaxSignatureRecordsPerLog = 20_000;
+
+    private sealed record SignatureCount(string Provider, int EventId, int Count, DateTime Last);
+
+    /// <summary>Critical/Error counts per (provider, event ID) in System + Application over the
+    /// request's own window - a dedicated time-bounded pass, since the 60-row RecentEvents sample
+    /// often doesn't even reach the window's start on a busy machine. Capped is true when a log
+    /// had more than MaxSignatureRecordsPerLog matches, so the counts are a floor.</summary>
+    private static (List<SignatureCount> Rows, bool Capped) CountSignatures(DateTime startUtc, DateTime endUtc, CancellationToken ct)
+    {
+        var counts = new Dictionary<(string Provider, int EventId), (int Count, DateTime Last)>();
+        bool capped = false;
+        string xpath = $"*[System[(Level=1 or Level=2) and TimeCreated[@SystemTime>='{startUtc:o}'] and TimeCreated[@SystemTime<='{endUtc:o}']]]";
+        foreach (var logName in new[] { "System", "Application" })
+        {
+            try
+            {
+                var query = new EventLogQuery(logName, PathType.LogName, xpath) { ReverseDirection = true };
+                using var reader = new EventLogReader(query);
+                int read = 0;
+                while (read < MaxSignatureRecordsPerLog && reader.ReadEvent() is { } record)
+                {
+                    using (record)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        read++;
+                        var key = (record.ProviderName ?? string.Empty, record.Id);
+                        var time = record.TimeCreated ?? DateTime.MinValue;
+                        counts[key] = counts.TryGetValue(key, out var c) ? (c.Count + 1, time > c.Last ? time : c.Last) : (1, time);
+                    }
+                }
+                if (read >= MaxSignatureRecordsPerLog && reader.ReadEvent() is { } extra)
+                {
+                    extra.Dispose();
+                    capped = true;
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { /* log unavailable/access denied - contributes nothing */ }
+        }
+        return (counts.Select(kv => new SignatureCount(kv.Key.Provider, kv.Key.EventId, kv.Value.Count, kv.Value.Last)).ToList(), capped);
     }
 
     // ==================== shared helpers ====================

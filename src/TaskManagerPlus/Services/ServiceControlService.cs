@@ -1333,6 +1333,18 @@ public sealed class ServiceControlService
             try
             {
                 using var sc = new ServiceController(name);
+
+                // The constructor doesn't validate the name - the first real read does, and only
+                // ERROR_SERVICE_DOES_NOT_EXIST (1060) means missing; access denied etc. stay Unknown.
+                string statusText;
+                try { statusText = sc.Status.ToString(); }
+                catch (InvalidOperationException ex) when (ex.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 1060 })
+                {
+                    result.Add(new UpdateServiceHealthEntry { ServiceName = name, DisplayName = name, IsMissing = true });
+                    continue;
+                }
+                catch { statusText = "Unknown"; }
+
                 string startTypeText;
                 bool isDisabled;
                 try
@@ -1347,10 +1359,6 @@ public sealed class ServiceControlService
                     isDisabled = false;
                 }
 
-                string statusText;
-                try { statusText = sc.Status.ToString(); }
-                catch { statusText = "Unknown"; }
-
                 result.Add(new UpdateServiceHealthEntry
                 {
                     ServiceName = name,
@@ -1362,10 +1370,8 @@ public sealed class ServiceControlService
             }
             catch
             {
-                // ServiceController construction itself throws when the service name doesn't
-                // resolve at all (not merely inaccessible) - report it as missing rather than
-                // silently dropping it, since that's itself a worthwhile flag for this card.
-                result.Add(new UpdateServiceHealthEntry { ServiceName = name, DisplayName = name, IsMissing = true });
+                // Anything unexpected outside the per-field reads above - unknown, not missing.
+                result.Add(new UpdateServiceHealthEntry { ServiceName = name, DisplayName = name });
             }
         }
         return result;

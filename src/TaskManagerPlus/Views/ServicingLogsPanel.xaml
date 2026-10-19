@@ -48,10 +48,14 @@
                             <ProgressBar Width="90" Height="6" IsIndeterminate="{Binding IsPendingCheckLoading}" VerticalAlignment="Center" />
                         </WrapPanel>
                         <StackPanel Visibility="{Binding PendingStatus, Converter={StaticResource NullToVisibilityConverter}}">
-                            <Border Background="{DynamicResource WarningBrush}" Opacity="0.85" CornerRadius="6" Padding="8,4" Margin="0,0,0,8"
+                            <!-- Warning outline on the elevated surface (CpuView's power-limit banner
+                                 shape): Opacity on a filled Border dimmed its text too, and White on
+                                 the amber fill was low-contrast. -->
+                            <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}" BorderThickness="1"
+                                     CornerRadius="6" Padding="8,4" Margin="0,0,0,8"
                                      Visibility="{Binding PendingStatus.LooksStuck, Converter={StaticResource BoolToVisibilityConverter}}">
                                 <TextBlock Text="{Binding PendingStatus.CbsPackagesPendingCount, StringFormat='CBS has {0} package(s) queued under PackagesPending - this specifically means servicing has work queued for the next boot (worth a manual check, not a confirmed problem).'}"
-                                            TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="White" />
+                                            TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextPrimaryBrush}" />
                             </Border>
                             <WrapPanel>
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
@@ -211,7 +215,7 @@
                             <WrapPanel Margin="0,0,0,8">
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
                                     <StackPanel>
-                                        <TextBlock Text="Files scanned" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <TextBlock Text="Components verified" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />
                                         <TextBlock Text="{Binding SfcSummary.FilesScanned, TargetNullValue=Unknown}" FontSize="{StaticResource FontSection}" FontWeight="SemiBold" />
                                     </StackPanel>
                                 </Border>

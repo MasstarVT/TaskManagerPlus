@@ -6,7 +6,8 @@ using TaskManagerPlus.Models;
 namespace TaskManagerPlus.Services;
 
 /// <summary>
-/// #462/#463: parses %windir%\INF\setupapi.dev.log for a dated timeline of every device install/
+/// #462/#463: parses %windir%\INF\setupapi.dev.log (plus its rolled-over
+/// setupapi.dev.&lt;timestamp&gt;.log siblings) for a dated timeline of every device install/
 /// update/configure Windows Setup has logged, plus the subset that failed. This file can run tens
 /// of MB on a machine with a long uptime/many installs - per CLAUDE.md's on-demand convention and
 /// the suggestion text itself, callers must gate this behind an explicit button, never load it
@@ -25,8 +26,10 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class DriverInstallLogService
 {
-    public static readonly string DefaultLogPath =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "INF", "setupapi.dev.log");
+    private static readonly string InfDirectory =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "INF");
+
+    public static readonly string DefaultLogPath = Path.Combine(InfDirectory, "setupapi.dev.log");
 
     private const int MaxEntriesReturned = 3000;
 
@@ -47,72 +50,96 @@ public static class DriverInstallLogService
         var timeline = new List<DriverInstallEvent>();
         var failures = new List<DriverInstallFailure>();
 
-        if (!File.Exists(DefaultLogPath))
+        // Newer Windows rolls the log over into setupapi.dev.<yyyyMMdd_HHmmss>.log, so the live
+        // file alone can hold only the last few weeks. A rolled file last written before
+        // filterSince can't contain anything inside the window.
+        List<FileInfo> logFiles;
+        try
+        {
+            logFiles = new DirectoryInfo(InfDirectory).EnumerateFiles("setupapi.dev*.log").ToList();
+        }
+        catch
+        {
+            logFiles = File.Exists(DefaultLogPath) ? new List<FileInfo> { new(DefaultLogPath) } : new List<FileInfo>();
+        }
+
+        if (logFiles.Count == 0)
             return new ParseResult(timeline, failures,
                 "setupapi.dev.log wasn't found at " + DefaultLogPath + " - nothing has been logged yet, or it lives elsewhere on this system.");
 
-        try
+        string? readError = null;
+        foreach (var file in logFiles)
         {
-            using var stream = new FileStream(DefaultLogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-
-            bool inSection = false;
-            string? headerText = null;
-            DateTime? sectionStart = null;
-            var errorLines = new List<string>();
-
-            string? line;
-            while ((line = reader.ReadLine()) is not null)
+            if (filterSince is { } since && file.LastWriteTime < since) continue;
+            try
             {
-                if (line.StartsWith(">>>", StringComparison.Ordinal))
-                {
-                    var headerMatch = HeaderRegex.Match(line);
-                    if (headerMatch.Success)
-                    {
-                        headerText = headerMatch.Groups[1].Value;
-                        inSection = true;
-                        sectionStart = null;
-                        errorLines = new List<string>();
-                        continue;
-                    }
-
-                    if (inSection)
-                    {
-                        var startMatch = SectionStartRegex.Match(line);
-                        if (startMatch.Success)
-                        {
-                            sectionStart = TryParseTimestamp(startMatch.Groups[1].Value);
-                            continue;
-                        }
-                    }
-                }
-                else if (inSection && line.StartsWith("!!!", StringComparison.Ordinal))
-                {
-                    string text = line.TrimStart('!', ' ');
-                    if (text.Length > 0 && errorLines.Count < 20) errorLines.Add(text);
-                }
-                else if (inSection && line.StartsWith("<<<", StringComparison.Ordinal))
-                {
-                    var exitMatch = ExitStatusRegex.Match(line);
-                    if (exitMatch.Success)
-                    {
-                        string exitStatus = exitMatch.Groups[1].Value.Trim();
-                        EmitSection(timeline, failures, headerText, sectionStart, exitStatus, errorLines, filterSince);
-
-                        inSection = false;
-                        headerText = null;
-                    }
-                }
+                ParseFile(file.FullName, timeline, failures, filterSince);
             }
-        }
-        catch (Exception ex)
-        {
-            return new ParseResult(timeline, failures, $"Couldn't read setupapi.dev.log: {ex.Message}");
+            catch (Exception ex)
+            {
+                // One locked/unreadable file keeps the others' results; the first failure is reported.
+                readError ??= $"Couldn't read {file.Name}: {ex.Message}";
+            }
         }
 
         timeline = timeline.OrderByDescending(e => e.Timestamp).Take(MaxEntriesReturned).ToList();
         failures = failures.OrderByDescending(e => e.Timestamp).Take(MaxEntriesReturned).ToList();
-        return new ParseResult(timeline, failures, null);
+        return new ParseResult(timeline, failures, readError);
+    }
+
+    private static void ParseFile(string path, List<DriverInstallEvent> timeline, List<DriverInstallFailure> failures, DateTime? filterSince)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+
+        bool inSection = false;
+        string? headerText = null;
+        DateTime? sectionStart = null;
+        var errorLines = new List<string>();
+
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            if (line.StartsWith(">>>", StringComparison.Ordinal))
+            {
+                var headerMatch = HeaderRegex.Match(line);
+                if (headerMatch.Success)
+                {
+                    headerText = headerMatch.Groups[1].Value;
+                    inSection = true;
+                    sectionStart = null;
+                    errorLines = new List<string>();
+                    continue;
+                }
+
+                if (inSection)
+                {
+                    var startMatch = SectionStartRegex.Match(line);
+                    if (startMatch.Success)
+                    {
+                        sectionStart = TryParseTimestamp(startMatch.Groups[1].Value);
+                        continue;
+                    }
+                }
+            }
+            else if (inSection && line.StartsWith("!!!", StringComparison.Ordinal))
+            {
+                string text = line.TrimStart('!', ' ');
+                if (text.Length > 0 && errorLines.Count < 20) errorLines.Add(text);
+            }
+            else if (inSection && line.StartsWith("<<<", StringComparison.Ordinal))
+            {
+                var exitMatch = ExitStatusRegex.Match(line);
+                if (exitMatch.Success)
+                {
+                    string exitStatus = exitMatch.Groups[1].Value.Trim();
+                    EmitSection(timeline, failures, headerText, sectionStart, exitStatus, errorLines, filterSince);
+
+                    inSection = false;
+                    headerText = null;
+                }
+            }
+        }
     }
 
     private static void EmitSection(List<DriverInstallEvent> timeline, List<DriverInstallFailure> failures,
@@ -177,5 +204,5 @@ public static class DriverInstallLogService
             System.Globalization.DateTimeStyles.None, out var parsed) ? parsed : null;
     }
 
-    private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
+    private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "â€¦";
 }

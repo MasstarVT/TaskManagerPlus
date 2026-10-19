@@ -597,6 +597,8 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         }
     }
 
+    private int _channelHealthGeneration;
+
     /// <summary>#197: loads the newly-selected channel's EventLogConfiguration/EventLogInformation
     /// detail plus #198's retention recommendation and #199's record-gap flags. A group heading, an
     /// inaccessible leaf, or an opened .evtx file (none of these have a live registry-backed
@@ -605,6 +607,9 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     /// land on the wrong channel - the same pattern LoadStatusCodesAsync already uses.</summary>
     private async Task LoadChannelHealthAsync(EventChannelNode? node)
     {
+        // The ReferenceEquals guards alone pass for both loads on an A -> B -> A switch (the first
+        // load resumes with A selected again), which duplicated the gap flags.
+        int generation = ++_channelHealthGeneration;
         SelectedChannelHealth = null;
         ChannelRetentionRecommendation = null;
         ChannelGapFlags.Clear();
@@ -616,7 +621,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
 
         string channelName = node.Name;
         var health = await Task.Run(() => _logHealth.GetChannelHealth(channelName));
-        if (!ReferenceEquals(SelectedChannel, node)) return;
+        if (generation != _channelHealthGeneration || !ReferenceEquals(SelectedChannel, node)) return;
 
         SelectedChannelHealth = health;
         ChannelRetentionRecommendation = EventLogHealthService.GetRetentionRecommendation(health);
@@ -624,7 +629,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         CanRevertChannelEnabled = EventLogHealthService.FindConfigChange(channelName, EventLogConfigChangeType.Enabled) is not null;
 
         var gaps = await Task.Run(() => _logHealth.DetectRecordGaps(channelName));
-        if (!ReferenceEquals(SelectedChannel, node)) return;
+        if (generation != _channelHealthGeneration || !ReferenceEquals(SelectedChannel, node)) return;
         foreach (var g in gaps) ChannelGapFlags.Add(g);
     }
 
@@ -1038,10 +1043,19 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         if (entry.ActionKind == EventKbActionKind.RestartService)
         {
             string? serviceName = ExtractServiceName(row);
-            if (serviceName is not null && _services.Services.Any(s => string.Equals(s.ServiceName, serviceName, StringComparison.OrdinalIgnoreCase)))
+            if (FindServiceByEventName(serviceName) is not null)
                 return ($"Restart \"{serviceName}\" service", row);
         }
         return (null, null);
+    }
+
+    /// <summary>The SCM insertion string is the service's display name (the key name is only in
+    /// the event's binary data), so this matches DisplayName first and ServiceName as a fallback.</summary>
+    private ServiceRow? FindServiceByEventName(string? name)
+    {
+        if (name is null) return null;
+        return _services.Services.FirstOrDefault(s => string.Equals(s.DisplayName, name, StringComparison.OrdinalIgnoreCase))
+            ?? _services.Services.FirstOrDefault(s => string.Equals(s.ServiceName, name, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Service Control Manager 7031's first insertion string is the service's display
@@ -1063,9 +1077,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         if (entry?.ActionKind != EventKbActionKind.RestartService) return;
 
         string? serviceName = ExtractServiceName(row);
-        var target = serviceName is null
-            ? null
-            : _services.Services.FirstOrDefault(s => string.Equals(s.ServiceName, serviceName, StringComparison.OrdinalIgnoreCase));
+        var target = FindServiceByEventName(serviceName);
         if (target is null)
         {
             StatusText = $"Couldn't find a live service named \"{serviceName}\" to restart - it may have been renamed or removed.";
@@ -1209,7 +1221,9 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        StopFollow();
+        // Not StopFollow(): that also flips IsFollowing back to false, which (called from the
+        // IsFollowing setter) would leave the toggle unchecked while the new watcher runs.
+        DisposeWatch();
         string xpath = string.IsNullOrWhiteSpace(RawXPathText) ? "*" : RawXPathText;
         int generation = ++_followGeneration;
         // BeginInvoke, never Invoke: disposing the watcher (StopFollow, on the UI thread) waits for
@@ -1241,14 +1255,19 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     /// EventsViewModel.OnTabDeactivated).</summary>
     public void StopFollow()
     {
-        _followGeneration++;
-        _watchHandle?.Dispose();
-        _watchHandle = null;
+        DisposeWatch();
         if (_isFollowing)
         {
             _isFollowing = false;
             OnPropertyChanged(nameof(IsFollowing));
         }
+    }
+
+    private void DisposeWatch()
+    {
+        _followGeneration++;
+        _watchHandle?.Dispose();
+        _watchHandle = null;
     }
 
     /// <summary>Called by MainWindow when the TabControl's selection moves away from the Events
@@ -1440,6 +1459,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     /// synthesized time-bounded xpath instead of the filter bar's.</summary>
     private async Task RunMultiChannelQueryAsync(bool reset)
     {
+        if (RefuseWhileMultiChannelLoading()) return;
         if (reset)
         {
             var selected = ChannelTree.SelectMany(g => g.Children)
@@ -1492,6 +1512,16 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>The multi-channel query, "Show +/-5 minutes" and "Show whole operation" all share
+    /// MultiChannelResults/_multiChannelStructuredXml/_multiChannelBookmark, so a second one started
+    /// while one is in flight would mix both result sets and bookmarks - refused instead.</summary>
+    private bool RefuseWhileMultiChannelLoading()
+    {
+        if (!IsMultiChannelLoading) return false;
+        MultiChannelStatusText = "A multi-channel query is still running - wait for it to finish, then try again.";
+        return true;
+    }
+
     // ---- #113: provider catalog browser ----
 
     private async Task LoadProviderNamesAsync()
@@ -1501,12 +1531,17 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         foreach (var n in names) ProviderNames.Add(n);
     }
 
+    private int _providerMetadataGeneration;
+
     private async Task LoadProviderMetadataAsync(string? providerName)
     {
+        // A generation, not a "still selected?" check: A -> B -> A would pass that check twice.
+        int generation = ++_providerMetadataGeneration;
         ProviderEvents.Clear();
         if (string.IsNullOrWhiteSpace(providerName)) return;
 
         var events = await Task.Run(() => _service.GetProviderMetadata(providerName));
+        if (generation != _providerMetadataGeneration) return;
         foreach (var e in events) ProviderEvents.Add(e);
     }
 
@@ -1593,6 +1628,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     private async Task ShowAroundTimeAsync(EventRecordRow? row)
     {
         if (row is null || row.TimeCreated == DateTime.MinValue) return;
+        if (RefuseWhileMultiChannelLoading()) return;
 
         var start = row.TimeCreated.ToUniversalTime().AddMinutes(-5);
         var end = row.TimeCreated.ToUniversalTime().AddMinutes(5);
@@ -1635,6 +1671,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     private async Task CorrelateByActivityIdAsync(EventRecordRow? row)
     {
         if (row?.ActivityId is not { } id || id == Guid.Empty) return;
+        if (RefuseWhileMultiChannelLoading()) return;
 
         string xpath = $"*[System[Correlation[@ActivityID='{id:B}']]]";
         var channels = ChannelTree.SelectMany(g => g.Children).Where(c => !c.IsGroup && c.IsAccessible).Select(c => c.Name).ToList();

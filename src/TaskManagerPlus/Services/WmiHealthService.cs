@@ -173,13 +173,31 @@ public static class WmiHealthService
             // other event-log read in this app.
         }
 
-        var runningProcessNames = SafeGetProcessNamesById();
         return events
             .GroupBy(e => e.ClientProcessId)
             .Select(g =>
             {
-                bool running = g.Key is { } pid && runningProcessNames.TryGetValue(pid, out _);
-                string name = g.Key is { } pid2 && runningProcessNames.TryGetValue(pid2, out var n) ? n : "Unknown (process has since exited, or the pid was reused)";
+                // A PID seen over 30 days may belong to a different process now - only name the
+                // current owner when it was already running at the group's oldest error.
+                var oldest = g.Min(e => e.TimeCreated);
+                string name = "Unknown (process has since exited, or the pid was reused)";
+                bool running = false;
+                if (g.Key is { } pid && TryGetProcessIdentity(pid, out var procName, out var startTime))
+                {
+                    if (startTime is { } started && started <= oldest)
+                    {
+                        name = procName;
+                        running = true;
+                    }
+                    else if (startTime is null)
+                    {
+                        name = $"Unknown (PID now belongs to {procName}, but its start time couldn't be read to confirm it's the same process)";
+                    }
+                    else
+                    {
+                        name = $"Unknown (PID reused - the current {procName} started after these errors)";
+                    }
+                }
                 return new WmiActivityErrorGroup
                 {
                     ClientProcessId = g.Key,
@@ -194,24 +212,23 @@ public static class WmiHealthService
             .ToList();
     }
 
-    /// <summary>A pid->name snapshot, disposing every Process handle immediately after reading the
-    /// one field needed - Process.GetProcesses() hands back live handles that should be released
-    /// promptly rather than left for the finalizer, the same pattern
-    /// ProcessMonitorService.Sample already follows for its own GetProcesses() call.</summary>
-    private static Dictionary<int, string> SafeGetProcessNamesById()
+    /// <summary>The live process currently holding <paramref name="pid"/>, if any - name plus start
+    /// time (null when it can't be read, e.g. access denied), disposing the handle immediately.</summary>
+    private static bool TryGetProcessIdentity(int pid, out string name, out DateTime? startTime)
     {
-        var result = new Dictionary<int, string>();
-        Process[] processes;
-        try { processes = Process.GetProcesses(); }
-        catch { return result; }
-
-        foreach (var proc in processes)
+        name = string.Empty;
+        startTime = null;
+        try
         {
-            try { result[proc.Id] = proc.ProcessName; }
-            catch { /* exited between GetProcesses() and now - skip */ }
-            finally { proc.Dispose(); }
+            using var proc = Process.GetProcessById(pid);
+            name = proc.ProcessName;
+            try { startTime = proc.StartTime; } catch { /* protected/inaccessible - leave unknown */ }
+            return true;
         }
-        return result;
+        catch
+        {
+            return false; // no such process (exited), or it exited mid-read
+        }
     }
 
     #endregion

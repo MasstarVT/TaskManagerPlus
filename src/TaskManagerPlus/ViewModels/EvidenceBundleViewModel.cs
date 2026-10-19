@@ -29,7 +29,7 @@ public enum EvidenceBundleStage
 /// review screen before anything is finalized, and #987's independent "Copy forum post" command
 /// that needs no full collection run at all.
 /// </summary>
-public sealed class EvidenceBundleViewModel : ObservableObject
+public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
 {
     private readonly EvidenceBundleService.CollectContext _ctx;
     private ScrubRuleSet _scrubRuleSet = ScrubRulesService.Load();
@@ -326,6 +326,10 @@ public sealed class EvidenceBundleViewModel : ObservableObject
         catch { /* best-effort - a leftover temp folder isn't worth failing over */ }
         _stagingDir = null;
     }
+
+    /// <summary>App exit: a run left at the scrub-review screen still has its staging folder
+    /// (unscrubbed logs, dumps) in %TEMP% - delete it rather than leave it behind.</summary>
+    public void Dispose() => CleanupStaging();
 
     private List<HealthIssue> BuildFindingsSnapshot()
     {
