@@ -1316,6 +1316,7 @@ public sealed class EventLogService
         {
             // Provider/log unavailable - degrade to "none found", same as every other event-log
             // read in this service.
+            _gpuReadFailed = true;
         }
         return result.OrderByDescending(e => e.TimeCreated).ToList();
     }
@@ -1386,6 +1387,7 @@ public sealed class EventLogService
         {
             // Provider/log unavailable - degrade to "none found", same as every other event-log
             // read in this service.
+            _gpuReadFailed = true;
         }
         return result.OrderByDescending(e => e.TimeCreated).ToList();
     }
@@ -1431,14 +1433,20 @@ public sealed class EventLogService
         catch
         {
             // Provider/log unavailable - degrade to "no bugcheck correlation available".
+            _gpuReadFailed = true;
         }
         return result;
     }
 
     /// <summary>#677: composes ReadGpuTdrEvents/ReadGpuDeviceRemovedEvents with the unrecovered-
     /// reset correlation above into one snapshot for the GPU tab's event list.</summary>
+    // Set by the three reads below when their log query fails, so ReadGpuResetSummary can tell
+    // "couldn't read" from "0 resets" (each read stays empty-on-failure for its other callers).
+    [ThreadStatic] private static bool _gpuReadFailed;
+
     public GpuResetSummary ReadGpuResetSummary()
     {
+        _gpuReadFailed = false;
         var tdrEvents = ReadGpuTdrEvents();
         var deviceRemoved = ReadGpuDeviceRemovedEvents();
         var bugchecks = ReadKernelPower41BugcheckEvents()
@@ -1458,6 +1466,7 @@ public sealed class EventLogService
             TdrEvents = tdrEvents,
             DeviceRemovedEvents = deviceRemoved,
             UnrecoveredResetCount = unrecovered,
+            ReadFailed = _gpuReadFailed,
         };
     }
 

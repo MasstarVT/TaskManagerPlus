@@ -38,7 +38,10 @@ public static class CpuTortureTestService
         for (int t = 0; t < threadCount; t++)
         {
             int threadIndex = t;
-            tasks[t] = Task.Run(() =>
+            // LongRunning gives each worker its own thread instead of pinning the shared thread
+            // pool: at 2x threads the pool otherwise starves, and the stress-test safety monitor's
+            // own checks stall behind the workers.
+            tasks[t] = Task.Factory.StartNew(() =>
             {
                 try
                 {
@@ -51,7 +54,7 @@ public static class CpuTortureTestService
                     // reported per-thread below.
                     Interlocked.CompareExchange(ref faultMessage, $"Thread {threadIndex}: {ex.Message}", null);
                 }
-            });
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
 
         await Task.WhenAll(tasks);

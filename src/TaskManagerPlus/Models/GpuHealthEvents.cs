@@ -65,4 +65,7 @@ public sealed class GpuResetSummary
     public List<GpuTdrEvent> TdrEvents { get; init; } = new();
     public List<GpuDeviceRemovedEvent> DeviceRemovedEvents { get; init; } = new();
     public int UnrecoveredResetCount { get; init; }
+    /// <summary>One of the System/Application log reads failed, so the lists may be incomplete -
+    /// show the counts as unknown rather than "0".</summary>
+    public bool ReadFailed { get; init; }
 }

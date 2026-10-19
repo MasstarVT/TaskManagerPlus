@@ -396,14 +396,16 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
             DeviceRemovedEvents.Clear();
             foreach (var e in summary.DeviceRemovedEvents) DeviceRemovedEvents.Add(e);
             UnrecoveredResetCount = summary.UnrecoveredResetCount;
-            TdrEventCountText = TdrEvents.Count.ToString(CultureInfo.CurrentCulture);
-            UnrecoveredResetCountText = UnrecoveredResetCount.ToString(CultureInfo.CurrentCulture);
+            TdrEventCountText = summary.ReadFailed && TdrEvents.Count == 0 ? "Unknown" : TdrEvents.Count.ToString(CultureInfo.CurrentCulture);
+            UnrecoveredResetCountText = summary.ReadFailed && UnrecoveredResetCount == 0 ? "Unknown" : UnrecoveredResetCount.ToString(CultureInfo.CurrentCulture);
             GpuEventHistoryLoaded = true;
 
             DriverVersionBuckets.Clear();
             foreach (var b in buckets) DriverVersionBuckets.Add(b);
 
-            GpuEventHistoryStatusText = TdrEvents.Count == 0 && DeviceRemovedEvents.Count == 0
+            GpuEventHistoryStatusText = summary.ReadFailed
+                ? "Some GPU event-log reads failed - the counts below may be incomplete."
+                : TdrEvents.Count == 0 && DeviceRemovedEvents.Count == 0
                 ? "No GPU TDR or device-removed events found in the last 30 days."
                 : string.Empty;
 

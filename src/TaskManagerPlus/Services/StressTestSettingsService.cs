@@ -57,7 +57,7 @@ public static class StressTestSettingsService
             var dir = Path.GetDirectoryName(SettingsPath)!;
             Directory.CreateDirectory(dir);
             var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(SettingsPath, json);
+            AppPaths.WriteAllTextAtomic(SettingsPath, json);
         }
         catch
         {
