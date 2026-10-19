@@ -74,7 +74,8 @@ public sealed class ThermalZoneService : IDisposable
                 TemperatureC = rawTemp is { } t and > 0 ? t - 273.15 : null,
                 HighPrecisionTemperatureC = rawHighPrecisionTemp is { } hp and > 0 ? hp / 10.0 - 273.15 : null,
                 ThrottlePercent = throttlePercent,
-                PassiveLimitPercent = passiveLimit,
+                // Same guard: a raw 0 is an unpopulated zone, not "limited to 0%".
+                PassiveLimitPercent = passiveLimit is { } limit and > 0 and <= 100 ? limit : null,
             });
         }
 

@@ -28,6 +28,7 @@ public sealed class ThermalZoneReading
     public double? ThrottlePercent { get; init; }
 
     /// <summary>From the "% Passive Limit" counter - the passive-cooling processor-frequency cap
-    /// ACPI is currently requesting for this zone, as a percent of full speed.</summary>
+    /// ACPI is currently requesting for this zone, as a percent of full speed. Null when the zone
+    /// doesn't expose it or reports a raw 0 (unpopulated) or anything outside 1-100.</summary>
     public double? PassiveLimitPercent { get; init; }
 }

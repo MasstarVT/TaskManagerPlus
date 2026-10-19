@@ -307,40 +307,42 @@
                     <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
                         <StackPanel>
                             <TextBlock Text="Top GPU processes" Style="{StaticResource CardTitle}" />
-                            <ItemsControl ItemsSource="{Binding TopGpuProcesses}" MaxHeight="260">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
-                                                    <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
-                                                </TextBlock>
-                                            </StackPanel>
-                                            <Border Grid.Column="1" Background="{DynamicResource AccentMutedBrush}" CornerRadius="10" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
-                                                <Border.Style>
-                                                    <Style TargetType="Border">
-                                                        <Setter Property="Visibility" Value="Visible" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding TopGpuEngine}" Value="">
-                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Border.Style>
-                                                <TextBlock Text="{Binding TopGpuEngine}" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
-                                            </Border>
-                                            <TextBlock Grid.Column="2" Text="{Binding GpuPercent, StringFormat={}{0:0.0}%}"
-                                                       FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding TopGpuProcesses}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontStrong}" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
+                                                        <Run Text="PID " /><Run Text="{Binding Pid, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <Border Grid.Column="1" Background="{DynamicResource AccentMutedBrush}" CornerRadius="10" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding TopGpuEngine}" Value="">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <TextBlock Text="{Binding TopGpuEngine}" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                                                </Border>
+                                                <TextBlock Grid.Column="2" Text="{Binding GpuPercent, StringFormat={}{0:0.0}%}"
+                                                           FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </StackPanel>
                     </Border>
                     <!-- #674: VRAM pressure - committed usage vs. installed capacity, plus the shared-VRAM
@@ -599,51 +601,53 @@
 
                             <!-- #670: per-event driver module + recovery outcome. -->
                             <TextBlock Text="TDR events" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,6" />
-                            <ItemsControl ItemsSource="{Binding TdrEvents}" MaxHeight="240" Margin="0,0,0,10">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock FontSize="{StaticResource FontBody}">
-                                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
-                                                    <Run Text=" — driver " /><Run Text="{Binding DriverModule, Mode=OneWay}" FontWeight="SemiBold" />
-                                                </TextBlock>
-                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" Text="{Binding Message}" />
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Right">
-                                                <TextBlock Text="Recovered" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="{DynamicResource SuccessBrush}">
-                                                    <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding Recovered}" Value="True">
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
-                                                <TextBlock Text="Not recovered" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}">
-                                                    <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding Recovered}" Value="False">
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
-                                            </StackPanel>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10">
+                                <ItemsControl ItemsSource="{Binding TdrEvents}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                    <TextBlock FontSize="{StaticResource FontBody}">
+                                                        <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                        <Run Text=" — driver " /><Run Text="{Binding DriverModule, Mode=OneWay}" FontWeight="SemiBold" />
+                                                    </TextBlock>
+                                                    <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" Text="{Binding Message}" />
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Top" HorizontalAlignment="Right">
+                                                    <TextBlock Text="Recovered" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="{DynamicResource SuccessBrush}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Recovered}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <TextBlock Text="Not recovered" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Recovered}" Value="False">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                             <TextBlock Text="No TDR events found in the last 30 days.">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
@@ -659,19 +663,21 @@
 
                             <!-- #677: DXGI device-removed application crashes. -->
                             <TextBlock Text="DXGI device-removed crashes" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,14,0,6" />
-                            <ItemsControl ItemsSource="{Binding DeviceRemovedEvents}" MaxHeight="180" Margin="0,0,0,10">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Margin="0,0,0,8">
-                                            <TextBlock FontSize="{StaticResource FontBody}">
-                                                <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
-                                                <Run Text=" — " /><Run Text="{Binding ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
-                                            </TextBlock>
-                                            <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" Text="{Binding Message}" />
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10">
+                                <ItemsControl ItemsSource="{Binding DeviceRemovedEvents}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,0,0,8">
+                                                <TextBlock FontSize="{StaticResource FontBody}">
+                                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                    <Run Text=" — " /><Run Text="{Binding ProcessName, Mode=OneWay}" FontWeight="SemiBold" />
+                                                </TextBlock>
+                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}" TextWrapping="Wrap" Text="{Binding Message}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                             <TextBlock Text="No DXGI device-removed crashes found in the last 30 days.">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
@@ -690,22 +696,24 @@
                             <TextBlock Text="Pre-TDR hang detections" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,14,0,6" />
                             <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,8" TextWrapping="Wrap"
                                        Text="GPU Engine '3D' utilization stuck at the same reading for 5+ seconds straight while a foreground app was running - can be logged before the driver ever actually resets. Quick flag, not a verdict." />
-                            <ItemsControl ItemsSource="{Binding HangEvents}" MaxHeight="180">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Margin="0,0,0,8">
-                                            <TextBlock FontSize="{StaticResource FontBody}">
-                                                <Run Text="{Binding DetectedAt, StringFormat={}{0:g}, Mode=OneWay}" />
-                                                <Run Text=" — " /><Run Text="{Binding ForegroundProcessName, Mode=OneWay}" FontWeight="SemiBold" />
-                                            </TextBlock>
-                                            <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
-                                                <Run Text="{Binding AdapterName, Mode=OneWay}" /><Run Text=" stuck at " /><Run Text="{Binding StuckAtPercent, StringFormat={}{0:0.#}%, Mode=OneWay}" />
-                                                <Run Text=" for " /><Run Text="{Binding DurationSeconds, StringFormat={}{0:0}s, Mode=OneWay}" /><Run Text="+" />
-                                            </TextBlock>
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding HangEvents}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,0,0,8">
+                                                <TextBlock FontSize="{StaticResource FontBody}">
+                                                    <Run Text="{Binding DetectedAt, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                    <Run Text=" — " /><Run Text="{Binding ForegroundProcessName, Mode=OneWay}" FontWeight="SemiBold" />
+                                                </TextBlock>
+                                                <TextBlock Style="{StaticResource SubStat}" FontSize="{StaticResource FontCaption}">
+                                                    <Run Text="{Binding AdapterName, Mode=OneWay}" /><Run Text=" stuck at " /><Run Text="{Binding StuckAtPercent, StringFormat={}{0:0.#}%, Mode=OneWay}" />
+                                                    <Run Text=" for " /><Run Text="{Binding DurationSeconds, StringFormat={}{0:0}s, Mode=OneWay}" /><Run Text="+" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                             <TextBlock Text="No pre-TDR hangs detected yet this session.">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">

@@ -33,18 +33,19 @@
                         <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}"
                                    Text="DPC/ISR latency capture unavailable — logman.exe/tracerpt.exe weren't found on this system." />
                     </Border>
-                    <!-- #202/#214: headline meters. -->
+                    <!-- #202/#214: headline meters. The Measured* properties are null (shown as "—")
+                         until a session has parsed a DPC, so nothing here reads as a 0 µs measurement. -->
                     <UniformGrid Columns="3" Margin="0,0,0,16">
                         <views:VfdMeter Title="Worst DPC" Glow="True" Margin="0,0,8,0"
-                                        ValueText="{Binding HighestDpcUs, StringFormat={}{0:0.#}}" Unit="µs"
-                                        SubText="{Binding HighestDpcDriver, StringFormat=Driver: {0}, TargetNullValue=No driver measured yet}"
-                                        AccentBrush="{Binding HighestDpcUs, Converter={StaticResource DpcTimeToBrushConverter}}" />
+                                        ValueText="{Binding MeasuredHighestDpcUs, StringFormat={}{0:0.#}, TargetNullValue=—}" Unit="µs"
+                                        SubText="{Binding MeasuredHighestDpcDriver, StringFormat=Driver: {0}, TargetNullValue=Not measured - start a session on the DPC &amp; ISR section}"
+                                        AccentBrush="{Binding MeasuredHighestDpcUs, Converter={StaticResource DpcTimeToBrushConverter}}" />
                         <views:VfdMeter Title="Avg / P99" Glow="False" Margin="8,0,8,0"
-                                        ValueText="{Binding RollingAvgUs, StringFormat={}{0:0.#}}" Unit="µs"
-                                        SubText="{Binding RollingP99Us, StringFormat=P99: {0:0.#} µs}"
+                                        ValueText="{Binding MeasuredRollingAvgUs, StringFormat={}{0:0.#}, TargetNullValue=—}" Unit="µs"
+                                        SubText="{Binding MeasuredRollingP99Us, StringFormat=P99: {0:0.#} µs, TargetNullValue=P99: not measured}"
                                         AccentBrush="{DynamicResource TextSecondaryBrush}" />
                         <views:VfdMeter Title="Audio-glitch events" Glow="True" Margin="8,0,0,0"
-                                        ValueText="{Binding AudioGlitchCount}"
+                                        ValueText="{Binding MeasuredAudioGlitchCount, TargetNullValue=—}"
                                         SubText="{Binding AudioGlitchThresholdUs, StringFormat=DPCs over {0:0} µs — likely dropouts}"
                                         AccentBrush="{DynamicResource DangerBrush}" />
                     </UniformGrid>
@@ -59,7 +60,7 @@
                                 <Border HorizontalAlignment="Left" Height="10" CornerRadius="6" Background="{DynamicResource DangerBrush}"
                                         Width="{Binding WatchdogHeadroomPercent, Converter={StaticResource PercentToWidthConverter}, ConverterParameter=300}" />
                             </Border>
-                            <TextBlock Text="{Binding WatchdogHeadroomPercent, StringFormat={}{0:0.##}% of the DPC_WATCHDOG_VIOLATION threshold — see the Stability tab for any 0x133 bugchecks.}"
+                            <TextBlock Text="{Binding MeasuredWatchdogHeadroomPercent, StringFormat={}{0:0.##}% of the DPC_WATCHDOG_VIOLATION threshold — see the Stability tab for any 0x133 bugchecks., TargetNullValue=No DPC measured yet - start a session on the DPC &amp; ISR section to compare against the watchdog threshold.}"
                                        Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" Margin="0,6,0,0" />
                         </StackPanel>
                     </Border>
@@ -826,9 +827,9 @@
                             </DataGrid>
                         </StackPanel>
                     </Border>
-                    <!-- #273: optional kernel "Synchronization" perf-counter category - hidden entirely
-                         (not shown with zeroed values) unless the machine was deliberately configured for
-                         kernel-contention diagnostics, per CLAUDE.md's "degrade to hidden" rule. -->
+                    <!-- #273: kernel "Synchronization" perf-counter category (_Total instance) - hidden
+                         entirely (not shown with zeroed values) when the category or its counters can't be
+                         read, per CLAUDE.md's "degrade to hidden" rule. -->
                     <Border Margin="0,0,0,16">
                         <Border.Style>
                             <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
@@ -842,7 +843,7 @@
                         </Border.Style>
                         <StackPanel>
                             <TextBlock Text="Kernel synchronization contention" FontWeight="SemiBold" Margin="0,0,0,6" />
-                            <TextBlock Text="The optional &quot;Synchronization&quot; performance-counter category is enabled on this system - spinlock and executive-resource contention, straight from the kernel."
+                            <TextBlock Text="System-wide totals from Windows' &quot;Synchronization&quot; performance-counter category - spinlock and executive-resource contention, straight from the kernel."
                                        Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                             <UniformGrid Columns="3" Margin="0,0,0,10">
                                 <views:VfdMeter Title="Spinlock acquires/sec" Glow="True" Margin="0,0,8,0"
@@ -979,7 +980,7 @@
                             <TextBlock Text="Aggregate %Time-in-GC and collection counts per managed process, via the .NET CLR Memory performance counters - not a real per-pause millisecond duration (that would need the optional ETW-based deep mode, which isn't implemented here). A sustained high %Time in GC is still a strong signal of GC-driven stalls."
                                        Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                             <views:VfdMeter Title="Worst %Time in GC right now" Glow="True" HorizontalAlignment="Left" MinWidth="260" Margin="0,0,0,10"
-                                            ValueText="{Binding WorstGcPercentTimeInGc, StringFormat={}{0:0.#}%}" Unit="%"
+                                            ValueText="{Binding WorstGcPercentTimeInGc, StringFormat={}{0:0.#}}" Unit="%"
                                             SubText="{Binding WorstGcProcessName}"
                                             AccentBrush="{DynamicResource WarningBrush}" />
                             <DataGrid ItemsSource="{Binding GcProcessRows}" MaxHeight="220" IsReadOnly="True">
@@ -1055,13 +1056,13 @@
                             </WrapPanel>
                             <UniformGrid Columns="3" Margin="0,0,0,8">
                                 <views:VfdMeter Title="p50" Glow="False" Margin="0,0,8,0"
-                                                ValueText="{Binding VBlankSnapshot.P50Ms, StringFormat={}{0:0.###}}" Unit="ms"
+                                                ValueText="{Binding VBlankSnapshot.MeasuredP50Ms, StringFormat={}{0:0.###}, TargetNullValue=—}" Unit="ms"
                                                 AccentBrush="{DynamicResource TextSecondaryBrush}" />
                                 <views:VfdMeter Title="p99" Glow="True" Margin="8,0,8,0"
-                                                ValueText="{Binding VBlankSnapshot.P99Ms, StringFormat={}{0:0.###}}" Unit="ms"
+                                                ValueText="{Binding VBlankSnapshot.MeasuredP99Ms, StringFormat={}{0:0.###}, TargetNullValue=—}" Unit="ms"
                                                 AccentBrush="{DynamicResource WarningBrush}" />
                                 <views:VfdMeter Title="Max" Glow="True" Margin="8,0,0,0"
-                                                ValueText="{Binding VBlankSnapshot.MaxMs, StringFormat={}{0:0.###}}" Unit="ms"
+                                                ValueText="{Binding VBlankSnapshot.MeasuredMaxMs, StringFormat={}{0:0.###}, TargetNullValue=—}" Unit="ms"
                                                 AccentBrush="{DynamicResource DangerBrush}" />
                             </UniformGrid>
                             <TextBlock Text="{Binding VBlankSnapshot.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" />
@@ -1095,7 +1096,8 @@
                             </WrapPanel>
 
                             <!-- #251: headline stutter numbers for the busiest captured app. -->
-                            <TextBlock Text="{Binding HeadlinePresentRow.ProcessName, StringFormat=Headline app: {0}, TargetNullValue=No app captured yet - press Start and let it render.}"
+                            <!-- FallbackValue too: with no headline row the path itself fails, which TargetNullValue doesn't cover. -->
+                            <TextBlock Text="{Binding HeadlinePresentRow.ProcessName, StringFormat=Headline app: {0}, TargetNullValue=No app captured yet - press Start and let it render., FallbackValue=No app captured yet - press Start and let it render.}"
                                        FontWeight="SemiBold" FontSize="{StaticResource FontStrong}" Margin="0,0,0,6" />
                             <UniformGrid Columns="4" Margin="0,0,0,4">
                                 <views:VfdMeter Title="Avg FPS" Glow="True" Margin="0,0,8,0"
@@ -1263,8 +1265,8 @@
                             </WrapPanel>
                             <UniformGrid Columns="2" Margin="0,0,0,10">
                                 <views:VfdMeter Title="Queue delay p99" Glow="True" Margin="0,0,8,0"
-                                                ValueText="{Binding InputLatencySnapshot.P99DelayMs, StringFormat={}{0:0.#}}" Unit="ms"
-                                                SubText="{Binding InputLatencySnapshot.MaxDelayMs, StringFormat={}max {0:0.#} ms}"
+                                                ValueText="{Binding InputLatencySnapshot.MeasuredP99DelayMs, StringFormat={}{0:0.#}, TargetNullValue=—}" Unit="ms"
+                                                SubText="{Binding InputLatencySnapshot.MeasuredMaxDelayMs, StringFormat={}max {0:0.#} ms, TargetNullValue=Not measured yet}"
                                                 AccentBrush="{DynamicResource WarningBrush}" />
                                 <views:VfdMeter Title="Samples" Glow="False" Margin="8,0,0,0"
                                                 ValueText="{Binding InputLatencySnapshot.SampleCount}"
@@ -1507,7 +1509,7 @@
                                 <views:VfdMeter Title="Compressed-memory working set" Glow="True" Margin="0,0,8,0"
                                                 Percent="{Binding MemoryCompression.PercentOfTotalRam}"
                                                 ValueText="{Binding MemoryCompression.WorkingSetBytes, Converter={StaticResource BytesToReadableConverter}}"
-                                                SubText="{Binding MemoryCompression.PercentOfTotalRam, StringFormat={}{0:0.1}% of total RAM}"
+                                                SubText="{Binding MemoryCompression.PercentOfTotalRam, StringFormat={}{0:0.0}% of total RAM}"
                                                 AccentBrush="{Binding MemoryCompression.PercentOfTotalRam, Converter={StaticResource PercentToBrushConverter}}" />
                                 <views:VfdMeter Title="Modified page list" Glow="False" Margin="8,0,0,0"
                                                 ValueText="{Binding StandbyListInfo.ModifiedPageListBytes, Converter={StaticResource BytesToReadableConverter}}"

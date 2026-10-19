@@ -26,10 +26,16 @@ public static class PowerRequestService
         try { (output, exitCode) = await RunProcessAsync("powercfg.exe", "/requests", 15000); }
         catch (Exception ex) { return (new List<PowerRequestEntry>(), $"Couldn't run powercfg /requests: {ex.Message}"); }
 
-        if (output.Contains("administrator", StringComparison.OrdinalIgnoreCase))
-            return (new List<PowerRequestEntry>(), "powercfg /requests needs administrator privileges (this app should already be elevated - try relaunching it).");
-        if (exitCode is not 0 and not null)
-            return (new List<PowerRequestEntry>(), "Couldn't read outstanding power requests.");
+        // A timeout (null) parsed as an empty list would claim nothing is holding the PC awake.
+        if (exitCode is null)
+            return (new List<PowerRequestEntry>(), "powercfg /requests timed out - couldn't read outstanding power requests.");
+        if (exitCode != 0)
+        {
+            // Only checked on failure: a successful listing can contain "Administrator" in a path.
+            return (new List<PowerRequestEntry>(), output.Contains("administrator", StringComparison.OrdinalIgnoreCase)
+                ? "powercfg /requests needs administrator privileges (this app should already be elevated - try relaunching it)."
+                : "Couldn't read outstanding power requests.");
+        }
 
         var requests = Parse(output);
         string status = requests.Count == 0

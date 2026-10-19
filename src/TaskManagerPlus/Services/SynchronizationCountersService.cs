@@ -4,25 +4,30 @@ using TaskManagerPlus.Models;
 namespace TaskManagerPlus.Services;
 
 /// <summary>
-/// #273: the optional Windows "Synchronization" performance-counter category (Spinlock Acquires/sec,
-/// Spinlock Contentions/sec, Exec. Resource Contentions/sec) - a kernel-contention view that isn't
-/// enabled by default (it requires a boot-time kernel performance-counter flag most machines never
-/// set). Existence-checked the same way PerCoreDpcService already guards its own optional
-/// "Processor Information" queue counters (PerformanceCounterCategory.Exists), and degrades to
+/// #273: the Windows "Synchronization" performance-counter category (Spinlock Acquires/sec,
+/// Spinlock Contentions/sec, Exec. Resource Total Contentions/sec) - a kernel-contention view.
+/// The category is multi-instance (one instance per logical processor plus "_Total"), so values
+/// are read from the "_Total" instance; a PerformanceCounter created without an instance throws
+/// on its first read, which is what used to make this card look unavailable everywhere. Read
+/// through CategorySampler (one category read per tick, not one per counter). Degrades to
 /// IsAvailable=false - the card this backs is hidden entirely, never shown with zeroed values, per
-/// CLAUDE.md's "degrade to hidden, never fabricate" rule. This is the common case; seeing real
-/// numbers here means the machine was deliberately configured for kernel-contention diagnostics.
-///
-/// A single, instance-less category (like "System"/"Memory"), so no per-instance enumeration is
-/// needed - unlike PerCoreDpcService's per-core counters.
+/// CLAUDE.md's "degrade to hidden, never fabricate" rule.
 /// </summary>
 public sealed class SynchronizationCountersService : IDisposable
 {
     private const string Category = "Synchronization";
+    private const string TotalInstance = "_Total";
+    private const string AcquiresCounter = "Spinlock Acquires/sec";
+    private const string ContentionsCounter = "Spinlock Contentions/sec";
 
-    private PerformanceCounter? _acquires;
-    private PerformanceCounter? _contentions;
-    private PerformanceCounter? _execResourceContentions;
+    // Current Windows 10/11 builds name it "Exec. Resource Total Contentions/sec"; the shorter
+    // name is kept as a fallback in case an older build used it.
+    private static readonly string[] ExecResourceContentionNames = { "Exec. Resource Total Contentions/sec", "Exec. Resource Contentions/sec" };
+
+    private readonly CategorySampler? _sampler;
+    private readonly bool _hasAcquires;
+    private readonly bool _hasContentions;
+    private readonly string? _execResourceCounter;
 
     public bool IsAvailable { get; }
 
@@ -36,10 +41,13 @@ public sealed class SynchronizationCountersService : IDisposable
                 return;
             }
 
-            _acquires = TryCreate("Spinlock Acquires/sec");
-            _contentions = TryCreate("Spinlock Contentions/sec");
-            _execResourceContentions = TryCreate("Exec. Resource Contentions/sec");
-            IsAvailable = _acquires is not null || _contentions is not null || _execResourceContentions is not null;
+            _sampler = new CategorySampler(Category);
+            _sampler.Tick(); // prime - a rate counter's first read is otherwise 0
+
+            _hasAcquires = _sampler.HasCounter(AcquiresCounter);
+            _hasContentions = _sampler.HasCounter(ContentionsCounter);
+            _execResourceCounter = ExecResourceContentionNames.FirstOrDefault(_sampler.HasCounter);
+            IsAvailable = _hasAcquires || _hasContentions || _execResourceCounter is not null;
         }
         catch
         {
@@ -47,40 +55,26 @@ public sealed class SynchronizationCountersService : IDisposable
         }
     }
 
-    private static PerformanceCounter? TryCreate(string counterName)
-    {
-        try
-        {
-            if (!PerformanceCounterCategory.CounterExists(counterName, Category)) return null;
-            var counter = new PerformanceCounter(Category, counterName, readOnly: true);
-            _ = counter.NextValue(); // prime it - a counter's first read is always 0/meaningless
-            return counter;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
     public SynchronizationCountersInfo Sample()
     {
-        if (!IsAvailable)
+        if (!IsAvailable || _sampler is null)
         {
             return new SynchronizationCountersInfo
             {
                 IsAvailable = false,
-                StatusText = "The optional \"Synchronization\" performance-counter category isn't enabled on this system - it requires a boot-time kernel flag most machines never set. This is the common case, not a failure.",
+                StatusText = "The \"Synchronization\" performance-counter category couldn't be read on this system.",
             };
         }
 
         try
         {
+            _sampler.Tick();
             return new SynchronizationCountersInfo
             {
                 IsAvailable = true,
-                SpinlockAcquiresPerSec = _acquires?.NextValue() ?? 0,
-                SpinlockContentionsPerSec = _contentions?.NextValue() ?? 0,
-                ExecResourceContentionsPerSec = _execResourceContentions?.NextValue() ?? 0,
+                SpinlockAcquiresPerSec = _hasAcquires ? _sampler.Value(AcquiresCounter, TotalInstance) : 0,
+                SpinlockContentionsPerSec = _hasContentions ? _sampler.Value(ContentionsCounter, TotalInstance) : 0,
+                ExecResourceContentionsPerSec = _execResourceCounter is { } exec ? _sampler.Value(exec, TotalInstance) : 0,
             };
         }
         catch
@@ -89,10 +83,9 @@ public sealed class SynchronizationCountersService : IDisposable
         }
     }
 
+    // CategorySampler holds no OS handles; kept IDisposable so the owning ViewModel's Dispose
+    // call site is unchanged.
     public void Dispose()
     {
-        _acquires?.Dispose();
-        _contentions?.Dispose();
-        _execResourceContentions?.Dispose();
     }
 }

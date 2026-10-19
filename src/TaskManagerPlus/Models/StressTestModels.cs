@@ -129,24 +129,33 @@ public sealed class StressTestCriteria
     public bool NoWheaDelta { get; init; }
     public bool NoTdr { get; init; }
     public bool ClockChecked { get; init; }
+
+    /// <summary>The criterion applied (ClockChecked) but no clock samples or no rated base clock
+    /// were available, so it couldn't be judged - shown as "Unknown", not a pass.</summary>
+    public bool ClockMeasured { get; init; }
     public bool SustainedClockAtOrAboveBase { get; init; }
+
+    /// <summary>False when no temperature sensor reported during the run - the temperature
+    /// criterion is then "Unknown", not a pass.</summary>
+    public bool TempMeasured { get; init; }
     public bool PeakTempBelowThrottlePoint { get; init; }
     public bool Aborted { get; init; }
     public string? AbortReason { get; init; }
 
+    // Unmeasured criteria are excluded rather than counted as passes; the per-row text says Unknown.
     public bool OverallPass => !Aborted
         && (!ComputationChecked || ComputationOk)
         && NoWheaDelta && NoTdr
-        && (!ClockChecked || SustainedClockAtOrAboveBase)
-        && PeakTempBelowThrottlePoint;
+        && (!ClockChecked || !ClockMeasured || SustainedClockAtOrAboveBase)
+        && (!TempMeasured || PeakTempBelowThrottlePoint);
 
     // Plain display-text properties (not just raw bools) so StressTestPanel.xaml can bind each row
     // directly without needing a multi-value converter for the *Checked/*Ok pairing.
     public string ComputationResultText => !ComputationChecked ? "N/A" : ComputationOk ? "Pass" : "Fail";
     public string WheaResultText => NoWheaDelta ? "Pass" : "Fail";
     public string TdrResultText => NoTdr ? "Pass" : "Fail";
-    public string ClockResultText => !ClockChecked ? "N/A" : SustainedClockAtOrAboveBase ? "Pass" : "Fail";
-    public string TempResultText => PeakTempBelowThrottlePoint ? "Pass" : "Fail";
+    public string ClockResultText => !ClockChecked ? "N/A" : !ClockMeasured ? "Unknown (no clock reading)" : SustainedClockAtOrAboveBase ? "Pass" : "Fail";
+    public string TempResultText => !TempMeasured ? "Unknown (no temperature sensor)" : PeakTempBelowThrottlePoint ? "Pass" : "Fail";
 }
 
 /// <summary>#700: the full result of one stress-test run - everything the report/history services

@@ -51,8 +51,12 @@ public static class SleepStudyService
         try
         {
             Directory.CreateDirectory(tempDir);
-            var (output, _) = await RunProcessAsync("powercfg.exe", $"/sleepstudy /xml /output \"{tempFile}\"", 30000);
-            if (!File.Exists(tempFile))
+            var (output, exitCode) = await RunProcessAsync("powercfg.exe", $"/sleepstudy /xml /output \"{tempFile}\"", 30000);
+            // Killed at the timeout, a half-written report parses as "no recognizable session data" -
+            // say what actually happened instead.
+            if (exitCode is null)
+                return (new List<SleepStudySession>(), new List<SleepStudyOffender>(), "powercfg /sleepstudy didn't finish within 30 seconds - no report was read.");
+            if (exitCode != 0 || !File.Exists(tempFile))
             {
                 string reason = output.Contains("administrator", StringComparison.OrdinalIgnoreCase)
                     ? "powercfg /sleepstudy needs administrator privileges (this app should already be elevated - try relaunching it)."

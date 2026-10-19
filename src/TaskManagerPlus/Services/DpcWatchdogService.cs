@@ -16,9 +16,10 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class DpcWatchdogService
 {
-    /// <summary>Windows' documented default single-DPC/ISR watchdog timeout when DPCTimeout isn't
-    /// overridden in the registry - used as the headroom-bar denominator in that case.</summary>
-    public const int DefaultTimeoutSeconds = 2;
+    /// <summary>The default single-DPC/ISR watchdog allotment when DPCTimeout isn't overridden in
+    /// the registry - used as the headroom-bar denominator in that case. Microsoft's own 0x133
+    /// example shows an allotment of 0x500 ticks (1280 x 15.625 ms = 20 s).</summary>
+    public const int DefaultTimeoutSeconds = 20;
 
     public static DpcWatchdogInfo Read()
     {

@@ -166,7 +166,8 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     // convention, plus a flat dashed line at the audio-glitch threshold (#214) so a user can see
     // at a glance how often samples cross it. Only advances while a measurement session (#213) is
     // running, since that's the only thing that produces real samples - see the class remarks.
-    public ObservableCollection<double> DpcLatencyHistory { get; } = NewHistory(0);
+    // Starts empty (not zero-filled) so the chart draws nothing until a session has measured something.
+    public ObservableCollection<double> DpcLatencyHistory { get; } = new();
     public ObservableCollection<double> ThresholdHistory { get; } = NewHistory(1000);
     private readonly LineSeries<double> _latencyGlow;
     private readonly LineSeries<double> _latencyCore;
@@ -197,6 +198,16 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     public double RollingAvgUs => _dpc.RollingAvgUs;
     public double RollingP99Us => _dpc.RollingP99Us;
     public int AudioGlitchCount => _dpc.AudioGlitchCount;
+
+    /// <summary>The headline tiles bind these instead: until a session has parsed at least one
+    /// DPC, the raw values above are 0, and a 0 µs tile reads as a measurement.</summary>
+    public bool HasDpcData => HighestDpcUs > 0;
+    public double? MeasuredHighestDpcUs => HasDpcData ? HighestDpcUs : null;
+    public string? MeasuredHighestDpcDriver => HasDpcData && HighestDpcDriver.Length > 0 ? HighestDpcDriver : null;
+    public double? MeasuredRollingAvgUs => HasDpcData ? RollingAvgUs : null;
+    public double? MeasuredRollingP99Us => HasDpcData ? RollingP99Us : null;
+    public int? MeasuredAudioGlitchCount => HasDpcData ? AudioGlitchCount : null;
+    public double? MeasuredWatchdogHeadroomPercent => HasDpcData ? WatchdogHeadroomPercent : null;
 
     /// <summary>#214: the audio-glitch/spike-context (#209) cutoff in microseconds - one knob for
     /// both, default 1000us (~a dropout's worth of buffer at 48kHz).</summary>
@@ -521,9 +532,9 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
 
     public AsyncRelayCommand AnalyzeHungWindowWaitChainCommand { get; }
 
-    // #273: optional kernel "Synchronization" perf-counter category - hidden entirely (see
-    // SynchronizationCounters.IsAvailable) unless the machine was deliberately configured for
-    // kernel-contention diagnostics. Rides the cheap _lightTimer (a plain perf-counter read).
+    // #273: kernel "Synchronization" perf-counter category - hidden entirely (see
+    // SynchronizationCounters.IsAvailable) when it can't be read. Rides the cheap _lightTimer
+    // (one category read per tick).
     private readonly SynchronizationCountersService _syncCounters = new();
     private SynchronizationCountersInfo _synchronizationCounters = new();
     public SynchronizationCountersInfo SynchronizationCounters { get => _synchronizationCounters; private set => SetProperty(ref _synchronizationCounters, value); }
@@ -783,6 +794,10 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     // The DPC rule reads a per-sample value that only changes every few seconds, so each sample
     // may fire it at most once - see EvaluateTriggerRules.
     private long _lastDpcTriggerSample = -1;
+
+    // Hung windows the WindowHung rule has already fired for. A window that stays hung would
+    // otherwise re-fire it every cooldown; pruned to the currently-hung set so a re-hang counts.
+    private readonly HashSet<IntPtr> _reportedHungHwnds = new();
 
     private string _lastTriggerStatusText = "No trigger has fired yet this session.";
     public string LastTriggerStatusText { get => _lastTriggerStatusText; private set => SetProperty(ref _lastTriggerStatusText, value); }
@@ -1477,6 +1492,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     {
         Watchdog = DpcWatchdogService.Read();
         OnPropertyChanged(nameof(WatchdogHeadroomPercent));
+        OnPropertyChanged(nameof(MeasuredWatchdogHeadroomPercent));
 
         // #225/#234: cheap NtQueryTimerResolution syscall - fine on the light tick, same tier as
         // the watchdog registry read above.
@@ -2119,10 +2135,11 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         if (IsMeasuring || !DpcToolsAvailable) return;
 
         _dpc.ResetSession();
+        RaiseHeadlineChanged(); // back to "not measured" until this session's first sample
         RebuildDriverRows();
         DriverIsrRows.Clear();
         RecentSpikes.Clear();
-        for (int i = 0; i < DpcLatencyHistory.Count; i++) DpcLatencyHistory[i] = 0;
+        DpcLatencyHistory.Clear();
         SessionSummaryText = string.Empty;
         MeasurementStatusText = "Starting DPC/ISR capture...";
 
@@ -2150,8 +2167,12 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
                     RecentSpikes.Clear();
                     foreach (var s in _dpc.RecentSpikes) RecentSpikes.Add(s);
 
-                    DpcLatencyHistory.Add(_dpc.HighestDpcUs);
-                    if (DpcLatencyHistory.Count > HistoryLength) DpcLatencyHistory.RemoveAt(0);
+                    // A sample that parsed no DPCs has nothing to plot - not a 0 µs point.
+                    if (HasDpcData)
+                    {
+                        DpcLatencyHistory.Add(_dpc.HighestDpcUs);
+                        if (DpcLatencyHistory.Count > HistoryLength) DpcLatencyHistory.RemoveAt(0);
+                    }
                     ThresholdHistory.Add(AudioGlitchThresholdUs);
                     if (ThresholdHistory.Count > HistoryLength) ThresholdHistory.RemoveAt(0);
 
@@ -2626,6 +2647,13 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(RollingP99Us));
         OnPropertyChanged(nameof(AudioGlitchCount));
         OnPropertyChanged(nameof(WatchdogHeadroomPercent));
+        OnPropertyChanged(nameof(HasDpcData));
+        OnPropertyChanged(nameof(MeasuredHighestDpcUs));
+        OnPropertyChanged(nameof(MeasuredHighestDpcDriver));
+        OnPropertyChanged(nameof(MeasuredRollingAvgUs));
+        OnPropertyChanged(nameof(MeasuredRollingP99Us));
+        OnPropertyChanged(nameof(MeasuredAudioGlitchCount));
+        OnPropertyChanged(nameof(MeasuredWatchdogHeadroomPercent));
     }
 
     /// <summary>Repaints chart axis text/gridlines to match the active theme family - see
@@ -2746,6 +2774,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     /// incident bundle.</summary>
     private void EvaluateTriggerRules(FlightRecorderSample sample)
     {
+        _reportedHungHwnds.IntersectWith(HungWindowRows.Where(r => r.IsHung).Select(r => r.Hwnd));
         if (_isHandlingTrigger || DateTime.UtcNow - _lastTriggerUtc < TriggerCooldown) return;
 
         foreach (var rule in TriggerRules)
@@ -2759,7 +2788,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
                 // an incident bundle every ~8s for as long as the app stayed open.
                 StutterTriggerKind.DpcLatencyOverUs => IsMeasuring && _dpc.SampleSequence != _lastDpcTriggerSample &&
                                                        _dpc.LastSampleMaxDpcUs > 0 && _dpc.LastSampleMaxDpcUs > rule.Threshold,
-                StutterTriggerKind.WindowHung => HungWindowRows.Any(r => r.IsHung),
+                StutterTriggerKind.WindowHung => HungWindowRows.Any(r => r.IsHung && !_reportedHungHwnds.Contains(r.Hwnd)),
                 StutterTriggerKind.HardFaultsOverPerSec => HardFaultRate.IsAvailable && HardFaultRate.PagesInputPerSec > rule.Threshold,
                 StutterTriggerKind.RunQueueOver => sample.ProcessorQueueLength > rule.Threshold,
                 _ => false,
@@ -2767,6 +2796,8 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             if (!tripped) continue;
 
             if (rule.Kind == StutterTriggerKind.DpcLatencyOverUs) _lastDpcTriggerSample = _dpc.SampleSequence;
+            if (rule.Kind == StutterTriggerKind.WindowHung)
+                _reportedHungHwnds.UnionWith(HungWindowRows.Where(r => r.IsHung).Select(r => r.Hwnd));
             _ = HandleTriggerAsync(DescribeRule(rule));
             break;
         }

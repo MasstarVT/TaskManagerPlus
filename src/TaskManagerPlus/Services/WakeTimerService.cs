@@ -18,16 +18,27 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class WakeTimerService
 {
-    private static readonly Regex SourceTagRegex = new(@"^\[(PROCESS|SERVICE|DRIVER)\]\s*(.+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // The tag is matched anywhere on the line: the usual shape is "Timer set by [SERVICE]
+    // \Device\...\svchost.exe (Name) expires at 7:30:11 AM on 10/19/2026." followed by an indented
+    // "Reason: ..." line, but a line that starts with the tag (the /requests shape) parses too.
+    private static readonly Regex SourceTagRegex = new(@"\[(PROCESS|SERVICE|DRIVER)\]\s*(.+?)(?:\s+expires at\s+(.+?))?\.?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public static async Task<(List<WakeSourceRow> Timers, string StatusText)> ReadAsync()
     {
         string output;
-        try { (output, _) = await RunProcessAsync("powercfg.exe", "/waketimers", 15000); }
+        int? exitCode;
+        try { (output, exitCode) = await RunProcessAsync("powercfg.exe", "/waketimers", 15000); }
         catch (Exception ex) { return (new List<WakeSourceRow>(), $"Couldn't run powercfg /waketimers: {ex.Message}"); }
 
-        if (output.Contains("administrator", StringComparison.OrdinalIgnoreCase))
-            return (new List<WakeSourceRow>(), "powercfg /waketimers needs administrator privileges (this app should already be elevated - try relaunching it).");
+        if (exitCode is null)
+            return (new List<WakeSourceRow>(), "powercfg /waketimers timed out - couldn't read active wake timers.");
+        if (exitCode != 0)
+        {
+            // Only checked on failure: a successful listing can contain "Administrator" in a path.
+            return (new List<WakeSourceRow>(), output.Contains("administrator", StringComparison.OrdinalIgnoreCase)
+                ? "powercfg /waketimers needs administrator privileges (this app should already be elevated - try relaunching it)."
+                : "Couldn't read active wake timers (powercfg /waketimers failed).");
+        }
 
         if (output.Contains("no active wake timers", StringComparison.OrdinalIgnoreCase) || output.Trim().Length == 0)
             return (new List<WakeSourceRow>(), "No active wake timers.");
@@ -54,6 +65,7 @@ public static class WakeTimerService
             {
                 Flush();
                 pendingName = sourceMatch.Groups[2].Value.Trim();
+                if (sourceMatch.Groups[3].Success) detailLines.Add($"Expires at {sourceMatch.Groups[3].Value.Trim()}.");
                 continue;
             }
 

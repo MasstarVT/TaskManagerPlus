@@ -682,13 +682,13 @@
                             <TextBlock Text="{Binding AcDcCliffText, Mode=OneWay}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Margin="0,0,0,10" />
                             <UniformGrid Columns="3">
                                 <views:VfdMeter Title="AC sustained clock" Glow="False" Margin="0,0,6,0"
-                                                ValueText="{Binding AcDcCliff.AcClockGhz, StringFormat={}{0:0.00}, TargetNullValue=–}" Unit="GHz"
+                                                ValueText="{Binding AcSustainedClockGhz, StringFormat={}{0:0.00}, TargetNullValue=–}" Unit="GHz"
                                                 SubText="{Binding AcDcCliff.AcSampleCount, StringFormat={}{0} samples}" AccentBrush="{DynamicResource AccentBrush}" />
                                 <views:VfdMeter Title="Battery sustained clock" Glow="False" Margin="3,0,3,0"
-                                                ValueText="{Binding AcDcCliff.DcClockGhz, StringFormat={}{0:0.00}, TargetNullValue=–}" Unit="GHz"
+                                                ValueText="{Binding DcSustainedClockGhz, StringFormat={}{0:0.00}, TargetNullValue=–}" Unit="GHz"
                                                 SubText="{Binding AcDcCliff.DcSampleCount, StringFormat={}{0} samples}" AccentBrush="{DynamicResource WarningBrush}" />
                                 <views:VfdMeter Title="Battery package power" Glow="False" Margin="6,0,0,0"
-                                                ValueText="{Binding AcDcCliff.DcPackagePowerW, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="W"
+                                                ValueText="{Binding DcSustainedPackagePowerW, StringFormat={}{0:0.#}, TargetNullValue=–}" Unit="W"
                                                 SubText="Vs. AC package power" AccentBrush="{DynamicResource WarningBrush}" />
                             </UniformGrid>
                         </StackPanel>
@@ -922,11 +922,13 @@
                                 <!-- #614/#615: per-fan status (OK/Slow/Stopped/Not reporting) instead of
                                      a single global dead-fan flag, plus the step-loss "was" comparison
                                      against this fan's historical RPM ceiling when it's dropped 20%+. -->
+                                <!-- SubText/AccentBrush defaults live in the style: a local value would beat the triggers. -->
                                 <views:VfdMeter Title="{Binding SensorName}" Glow="False" Width="172" Margin="0,0,8,8"
-                                                ValueText="{Binding Value, StringFormat={}{0:0}, TargetNullValue=–}" Unit="RPM"
-                                                SubText="{Binding HardwareName}" AccentBrush="{DynamicResource AccentBrush}">
+                                                ValueText="{Binding Value, StringFormat={}{0:0}, TargetNullValue=–}" Unit="RPM">
                                     <views:VfdMeter.Style>
                                         <Style TargetType="views:VfdMeter">
+                                            <Setter Property="SubText" Value="{Binding HardwareName}" />
+                                            <Setter Property="AccentBrush" Value="{DynamicResource AccentBrush}" />
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding FanStatus}" Value="Slow">
                                                     <Setter Property="AccentBrush" Value="{DynamicResource WarningBrush}" />
@@ -2042,7 +2044,7 @@
                                 </DataGrid.Style>
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Start" Binding="{Binding Start, StringFormat={}{0:g}, TargetNullValue=Unknown}" Width="1.4*" />
-                                    <DataGridTextColumn Header="Duration" Binding="{Binding Duration, StringFormat={}{0:hh\:mm\:ss}, TargetNullValue=Unknown}" Width="*" />
+                                    <DataGridTextColumn Header="Duration" Binding="{Binding Duration, StringFormat={}{0:hh\\:mm\\:ss}, TargetNullValue=Unknown}" Width="*" />
                                     <DataGridTextColumn Header="Low-power %" Binding="{Binding LowPowerPercent, StringFormat={}{0:0.#}%, TargetNullValue=Unknown}" Width="*" />
                                     <DataGridTextColumn Header="Drain %" Binding="{Binding DrainPercent, StringFormat={}{0:0.#}%, TargetNullValue=Unknown}" Width="*" />
                                 </DataGrid.Columns>

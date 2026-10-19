@@ -22,7 +22,8 @@ public static class HangTimeoutRegistryService
         new("Wait to kill app timeout", false, @"Control Panel\Desktop", "WaitToKillAppTimeout", "20000", "ms"),
         new("Auto end tasks", false, @"Control Panel\Desktop", "AutoEndTasks", "0", ""),
         new("Menu show delay", false, @"Control Panel\Desktop", "MenuShowDelay", "400", "ms"),
-        new("Foreground lock timeout", false, @"Control Panel\Desktop", "ForegroundLockTimeout", "0", "ms"),
+        // Stock value is 200000 ms (0x30d40 on a default install), not 0.
+        new("Foreground lock timeout", false, @"Control Panel\Desktop", "ForegroundLockTimeout", "200000", "ms"),
         new("Wait to kill service timeout", true, @"SYSTEM\CurrentControlSet\Control", "WaitToKillServiceTimeout", "5000", "ms"),
     };
 

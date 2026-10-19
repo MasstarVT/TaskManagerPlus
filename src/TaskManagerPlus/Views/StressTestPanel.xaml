@@ -150,7 +150,8 @@
                 </UniformGrid>
 
                 <!-- #699: the explicit pass/fail criteria breakdown - each row's *ResultText comes
-                     straight off StressTestCriteria (Pass/Fail/"N/A (not applicable...)"). -->
+                     straight off StressTestCriteria (Pass/Fail/"N/A (not applicable...)", or "Unknown"
+                     when the criterion applied but had no reading). -->
                 <Grid Margin="0,0,0,8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />

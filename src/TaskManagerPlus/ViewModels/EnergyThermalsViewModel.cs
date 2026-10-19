@@ -313,7 +313,23 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private List<AcDcSteadyStateSample> _acDcSamples = new();
 
     private AcDcCliffSummary _acDcCliff = AcDcCliffSummary.Empty;
-    public AcDcCliffSummary AcDcCliff { get => _acDcCliff; private set => SetProperty(ref _acDcCliff, value); }
+    public AcDcCliffSummary AcDcCliff
+    {
+        get => _acDcCliff;
+        private set
+        {
+            if (!SetProperty(ref _acDcCliff, value)) return;
+            OnPropertyChanged(nameof(AcSustainedClockGhz));
+            OnPropertyChanged(nameof(DcSustainedClockGhz));
+            OnPropertyChanged(nameof(DcSustainedPackagePowerW));
+        }
+    }
+
+    // What the cliff tiles bind: the summary's raw doubles are 0 (or a too-few-samples average)
+    // until that side has MinSamplesForSummary samples, which read as a measured 0.00 GHz / 0 W.
+    public double? AcSustainedClockGhz => AcDcCliff.HasAcData ? AcDcCliff.AcClockGhz : null;
+    public double? DcSustainedClockGhz => AcDcCliff.HasDcData ? AcDcCliff.DcClockGhz : null;
+    public double? DcSustainedPackagePowerW => AcDcCliff.HasDcData ? AcDcCliff.DcPackagePowerW : null;
 
     private string _acDcCliffText = "Not enough sustained-load samples yet on both AC and battery to compare.";
     public string AcDcCliffText { get => _acDcCliffText; private set => SetProperty(ref _acDcCliffText, value); }
@@ -544,7 +560,6 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private string _vcoreLoadSlopeText = "Not enough samples yet to chart Vcore load-line behavior.";
     public string VcoreLoadSlopeText { get => _vcoreLoadSlopeText; private set => SetProperty(ref _vcoreLoadSlopeText, value); }
 
-    private static readonly (string[] Hints, float Nominal)[] Rail12VHints = { (new[] { "12V", "+12V", "12 V" }, 12.0f) };
     private static readonly string[] VcoreNameHints = { "Vcore", "CPU Vcore", "CPU Core Voltage", "Core Voltage", "CPU Core" };
 
     // ---- #623: VRM temperature attribution ------------------------------------------------------
@@ -1857,12 +1872,10 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         _lastKnownActivePlanName = active.Name;
     }
 
-    private static ObservableCollection<double> NewHistory()
-    {
-        var col = new ObservableCollection<double>();
-        for (int i = 0; i < HistoryLength; i++) col.Add(0);
-        return col;
-    }
+    // Starts empty rather than zero-filled: these histories only append when their sensor reads,
+    // so a pre-fill drew a 0 W / 0 °C line (permanently, with no sensor) next to a "—" tile.
+    // Every reader is count-guarded (TrendDirection, DetectFanHunting, the trims).
+    private static ObservableCollection<double> NewHistory() => new();
 
     private static ObservableCollection<double> NewFixedSeries(int length)
     {
@@ -2959,20 +2972,23 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     /// all show up depending on motherboard vendor), so an unrecognized rail name is left as
     /// IsVoltageOutOfSpec = null ("not checked"), never a false accusation against a rail this
     /// app doesn't confidently recognize.</summary>
-    private static readonly (string[] Hints, float Nominal)[] VoltageRailSpecs =
+    // A plain substring match let "5V" hit "+1.05V ALW", "Chipset 1.05V" and "2.5V", and "12V" hit a
+    // "-12V" rail. The look-behind requires the rail number to start the token: not after a letter,
+    // digit, decimal point or minus sign (an unmatched name stays "not checked", never flagged).
+    private static readonly (Regex Pattern, float Nominal)[] VoltageRailSpecs =
     {
-        (new[] { "12V", "+12V", "12 V" }, 12.0f),
-        (new[] { "5V", "+5V", "5 V" }, 5.0f),
-        (new[] { "3.3V", "+3.3V", "3.3 V" }, 3.3f),
+        (new Regex(@"(?<![\w.,\-])\+?12\s?V", RegexOptions.IgnoreCase | RegexOptions.Compiled), 12.0f),
+        (new Regex(@"(?<![\w.,\-])\+?5\s?V", RegexOptions.IgnoreCase | RegexOptions.Compiled), 5.0f),
+        (new Regex(@"(?<![\w.,\-])\+?3\.3\s?V", RegexOptions.IgnoreCase | RegexOptions.Compiled), 3.3f),
     };
 
     private static SensorReading WithVoltageSpecCheck(SensorReading reading)
     {
         if (reading.Value is not float value) return reading;
 
-        foreach (var (hints, nominal) in VoltageRailSpecs)
+        foreach (var (pattern, nominal) in VoltageRailSpecs)
         {
-            if (!hints.Any(h => reading.SensorName.Contains(h, StringComparison.OrdinalIgnoreCase))) continue;
+            if (!pattern.IsMatch(reading.SensorName)) continue;
 
             // #620: signed deviation percent (negative = low, positive = high) alongside the
             // existing flat out-of-spec bool - lets the view show "6% low" instead of just a
@@ -3082,7 +3098,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     /// are actually present - never fabricated from an unrelated rail.</summary>
     private void TrackPowerDelivery(List<SensorReading> voltageReadings, double? packagePowerW, double? gpuPowerW)
     {
-        double? rail12V = FindByNameContains(voltageReadings, Rail12VHints[0].Hints);
+        double? rail12V = voltageReadings.FirstOrDefault(r => HasNonZeroReading(r) && VoltageRailSpecs[0].Pattern.IsMatch(r.SensorName))?.Value;
         double? vcoreV = FindByNameContains(voltageReadings, VcoreNameHints);
 
         if (rail12V is { } rail && packagePowerW is { } pkg)

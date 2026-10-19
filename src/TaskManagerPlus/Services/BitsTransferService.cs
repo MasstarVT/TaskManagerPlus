@@ -18,8 +18,6 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class BitsTransferService
 {
-    private static readonly Regex BytesRegex = new(@"(\d+)\s*/\s*(\d+)", RegexOptions.Compiled);
-
     public static async Task<(bool Success, string Message, List<BitsTransferRow> Rows)> ListAsync()
     {
         string output;
@@ -52,11 +50,13 @@ public static class BitsTransferService
         foreach (var job in ParseJobBlocks(output))
         {
             var f = job.Fields;
-            long bytesTransferred = 0, bytesTotal = 0;
-            if (f.TryGetValue("BYTES", out var bytes) && BytesRegex.Match(bytes) is { Success: true } m)
+            long? bytesTransferred = null, bytesTotal = null;
+            if (f.TryGetValue("BYTES", out var bytes))
             {
-                long.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out bytesTransferred);
-                long.TryParse(m.Groups[2].Value, NumberStyles.None, CultureInfo.InvariantCulture, out bytesTotal);
+                // "<transferred> / <total>", either side possibly UNKNOWN - each parsed on its own.
+                var sides = bytes.Split('/', 2);
+                bytesTransferred = ParseByteCount(sides[0]);
+                if (sides.Length > 1) bytesTotal = ParseByteCount(sides[1]);
             }
             rows.Add(new BitsTransferRow
             {
@@ -72,6 +72,9 @@ public static class BitsTransferService
         }
         return rows;
     }
+
+    private static long? ParseByteCount(string text) =>
+        long.TryParse(text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out long value) ? value : null;
 
     /// <summary>One job from `bitsadmin /list /verbose`: its LABEL: value fields plus the
     /// "remote -> local" pairs listed under JOB FILES.</summary>

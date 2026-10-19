@@ -149,8 +149,9 @@ public static class UsbPowerService
     /// <summary>#668's actual fix action: flips the same two device-power-policy registry values
     /// Device Manager's own "Allow the computer to turn off this device to save power" checkbox
     /// ultimately reads/writes for this device - <c>SelectiveSuspendEnabled</c> and
-    /// <c>EnhancedPowerManagementEnabled</c>, both DWORDs under this device instance's own
-    /// <c>Device Parameters</c> subkey. PNPDeviceID maps 1:1 onto the registry Enum tree's path
+    /// <c>EnhancedPowerManagementEnabled</c>, under this device instance's own
+    /// <c>Device Parameters</c> subkey (each written in whatever kind it already has - see
+    /// WriteFlagKeepingKind). PNPDeviceID maps 1:1 onto the registry Enum tree's path
     /// (backslash-separated instance segments), so no extra device-instance lookup is needed
     /// beyond the PNPDeviceID this app already reads via WMI. Requires administrator privileges -
     /// this app runs elevated throughout (CLAUDE.md's elevation note), so a real permissions
@@ -164,8 +165,8 @@ public static class UsbPowerService
             using var key = Registry.LocalMachine.CreateSubKey(subKey, writable: true);
             if (key is null) return (false, "Couldn't open this device's registry key.");
 
-            key.SetValue("SelectiveSuspendEnabled", enabled ? 1 : 0, RegistryValueKind.DWord);
-            key.SetValue("EnhancedPowerManagementEnabled", enabled ? 1 : 0, RegistryValueKind.DWord);
+            foreach (string valueName in new[] { "SelectiveSuspendEnabled", "EnhancedPowerManagementEnabled" })
+                WriteFlagKeepingKind(key, subKey, valueName, enabled);
             return (true, null);
         }
         catch (Exception ex)
@@ -173,4 +174,40 @@ public static class UsbPowerService
             return (false, ex.Message);
         }
     }
+
+    /// <summary>Writes a 0/1 flag in the value's existing registry kind - SelectiveSuspendEnabled is
+    /// a 1-byte REG_BINARY on many devices, and rewriting it as a DWORD changes a value the driver
+    /// reads - then records the prior value in the registry change journal so it can be undone.</summary>
+    private static void WriteFlagKeepingKind(RegistryKey key, string subKey, string valueName, bool enabled)
+    {
+        object? prior = key.GetValue(valueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+        RegistryValueKind priorKind = prior is null ? RegistryValueKind.Unknown : key.GetValueKind(valueName);
+
+        object newValue;
+        RegistryValueKind kind;
+        if (priorKind == RegistryValueKind.Binary && prior is byte[] priorBytes)
+        {
+            var bytes = new byte[Math.Max(1, priorBytes.Length)];
+            bytes[0] = enabled ? (byte)1 : (byte)0;
+            (newValue, kind) = (bytes, RegistryValueKind.Binary);
+        }
+        else
+        {
+            (newValue, kind) = (enabled ? 1 : 0, RegistryValueKind.DWord);
+        }
+
+        key.SetValue(valueName, newValue, kind);
+
+        RegistryChangeJournalService.Record("USB power", $"{(enabled ? "Enabled" : "Disabled")} {valueName}",
+            "HKLM", subKey, valueName, kind, FormatForJournal(prior), FormatForJournal(newValue));
+    }
+
+    // The journal's Undo parses Binary as hex and DWord as an invariant integer.
+    private static string? FormatForJournal(object? value) => value switch
+    {
+        null => null,
+        byte[] bytes => Convert.ToHexString(bytes),
+        int i => i.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        _ => value.ToString(),
+    };
 }

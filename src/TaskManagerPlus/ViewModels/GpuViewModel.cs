@@ -497,6 +497,21 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(AspmStateText));
             OnPropertyChanged(nameof(AspmIsAggressive));
 
+            // Not undoable from the journal: its generic PowerSettingChange inverse only knows
+            // PROCTHROTTLEMIN, so it would write the wrong setting.
+            ChangeJournalService.Append(new ChangeJournalEntry
+            {
+                Kind = ChangeKind.PowerSettingChange,
+                Target = "Active power plan: PCI Express Link State Power Management",
+                ActionDescription = "Set PCIe ASPM to Off on AC and DC (powercfg /setacvalueindex, /setdcvalueindex)",
+                BeforeValue = beforeText,
+                AfterValue = $"AC: {AspmIndexText(ac)}, DC: {AspmIndexText(dc)}",
+                TriggeredBy = "GPU tab",
+                Success = success,
+                IsUndoable = false,
+                NotUndoableReason = $"Set the values back in Power Options > PCI Express > Link State Power Management (was {beforeText}).",
+            });
+
             PciLinkStatusText = success
                 ? $"ASPM set to Off on the active power plan (was {beforeText})."
                 : $"Couldn't set ASPM: {error ?? "unknown error"}";

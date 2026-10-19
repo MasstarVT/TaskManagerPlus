@@ -433,12 +433,16 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         bool clockChecked = type is StressTestType.CpuTorture or StressTestType.CombinedSoak;
         var clockSamples = trace.Where(t => t.ClockGhz.HasValue).Select(t => t.ClockGhz!.Value).ToList();
         double? avgClock = clockSamples.Count > 0 ? clockSamples.Average() : null;
-        bool sustainedClockOk = !clockChecked || avgClock is null || _performance.CpuBaseClockGhz <= 0 || avgClock >= _performance.CpuBaseClockGhz;
+        // No clock samples or no rated base clock means the criterion can't be judged - Unknown,
+        // not a pass (see StressTestCriteria.ClockMeasured).
+        bool clockMeasured = clockChecked && avgClock is not null && _performance.CpuBaseClockGhz > 0;
+        bool sustainedClockOk = clockMeasured && avgClock >= _performance.CpuBaseClockGhz;
 
         var tempSamples = trace.Where(t => t.TempC.HasValue).Select(t => t.TempC!.Value).ToList();
         double? peakTemp = tempSamples.Count > 0 ? tempSamples.Max() : null;
         double? throttleReference = _energyThermals.CpuThrottlePointReferenceC;
-        bool peakTempOk = peakTemp is null || peakTemp < (throttleReference ?? 90.0);
+        bool tempMeasured = peakTemp is not null;
+        bool peakTempOk = tempMeasured && peakTemp < (throttleReference ?? 90.0);
 
         var powerSamples = trace.Where(t => t.PackagePowerW.HasValue).Select(t => t.PackagePowerW!.Value).ToList();
         double? peakPower = powerSamples.Count > 0 ? powerSamples.Max() : null;
@@ -453,7 +457,9 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
             NoWheaDelta = wheaCount == 0,
             NoTdr = tdrCount == 0,
             ClockChecked = clockChecked,
+            ClockMeasured = clockMeasured,
             SustainedClockAtOrAboveBase = sustainedClockOk,
+            TempMeasured = tempMeasured,
             PeakTempBelowThrottlePoint = peakTempOk,
             Aborted = abortReason is not null,
             AbortReason = abortReason,

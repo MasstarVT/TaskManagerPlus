@@ -503,6 +503,11 @@ public sealed class VBlankJitterSnapshot
     public double P99Ms { get; init; }
     public double MaxMs { get; init; }
     public string StatusText { get; init; } = string.Empty;
+
+    // What the tiles bind: null (shown as "—") until an interval has been measured, not 0 ms.
+    public double? MeasuredP50Ms => SampleCount > 0 ? P50Ms : null;
+    public double? MeasuredP99Ms => SampleCount > 0 ? P99Ms : null;
+    public double? MeasuredMaxMs => SampleCount > 0 ? MaxMs : null;
 }
 
 /// <summary>
@@ -592,6 +597,10 @@ public sealed class InputLatencySnapshot
     public int SampleCount { get; init; }
     public double P99DelayMs { get; init; }
     public double MaxDelayMs { get; init; }
+
+    // What the tiles bind: null (shown as "—") until an event has been captured, not 0 ms.
+    public double? MeasuredP99DelayMs => SampleCount > 0 ? P99DelayMs : null;
+    public double? MeasuredMaxDelayMs => SampleCount > 0 ? MaxDelayMs : null;
 
     // #257 - null until enough consecutive same-device events have arrived to estimate a rate.
     public double? MouseReportHz { get; init; }
@@ -928,8 +937,10 @@ public sealed class BitsTransferRow
     public string StateText { get; init; } = string.Empty;
     public string Owner { get; init; } = string.Empty;
     public string PriorityText { get; init; } = string.Empty;
-    public long BytesTransferred { get; init; }
-    public long BytesTotal { get; init; }
+    // Null (shown as "Unknown") when bitsadmin reports UNKNOWN or the BYTES field is missing - a job
+    // whose total size isn't known yet prints "BYTES: 0 / UNKNOWN".
+    public long? BytesTransferred { get; init; }
+    public long? BytesTotal { get; init; }
 }
 
 /// <summary>#292: Automatic Maintenance window/last-run state from

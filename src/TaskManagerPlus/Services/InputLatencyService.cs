@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Interop;
 using Microsoft.Win32;
@@ -206,14 +207,16 @@ public sealed class InputLatencyService : IDisposable
             }
             LastEventUtc = DateTime.UtcNow;
 
-            long nowMs = Environment.TickCount64;
+            // #257: Stopwatch, not Environment.TickCount64 - the tick count only advances every
+            // ~15.6 ms, which capped every measured report rate at ~64 Hz.
+            long nowTimestamp = Stopwatch.GetTimestamp();
             if (header.dwType == RIM_TYPEMOUSE)
             {
-                RecordInterval(_mouseIntervalsMs, ref _lastMouseTick, nowMs);
+                RecordInterval(_mouseIntervalsMs, ref _lastMouseTick, nowTimestamp);
             }
             else if (header.dwType == RIM_TYPEKEYBOARD)
             {
-                RecordInterval(_kbIntervalsMs, ref _lastKbTick, nowMs);
+                RecordInterval(_kbIntervalsMs, ref _lastKbTick, nowTimestamp);
             }
         }
         finally
@@ -222,18 +225,22 @@ public sealed class InputLatencyService : IDisposable
         }
     }
 
-    private static void RecordInterval(List<double> list, ref long lastTick, long nowMs)
+    // Shorter than any HID polling interval (8 kHz = 0.125 ms): a gap this small is a backlog of
+    // queued WM_INPUT messages being drained back to back, not a device report rate.
+    private const double MinReportIntervalMs = 0.1;
+
+    private static void RecordInterval(List<double> list, ref long lastTimestamp, long nowTimestamp)
     {
-        if (lastTick >= 0)
+        if (lastTimestamp >= 0)
         {
-            double interval = nowMs - lastTick;
-            if (interval is > 0 and < 1000)
+            double interval = (nowTimestamp - lastTimestamp) * 1000.0 / Stopwatch.Frequency;
+            if (interval is >= MinReportIntervalMs and < 1000)
             {
                 list.Add(interval);
                 if (list.Count > MaxIntervalSamples) list.RemoveAt(0);
             }
         }
-        lastTick = nowMs;
+        lastTimestamp = nowTimestamp;
     }
 
     /// <summary>#256/#257: current snapshot - cheap to call every light tick regardless of

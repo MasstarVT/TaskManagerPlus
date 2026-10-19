@@ -184,10 +184,11 @@
                          back" instead of just the instantaneous flag. -->
                     <UniformGrid Columns="2" Margin="0,16,0,0">
                         <views:VfdMeter Title="Throttle reason" Glow="False" Margin="0,0,6,0"
-                                        ValueText="{Binding ThrottleReason}"
-                                        SubText="Best-effort — no vendor limit-reason API available">
+                                        ValueText="{Binding ThrottleReason}">
                             <views:VfdMeter.Style>
                                 <Style TargetType="views:VfdMeter">
+                                    <!-- Default SubText as a Setter, not a local value, so the Firmware trigger can replace it. -->
+                                    <Setter Property="SubText" Value="Best-effort — no vendor limit-reason API available" />
                                     <Setter Property="AccentBrush" Value="{DynamicResource TextSecondaryBrush}" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding ThrottleReason}" Value="Thermal">
@@ -543,10 +544,11 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Border Width="76" Height="52" CornerRadius="6" Margin="0,0,6,6" Padding="6"
-                                                Background="{DynamicResource BgElevatedBrush}"
                                                 ToolTip="{Binding ProcessNames}">
                                             <Border.Style>
                                                 <Style TargetType="Border">
+                                                    <!-- Default as a Setter so the trigger below can override it. -->
+                                                    <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding ProcessCount}" Value="1">
                                                             <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />

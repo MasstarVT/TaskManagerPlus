@@ -153,13 +153,14 @@ public static class PowerPlanService
     public static async Task<(List<PowerPlanSettingDiff> Diffs, string StatusText)> ReadPlanSettingDiffAsync(string activeSchemeGuid)
     {
         string activeOutput, balancedOutput;
+        int? balancedExitCode;
         try
         {
             var activeTask = RunCapturedAsync("powercfg.exe", $"/q {activeSchemeGuid}", 15000);
             var balancedTask = RunCapturedAsync("powercfg.exe", "/q SCHEME_BALANCED", 15000);
             await Task.WhenAll(activeTask, balancedTask);
             activeOutput = activeTask.Result.Output;
-            balancedOutput = balancedTask.Result.Output;
+            (balancedOutput, balancedExitCode) = balancedTask.Result;
         }
         catch (Exception ex)
         {
@@ -170,8 +171,14 @@ public static class PowerPlanService
         if (activeSettings.Count == 0)
             return (new List<PowerPlanSettingDiff>(), "Couldn't read the active scheme's settings (powercfg /q returned nothing recognizable).");
 
+        // Without a readable reference, every setting would be skipped and the result would claim
+        // "No settings differ" (a timeout, or the Balanced scheme removed by an OEM image).
+        var balancedSettings = balancedExitCode == 0 ? ParsePlanQueryOutput(balancedOutput) : new();
+        if (balancedSettings.Count == 0)
+            return (new List<PowerPlanSettingDiff>(), "Couldn't read the Balanced scheme's defaults to compare against (powercfg /q SCHEME_BALANCED failed or timed out - the scheme may have been removed).");
+
         var balancedByKey = new Dictionary<(string Subgroup, string Setting), (string? AcHex, string? DcHex)>();
-        foreach (var s in ParsePlanQueryOutput(balancedOutput))
+        foreach (var s in balancedSettings)
             balancedByKey[(s.SubgroupName, s.SettingName)] = (s.AcHex, s.DcHex);
 
         var diffs = new List<PowerPlanSettingDiff>();

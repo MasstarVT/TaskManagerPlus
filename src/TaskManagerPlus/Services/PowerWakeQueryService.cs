@@ -30,11 +30,17 @@ public static class PowerWakeQueryService
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            string output = (await RunCapturedAsync("powercfg.exe", $"/devicequery {parameter}")).Output;
+            var (output, exitCode) = await RunCapturedAsync("powercfg.exe", $"/devicequery {parameter}");
+            // A timeout (null), a refusal or an error message is not a device list - its text
+            // would otherwise be added as a device name.
+            if (exitCode != 0) return names;
+
             foreach (var rawLine in output.Split('\n'))
             {
                 string line = rawLine.Trim('\r', '\n', ' ', '\t');
                 if (line.Length == 0) continue;
+                // powercfg prints "NONE" when no device matches the query.
+                if (line.Equals("NONE", StringComparison.OrdinalIgnoreCase)) continue;
                 names.Add(line);
             }
         }
