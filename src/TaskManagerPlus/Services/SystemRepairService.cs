@@ -34,12 +34,12 @@ public static class SystemRepairService
     /// covers both "no integrity violations found" and "violations found and successfully
     /// repaired"; sfc's own textual summary (in Output) is what actually distinguishes the two, so
     /// the caller shows the full output, not just the pass/fail flag.
-    /// sfc writes UTF-16LE to a redirected pipe while ToolRunner decodes with the default 8-bit
-    /// encoding, so every character arrives followed by a NUL - stripping those recovers the
-    /// (ASCII-range) text; see SfcIntegrityService for the Encoding.Unicode reader.</summary>
+    /// sfc writes UTF-16LE to a redirected pipe, so it is read as Encoding.Unicode (decoding it as
+    /// the 8-bit console code page put a NUL after every character and garbled non-ASCII text);
+    /// any stray NUL is still stripped.</summary>
     public static async Task<(bool Ok, string Output)> RunSfcAsync()
     {
-        var (ok, output) = await RunCapturedAsync("sfc.exe", "/scannow", RepairTimeoutMs);
+        var (ok, output) = await RunCapturedAsync("sfc.exe", "/scannow", RepairTimeoutMs, System.Text.Encoding.Unicode);
         return (ok, output.Replace("\0", string.Empty));
     }
 
@@ -85,10 +85,10 @@ public static class SystemRepairService
     /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>; this wrapper keeps the
     /// repair flow's soft-start degradation (a tool that can't start reports failure text, never
     /// throws) and its human-readable timeout message.</summary>
-    private static async Task<(bool Ok, string Output)> RunCapturedAsync(string exe, string args, int timeoutMs)
+    private static async Task<(bool Ok, string Output)> RunCapturedAsync(string exe, string args, int timeoutMs, System.Text.Encoding? outputEncoding = null)
     {
         (string Output, int? ExitCode) result;
-        try { result = await ToolRunner.RunCapturedAsync(exe, args, timeoutMs); }
+        try { result = await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, outputEncoding: outputEncoding); }
         catch (Exception ex) { return (false, $"Couldn't start {exe}: {ex.Message}"); }
         if (result.ExitCode is null)
             return (false, $"{exe} {args} timed out after {timeoutMs / 60000} minute(s) and was stopped.");

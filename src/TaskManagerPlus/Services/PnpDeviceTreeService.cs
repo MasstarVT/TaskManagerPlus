@@ -62,7 +62,10 @@ public static class PnpDeviceTreeService
         }
         catch
         {
-            // WMI unavailable/hiccup - return whatever was gathered before the failure.
+            // WMI unavailable/hiccup mid-enumeration: return nothing rather than a partial list.
+            // The non-present sweep subtracts this set from every devnode, so a truncated list
+            // would label real, present devices "Not present" and offer them for removal.
+            return new List<PnpDeviceNode>();
         }
         return SortedByClassThenName(nodes);
     }

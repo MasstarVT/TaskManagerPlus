@@ -30,11 +30,14 @@ internal static class ToolRunner
     /// A start failure (tool not present on this Windows edition) throws - callers that want
     /// soft degradation instead wrap the call in their own try/catch. Pass
     /// <paramref name="includeStderr"/> false to capture stdout only; stderr is still drained
-    /// either way so the child can never block on a full pipe.
+    /// either way so the child can never block on a full pipe. Pass <paramref name="outputEncoding"/>
+    /// for a tool that doesn't write in the console code page (sfc.exe writes UTF-16LE when its
+    /// output is redirected).
     /// </summary>
     public static async Task<(string Output, int? ExitCode)> RunCapturedAsync(
         string exe, string args, int timeoutMs, CancellationToken ct = default,
-        string timeoutOutput = "(command timed out)", bool includeStderr = true)
+        string timeoutOutput = "(command timed out)", bool includeStderr = true,
+        System.Text.Encoding? outputEncoding = null)
     {
         var psi = new ProcessStartInfo(exe, args)
         {
@@ -43,6 +46,11 @@ internal static class ToolRunner
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        if (outputEncoding is not null)
+        {
+            psi.StandardOutputEncoding = outputEncoding;
+            psi.StandardErrorEncoding = outputEncoding;
+        }
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"couldn't start {exe}");
 
         var outputTask = proc.StandardOutput.ReadToEndAsync(ct);
