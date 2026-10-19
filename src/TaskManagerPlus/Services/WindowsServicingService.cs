@@ -177,16 +177,20 @@ public static class WindowsServicingService
     /// convention without silently fetching a binary from the internet.</summary>
     public static async Task<(bool Success, string? Verdict, string? Error)> RunSetupDiagAsync()
     {
-        string? exePath = null;
-        string? rejection = null;
-        foreach (var candidate in SetupDiagCandidates())
+        // ACL walk + WinVerifyTrust per candidate - off the caller's (UI) thread.
+        var (exePath, rejection) = await Task.Run(() =>
         {
-            try { if (!File.Exists(candidate)) continue; }
-            catch { continue; }
-            string? problem = SetupDiagTrustProblem(candidate);
-            if (problem is null) { exePath = candidate; break; }
-            rejection ??= problem;
-        }
+            string? rejected = null;
+            foreach (var candidate in SetupDiagCandidates())
+            {
+                try { if (!File.Exists(candidate)) continue; }
+                catch { continue; }
+                string? problem = SetupDiagTrustProblem(candidate);
+                if (problem is null) return ((string?)candidate, (string?)null);
+                rejected ??= problem;
+            }
+            return ((string?)null, rejected);
+        });
         if (exePath is null)
         {
             return (false, null, rejection is null

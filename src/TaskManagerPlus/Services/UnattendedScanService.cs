@@ -36,23 +36,24 @@ public static class UnattendedScanService
     /// points at this same running exe's own path plus `--scan &lt;UnattendedScansDirectory&gt;
     /// --quiet` (no `--scrub` by default - see the Settings drawer's own remarks on why that's an
     /// explicit opt-in, not a default, for an unattended run).</summary>
-    public static Task<(bool Success, string? Error)> SetupScheduledScanAsync(ScheduledTaskFrequency frequency, TimeSpan timeOfDay, DayOfWeek dayOfWeek, bool scrub)
+    public static async Task<(bool Success, string? Error)> SetupScheduledScanAsync(ScheduledTaskFrequency frequency, TimeSpan timeOfDay, DayOfWeek dayOfWeek, bool scrub)
     {
         string exePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule!.FileName!;
 
         // The task runs this exe as SYSTEM. From a folder a standard user can write to (a build
         // output folder, Downloads, a portable copy), any unelevated process could swap the exe or
-        // a DLL beside it and get SYSTEM code execution on the next run - refuse instead.
-        string? writable = FindNonAdminWriteAccess(exePath, includeSiblingBinaries: true);
+        // a DLL beside it and get SYSTEM code execution on the next run - refuse instead. Off the
+        // UI thread: an ACL read per sibling file, plus SID-to-name lookups.
+        string? writable = await Task.Run(() => FindNonAdminWriteAccess(exePath, includeSiblingBinaries: true));
         if (writable is not null)
-            return Task.FromResult<(bool, string?)>((false,
+            return (false,
                 $"this copy of Task Manager Plus would run as SYSTEM, but {writable} - a standard user could swap in their own code. " +
-                "Install it to an admin-only folder (for example under Program Files) and set up the scan from that copy."));
+                "Install it to an admin-only folder (for example under Program Files) and set up the scan from that copy.");
 
         string command = scrub
             ? $"\"{exePath}\" --scan \"{UnattendedScansDirectory}\" --scrub --quiet"
             : $"\"{exePath}\" --scan \"{UnattendedScansDirectory}\" --quiet";
-        return ScheduledTaskService.CreateRecurringAsync(TaskName, command, frequency, timeOfDay, dayOfWeek);
+        return await ScheduledTaskService.CreateRecurringAsync(TaskName, command, frequency, timeOfDay, dayOfWeek);
     }
 
     public static Task<(bool Success, string? Error)> RemoveScheduledScanAsync() => ScheduledTaskService.DeleteAsync(TaskName);

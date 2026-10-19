@@ -655,8 +655,8 @@ public static class PlatformSecurityService
 
     // bcdedit localizes Yes/No ("Ja"/"Nein", "Oui"/"Non", ...), so match the OFF side: these
     // elements are absent unless set, and a set value that isn't a recognized "no" is treated as
-    // on (raw values stay visible in RawFieldsText). safeboot's value is a mode name, never Yes/No -
-    // its presence alone means Safe Mode is configured.
+    // on (raw values stay visible in RawFieldsText). safeboot's value is a mode name ("Minimal"),
+    // not an integrity switch - it stays listed in RawFields but never raises this finding.
     private static readonly HashSet<string> BcdOffValues = new(StringComparer.OrdinalIgnoreCase)
     {
         "No", "Off", "0", "False",
@@ -665,7 +665,7 @@ public static class PlatformSecurityService
     };
 
     private static bool IsOnValue(string field, string v) =>
-        field.Equals("safeboot", StringComparison.OrdinalIgnoreCase) || !BcdOffValues.Contains(v.Trim());
+        !field.Equals("safeboot", StringComparison.OrdinalIgnoreCase) && !BcdOffValues.Contains(v.Trim());
 
     // ==================================================================================
     // #877: App control policy presence - WDAC (.cip files + CodeIntegrityPolicyEnforcementStatus),
