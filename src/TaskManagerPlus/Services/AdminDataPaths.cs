@@ -86,7 +86,9 @@ public static class AdminDataPaths
     /// <summary>A fresh, uniquely named admin-only folder for one operation - an elevated tool's
     /// output file, a staging folder, an extracted bundle. Delete it with TryDelete when done;
     /// leftovers from a crash are swept by PurgeStaleTemp. Null with a reason on failure.</summary>
-    public static DirectoryInfo? CreatePrivateTempDirectory(string purpose, out string? error)
+    /// <param name="ownerReadableOnly">Readable only by the account running the app (copied dumps,
+    /// event logs, SRUM data) instead of every authenticated user.</param>
+    public static DirectoryInfo? CreatePrivateTempDirectory(string purpose, out string? error, bool ownerReadableOnly = false)
     {
         string? temp = TryGetArea("Temp", out error);
         if (temp is null) return null;
@@ -94,7 +96,10 @@ public static class AdminDataPaths
         {
             string safePurpose = string.Concat(purpose.Where(char.IsLetterOrDigit));
             if (safePurpose.Length == 0) safePurpose = "op";
-            return QuarantineService.CreateAdminOnlyDirectory(Path.Combine(temp, $"{safePurpose}-{Guid.NewGuid():N}"));
+            string path = Path.Combine(temp, $"{safePurpose}-{Guid.NewGuid():N}");
+            return ownerReadableOnly
+                ? QuarantineService.CreateOwnerReadableDirectory(path)
+                : QuarantineService.CreateAdminOnlyDirectory(path);
         }
         catch (Exception ex)
         {

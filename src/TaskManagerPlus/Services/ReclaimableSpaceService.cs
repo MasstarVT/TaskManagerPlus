@@ -135,7 +135,7 @@ public static class ReclaimableSpaceService
             "Downloaded update packages Windows Update no longer needs once installed. Safe to clear - Windows re-downloads anything it still needs.");
         Add("Delivery Optimization cache", Path.Combine(windir, "SoftwareDistribution", "DeliveryOptimization", "Cache"),
             "Peer-to-peer Windows/Store update cache shared with other PCs on your network/internet. Safe to clear.");
-        Add("Temp (current user)", Path.GetTempPath(),
+        Add("Temp (current user)", ProcessEnvironmentHardening.UserTempPath,
             "Per-user temporary files most apps clean up themselves, but often don't. Usually safe to clear once nothing is actively running.");
         Add("Temp (system-wide)", Path.Combine(windir, "Temp"),
             "System-wide temporary files - same caveats as the per-user Temp folder above.");

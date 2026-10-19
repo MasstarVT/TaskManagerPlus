@@ -82,7 +82,7 @@ public static class SuspiciousLocationHeuristicService
     private static (string, string)[] BuildSubtreeRoots()
     {
         var roots = new List<(string Prefix, string Label)>();
-        TryAdd(roots, () => Environment.GetEnvironmentVariable("TEMP"), "%Temp%");
+        TryAdd(roots, () => ProcessEnvironmentHardening.UserTempPath, "%Temp%");
         TryAdd(roots, () => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp"), "%LocalAppData%\\Temp");
         TryAdd(roots, () => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"), "the Downloads folder");
         TryAdd(roots, () => Environment.ExpandEnvironmentVariables("%Public%"), "%Public%");

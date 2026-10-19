@@ -25,6 +25,10 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // Before anything starts a child process: drop or reset the environment variables an
+        // unelevated program could have set to steer this elevated app's tools (see the class).
+        ProcessEnvironmentHardening.Apply();
+
         // App-wide safety net: this app has no logging framework, so an unhandled exception on
         // the UI thread otherwise hard-crashes the whole process with no chance to save work
         // (e.g. an in-progress log/snapshot). Surfacing it via MessageBox and marking e.Handled

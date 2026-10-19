@@ -697,7 +697,7 @@ public static class DefenderService
                     (SafeGetFolderPath(Environment.SpecialFolder.ApplicationData), "%AppData%"),
                     (SafeGetFolderPath(Environment.SpecialFolder.LocalApplicationData), "%LocalAppData%"),
                     (SafeGetFolderPath(Environment.SpecialFolder.UserProfile), "%UserProfile%"),
-                    (Environment.GetEnvironmentVariable("TEMP"), "%Temp%"),
+                    (ProcessEnvironmentHardening.UserTempPath, "%Temp%"),
                 };
                 foreach (var (root, label) in sensitiveRoots)
                 {

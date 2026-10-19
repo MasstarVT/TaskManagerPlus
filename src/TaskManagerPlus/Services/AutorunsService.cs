@@ -1640,7 +1640,7 @@ public static class AutorunsService
     private static string[] BuildUserWritableRoots()
     {
         var roots = new List<string>();
-        try { roots.Add(Environment.GetEnvironmentVariable("TEMP") ?? string.Empty); } catch { }
+        try { roots.Add(ProcessEnvironmentHardening.UserTempPath ?? string.Empty); } catch { }
         try { roots.Add(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)); } catch { }
         try { roots.Add(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)); } catch { }
         try { roots.Add(Environment.ExpandEnvironmentVariables("%Public%")); } catch { }
@@ -2995,7 +2995,7 @@ public static class AutorunsService
             (Environment.GetFolderPath(Environment.SpecialFolder.CommonStartup), false),
         };
 
-        var tempRoot = Environment.GetEnvironmentVariable("TEMP") ?? string.Empty;
+        var tempRoot = ProcessEnvironmentHardening.UserTempPath ?? string.Empty;
         string appDataRoot;
         try { appDataRoot = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); }
         catch { appDataRoot = string.Empty; }

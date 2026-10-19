@@ -14,7 +14,7 @@ public static class WritablePathHeuristics
     public static string[] GetUserWritableRoots()
     {
         var roots = new List<string>();
-        try { roots.Add(Environment.GetEnvironmentVariable("TEMP") ?? string.Empty); } catch { }
+        try { roots.Add(ProcessEnvironmentHardening.UserTempPath ?? string.Empty); } catch { }
         try { roots.Add(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)); } catch { }
         try { roots.Add(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)); } catch { }
         try { roots.Add(Environment.ExpandEnvironmentVariables("%Public%")); } catch { }

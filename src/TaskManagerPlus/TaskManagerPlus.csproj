@@ -10,6 +10,9 @@
          SkiaSharp.Views.WPF, a net452 GLWpfControl and a .NET 2.0 OpenTK (the source of the 11
          NU1701 warnings). Naming 10.0.19041 selects the real net8.0 assets instead. -->
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <!-- The app always runs elevated but starts with the user's environment, so a user-set
+         DOTNET_STARTUP_HOOKS would load an arbitrary assembly into it. This app uses none. -->
+    <StartupHookSupport>false</StartupHookSupport>
     <!-- Windows 10 2004 (build 19041) is the floor the TFM above implies. -->
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <Nullable>enable</Nullable>
