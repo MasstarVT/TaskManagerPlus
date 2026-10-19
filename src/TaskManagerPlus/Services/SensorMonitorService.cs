@@ -18,31 +18,53 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public sealed class SensorMonitorService : IDisposable
 {
-    private readonly Computer _computer;
+    // One LibreHardwareMonitor Computer per process, shared by every instance of this class.
+    // LHM's Computer.Open/Close drive process-static state (OpCode's Rdtsc/CpuId delegates and
+    // code buffer, the ISA/PCI/EC Mutexes), so closing a second, short-lived Computer - the
+    // Troubleshoot "fans/hot" check, the memory-timings read, a CLI dump - broke the Energy &
+    // Thermals tab's long-lived instance for the rest of the session: every Update() threw,
+    // Sample() returned nothing, and the stress test lost its temperature ceiling. Instances are
+    // now ref-counted handles: the first one opens the shared Computer, the last Dispose closes
+    // it, and Sample() is serialized because Update() is not safe to run concurrently.
+    private static readonly object SharedLock = new();
+    private static Computer? _shared;
+    private static bool _sharedAvailable;
+    private static int _refCount;
+
     private readonly bool _isAvailable;
+    private bool _disposed;
 
     public bool IsAvailable => _isAvailable;
 
     public SensorMonitorService()
     {
-        _computer = new Computer
+        lock (SharedLock)
         {
-            IsCpuEnabled = true,
-            IsGpuEnabled = true,
-            IsMotherboardEnabled = true,
-            IsMemoryEnabled = true,
-            IsStorageEnabled = true,
-            IsBatteryEnabled = true,
-        };
+            if (_refCount == 0)
+            {
+                _shared = new Computer
+                {
+                    IsCpuEnabled = true,
+                    IsGpuEnabled = true,
+                    IsMotherboardEnabled = true,
+                    IsMemoryEnabled = true,
+                    IsStorageEnabled = true,
+                    IsBatteryEnabled = true,
+                };
 
-        try
-        {
-            _computer.Open();
-            _isAvailable = true;
-        }
-        catch
-        {
-            _isAvailable = false;
+                try
+                {
+                    _shared.Open();
+                    _sharedAvailable = true;
+                }
+                catch
+                {
+                    _sharedAvailable = false;
+                }
+            }
+
+            _refCount++;
+            _isAvailable = _sharedAvailable;
         }
     }
 
@@ -57,15 +79,19 @@ public sealed class SensorMonitorService : IDisposable
         var readings = new List<SensorReading>();
         if (!_isAvailable) return readings;
 
-        try
+        lock (SharedLock)
         {
-            foreach (var hardware in _computer.Hardware)
-                SampleHardware(hardware, readings);
-        }
-        catch
-        {
-            // A hardware/driver hiccup mid-poll shouldn't take the whole tab down - return
-            // whatever was gathered before the failure (possibly nothing).
+            if (_disposed || _shared == null) return readings;
+            try
+            {
+                foreach (var hardware in _shared.Hardware)
+                    SampleHardware(hardware, readings);
+            }
+            catch
+            {
+                // A hardware/driver hiccup mid-poll shouldn't take the whole tab down - return
+                // whatever was gathered before the failure (possibly nothing).
+            }
         }
 
         return readings;
@@ -94,7 +120,18 @@ public sealed class SensorMonitorService : IDisposable
 
     public void Dispose()
     {
-        if (!_isAvailable) return;
-        try { _computer.Close(); } catch { /* best-effort */ }
+        lock (SharedLock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            if (--_refCount > 0) return;
+
+            if (_sharedAvailable)
+            {
+                try { _shared?.Close(); } catch { /* best-effort */ }
+            }
+            _shared = null;
+            _sharedAvailable = false;
+        }
     }
 }
