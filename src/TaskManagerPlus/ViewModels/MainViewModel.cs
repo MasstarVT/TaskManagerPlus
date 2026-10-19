@@ -752,6 +752,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Theme.ThemeModeChanged -= ApplyAxisThemeToBaselines;
         Theme.ThemeModeChanged -= ApplyAxisThemeToBackgroundHealth;
         BackgroundHealthCollector.Dispose();
+        // Before Performance/EnergyThermals: its final rolling-buffer flush reads their state.
+        Logging.Dispose();
         Processes.Dispose();
         Memory.Dispose();
         Performance.Dispose();
@@ -761,7 +763,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Cpu.Dispose();
         Network.Dispose();
         Gpu.Dispose();
-        Logging.Dispose();
         StressTest.Dispose();
         Summary.Dispose();
         Stability.Dispose();

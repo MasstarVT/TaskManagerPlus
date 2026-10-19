@@ -60,13 +60,20 @@ public static class ShellResponsivenessService
     {
         try
         {
-            // List() covers every handler category, Windows' own included - so the third-party
-            // figure is the ones not signed by Microsoft (an unknown signer counts as not).
+            // List() covers every handler category, Windows' own included. Only a named
+            // non-Microsoft publisher counts as third-party: Windows' own handler DLLs are
+            // catalog-signed, which carries no readable publisher ("Unknown (catalog-signed)").
             var extensions = ShellExtensionService.List();
-            int nonMicrosoft = extensions.Count(e => !(e.Publisher ?? string.Empty).StartsWith("Microsoft", StringComparison.OrdinalIgnoreCase));
+            int thirdParty = 0, unknown = 0;
+            foreach (var e in extensions)
+            {
+                string publisher = e.Publisher ?? string.Empty;
+                if (publisher.Length == 0 || publisher.StartsWith("Unknown", StringComparison.OrdinalIgnoreCase)) unknown++;
+                else if (!publisher.StartsWith("Microsoft", StringComparison.OrdinalIgnoreCase)) thirdParty++;
+            }
             return extensions.Count == 0
                 ? "No registered shell extension handlers found."
-                : $"{extensions.Count} shell extension handler(s) registered, {nonMicrosoft} not signed by Microsoft — third-party handlers are a common cause of shell lag.";
+                : $"{extensions.Count} shell extension handler(s) registered: {thirdParty} from a named non-Microsoft publisher, {unknown} with no readable publisher (Windows' own catalog-signed handlers are among these). Third-party handlers are a common cause of shell lag.";
         }
         catch (Exception ex)
         {
