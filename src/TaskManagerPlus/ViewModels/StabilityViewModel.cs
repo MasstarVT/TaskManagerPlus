@@ -761,9 +761,9 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     private string? _refreshErrorText;
     public string? RefreshErrorText { get => _refreshErrorText; private set => SetProperty(ref _refreshErrorText, value); }
 
-    /// <summary>True once RefreshAsync has completed successfully at least once - the Overview
-    /// meters stay hidden until then, since their defaults (index 10.0, no crash found) would
-    /// otherwise read as a healthy machine while loading or after a failed read.</summary>
+    /// <summary>True once RefreshAsync's main event-log snapshot has been applied at least once -
+    /// the Overview meters stay hidden until then, since their defaults (index 10.0, no crash
+    /// found) would otherwise read as a healthy machine while loading or after a failed read.</summary>
     private bool _hasLoaded;
     public bool HasLoaded { get => _hasLoaded; private set => SetProperty(ref _hasLoaded, value); }
 
@@ -2374,6 +2374,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             var wuEvents = await Task.Run(WindowsUpdateHistoryService.ReadUpdateClientHistory);
             var breakageFlags = WindowsUpdateHistoryService.CorrelateWithStabilityFailures(wuEvents, snapshot.RecentEvents);
             Apply(snapshot, timeline, failedResumes, breakageFlags);
+            // Apply() fills every Overview meter - a later step failing doesn't make them wrong.
+            HasLoaded = true;
 
             AppHangs.Clear();
             foreach (var h in appHangsTask.Result) AppHangs.Add(h);
@@ -2452,7 +2454,6 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             await RefreshRestorePointsAsync();
 
             RefreshErrorText = null;
-            HasLoaded = true;
         }
         catch (Exception ex)
         {
