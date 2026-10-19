@@ -210,7 +210,7 @@
                     <Style.Triggers>
                         <DataTrigger Binding="{Binding HasFailedToStart}" Value="True">
                             <Setter Property="Background" Value="#1AE81123" />
-                            <Setter Property="ToolTip" Value="{Binding ExitCode, StringFormat=Last start attempt failed (exit code {0})}" />
+                            <Setter Property="ToolTip" Value="{Binding FailedToStartToolTip}" />
                         </DataTrigger>
                         <!-- Round 7 #16: current config no longer matches the loaded baseline. -->
                         <DataTrigger Binding="{Binding HasConfigDrift}" Value="True">

@@ -72,8 +72,17 @@ public sealed class ServiceRow : ObservableObject
     public uint ExitCode
     {
         get => _exitCode;
-        set { if (SetProperty(ref _exitCode, value)) OnPropertyChanged(nameof(HasFailedToStart)); }
+        set
+        {
+            if (!SetProperty(ref _exitCode, value)) return;
+            OnPropertyChanged(nameof(HasFailedToStart));
+            OnPropertyChanged(nameof(FailedToStartToolTip));
+        }
     }
+
+    /// <summary>Row tooltip text - a StringFormat on the ToolTip setter's binding was ignored
+    /// (ToolTip is object-typed), so the tooltip showed only the bare number.</summary>
+    public string FailedToStartToolTip => $"Last start attempt failed (exit code {ExitCode})";
 
     /// <summary>True only when StartType is Automatic AND the last recorded start attempt
     /// reported a real Win32 error code - see ExitCode's remarks for why "Automatic but not

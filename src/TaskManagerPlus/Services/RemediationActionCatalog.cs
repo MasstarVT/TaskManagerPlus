@@ -422,6 +422,9 @@ public static class RemediationActionCatalog
         // A non-zero exit is a failure (e.g. `netsh int ip reset` exits 1 on "Access is denied"),
         // the same rule RunToolStreamingAsync below applies.
         var (output, exitCode) = await TroubleshootService.RunCapturedAsync(exe, args, timeoutMs);
+        // sfc writes UTF-16LE when redirected; read as 8-bit text that leaves a NUL after every
+        // character.
+        output = output.Replace("\0", string.Empty);
         if (exitCode == 0) return RemediationRunResult.Ok(output);
         if (exitCode is null)
             return RemediationRunResult.Fail(string.IsNullOrWhiteSpace(output) ? "Command timed out or failed to start." : output);
@@ -449,6 +452,12 @@ public static class RemediationActionCatalog
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        if (Path.GetFileName(exe).Equals("sfc.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            // sfc writes UTF-16LE when its output is redirected.
+            psi.StandardOutputEncoding = System.Text.Encoding.Unicode;
+            psi.StandardErrorEncoding = System.Text.Encoding.Unicode;
+        }
 
         var allOutput = new System.Text.StringBuilder();
         void HandleLine(string? line)
