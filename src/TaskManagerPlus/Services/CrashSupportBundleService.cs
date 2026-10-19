@@ -42,7 +42,10 @@ public static class CrashSupportBundleService
         var notes = new List<string>();
         // Staged in a fresh admin-only folder, not %TEMP%: elevated msinfo32/wevtutil write into
         // it and admin-only dumps are copied there, and %TEMP% belongs to the unelevated user.
-        var work = AdminDataPaths.CreatePrivateTempDirectory("SupportBundle", out var workError);
+        // Owner-readable: the copied minidumps and event logs mustn't be readable by other accounts.
+        if (AppPaths.FindRedirectedOutput(outputZipPath) is { } redirected)
+            return (false, $"Couldn't build the support bundle: {redirected}.", null);
+        var work = AdminDataPaths.CreatePrivateTempDirectory("SupportBundle", out var workError, ownerReadableOnly: true);
         if (work is null) return (false, $"Couldn't build the support bundle: {workError}", null);
         string workDir = work.FullName;
 
@@ -114,6 +117,9 @@ public static class CrashSupportBundleService
             }
 
             // ---- Zip it all up -----------------------------------------------------------------
+            // Checked again right before the elevated delete/write (the build takes minutes).
+            if (AppPaths.FindRedirectedOutput(outputZipPath) is { } redirectedNow)
+                return (false, $"Couldn't save the support bundle: {redirectedNow}.", null);
             if (File.Exists(outputZipPath)) File.Delete(outputZipPath);
             ZipFile.CreateFromDirectory(workDir, outputZipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
 
@@ -183,11 +189,19 @@ public static class CrashSupportBundleService
             try
             {
                 if (!Directory.Exists(folder)) { notes.Add($"WER report {Path.GetFileName(folder)}: no longer on disk, skipped."); continue; }
+                // Re-checked at copy time: the folder sits where unelevated accounts can write, and
+                // one swapped for a link since the scan would copy the link target into the zip.
+                if (WerReportService.CheckReportFolder(folder) is { } unsafeFolder)
+                {
+                    notes.Add($"WER report {Path.GetFileName(folder)}: skipped ({unsafeFolder}).");
+                    continue;
+                }
                 string dest = Path.Combine(destRoot, Path.GetFileName(folder));
                 Directory.CreateDirectory(dest);
-                foreach (var file in Directory.GetFiles(folder))
+                foreach (var file in new DirectoryInfo(folder).GetFiles())
                 {
-                    try { File.Copy(file, Path.Combine(dest, Path.GetFileName(file)), overwrite: true); }
+                    if ((file.Attributes & FileAttributes.ReparsePoint) != 0) continue; // a symbolic link, not a report file
+                    try { file.CopyTo(Path.Combine(dest, file.Name), overwrite: true); }
                     catch { /* one unreadable attached file (e.g. a locked heap snapshot) shouldn't stop the rest */ }
                 }
                 copied++;

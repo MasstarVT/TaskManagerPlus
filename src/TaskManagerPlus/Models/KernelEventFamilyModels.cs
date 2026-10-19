@@ -78,6 +78,10 @@ public sealed class ShadowCopyStatus
     public List<ShadowCopyEventInfo> Events { get; init; } = new();
     public List<ShadowStorageVolumeInfo> StorageVolumes { get; init; } = new();
     public string? VssAdminError { get; init; }
+
+    /// <summary>Set when the System or Application log couldn't be read - Events is then
+    /// incomplete, and an empty list doesn't mean "none".</summary>
+    public string? EventsReadError { get; init; }
 }
 
 /// <summary>#186: one day's Microsoft-Windows-WHEA-Logger 17/18/19/47 (corrected/uncorrected
@@ -160,6 +164,10 @@ public sealed class MemoryDiagnosticStatus
     public bool HasEverRun { get; init; }
     public DateTime? LastRunTime { get; init; }
     public string? Outcome { get; init; }
+
+    /// <summary>Set when the System log couldn't be read - HasEverRun is then unknown, not false.</summary>
+    public string? ReadError { get; init; }
+    public bool ReadFailed => ReadError is not null;
 }
 
 /// <summary>#190: one Kernel-Power 125/126/131 (device power-transition failure) or

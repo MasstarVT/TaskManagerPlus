@@ -50,6 +50,61 @@ public sealed class WerReportService
         };
     }
 
+    /// <summary>Null when <paramref name="folder"/> is a report folder directly under one of the
+    /// four WER roots and neither it nor any folder above it (up to ProgramData/LocalAppData) is a
+    /// junction or symbolic link; otherwise why not. All four roots accept subfolders from
+    /// unelevated accounts (the machine ReportQueue/ReportArchive grant Authenticated Users write),
+    /// so a folder swapped for a link after a scan would point this elevated process's copy or
+    /// delete at whatever the link targets.</summary>
+    internal static string? CheckReportFolder(string folder)
+    {
+        try
+        {
+            string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+            string? parent = Path.GetDirectoryName(full);
+            bool underRoot = parent is not null && GetRoots().Any(r =>
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(r.Root)).Equals(parent, StringComparison.OrdinalIgnoreCase));
+            if (!underRoot) return $"{full} isn't a report folder under a WER report root";
+            return FindRedirectedComponent(full);
+        }
+        catch (Exception ex)
+        {
+            return $"couldn't check {folder} ({ex.Message})";
+        }
+    }
+
+    /// <summary>Null when <paramref name="path"/> and every existing folder above it, up to the
+    /// ProgramData or LocalAppData folder it sits under, is a plain file/directory; otherwise the
+    /// first junction/symbolic link found (or why the check couldn't be made).</summary>
+    internal static string? FindRedirectedComponent(string path)
+    {
+        try
+        {
+            string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            string? stopAt = new[]
+                {
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                }
+                .Where(b => !string.IsNullOrEmpty(b))
+                .Select(b => Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)))
+                .FirstOrDefault(b => full.StartsWith(b + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+            if (stopAt is null) return $"{full} isn't under ProgramData or LocalAppData";
+
+            for (string? current = full; current is not null; current = Path.GetDirectoryName(current))
+            {
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                    return $"{current} is a junction or symbolic link";
+                if (current.Equals(stopAt, StringComparison.OrdinalIgnoreCase)) return null;
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"couldn't check {path} ({ex.Message})";
+        }
+    }
+
     /// <summary>Item 38: every report folder under all four roots, parsed. Best-effort per root
     /// and per folder - one inaccessible root or one malformed Report.wer doesn't stop the rest
     /// of the scan, the same "degrade to nothing found" tolerance every scan in this app uses.</summary>
@@ -499,24 +554,28 @@ public sealed class WerReportService
 
     /// <summary>Item 43: deletes every report folder under all four roots - destroys crash
     /// history (the UI carries an explicit warning + confirmation for this). Best-effort per
-    /// folder; one locked/denied folder doesn't stop the rest.</summary>
-    public static int PurgeAll()
+    /// folder; one locked/denied folder doesn't stop the rest. A root reached through a
+    /// junction/symbolic link is skipped: enumerating it would delete the link target's children.</summary>
+    public static (int Deleted, int Skipped) PurgeAll()
     {
-        int deleted = 0;
+        int deleted = 0, skipped = 0;
         foreach (var (root, _) in GetRoots())
         {
             try
             {
                 if (!Directory.Exists(root)) continue;
+                if (FindRedirectedComponent(root) is not null) { skipped++; continue; }
                 foreach (var dir in Directory.GetDirectories(root))
                 {
+                    // Re-checked per folder: a link planted as a child is left alone.
+                    if (CheckReportFolder(dir) is not null) { skipped++; continue; }
                     try { Directory.Delete(dir, recursive: true); deleted++; }
                     catch { /* locked/denied - skip this one folder */ }
                 }
             }
             catch { /* root missing/access denied - nothing to purge there */ }
         }
-        return deleted;
+        return (deleted, skipped);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -1067,6 +1126,46 @@ public sealed class WerReportService
             key.SetValue("DumpFolder", dumpFolder, RegistryValueKind.ExpandString);
             key.SetValue("DumpCount", dumpCount, RegistryValueKind.DWord);
             key.SetValue("DumpType", dumpType, RegistryValueKind.DWord);
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>True when <paramref name="dumpFolder"/> is a fixed path inside a user profile (no
+    /// %VAR%). WER then writes every crashing account's dumps - SYSTEM and services included - into
+    /// a folder that one user can modify. Older versions of this app wrote the global DumpFolder this
+    /// way (expanded); it can also be typed into the capture-settings card.</summary>
+    public static bool IsFixedProfileDumpFolder(string? dumpFolder)
+    {
+        if (string.IsNullOrWhiteSpace(dumpFolder) || dumpFolder.Contains('%')) return false;
+        try
+        {
+            string folder = dumpFolder.Trim();
+            if (!Path.IsPathFullyQualified(folder)) return false;
+            string? profilesRoot = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)));
+            if (string.IsNullOrEmpty(profilesRoot)) return false;
+            return Path.GetFullPath(folder).StartsWith(
+                Path.TrimEndingDirectorySeparator(profilesRoot) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Rewrites only the global DumpFolder value (as REG_EXPAND_SZ) - DumpCount/DumpType
+    /// and the revert backup are left alone. The caller confirms first.</summary>
+    public (bool Success, string? Error) WriteLocalDumpsFolder(string dumpFolder)
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(LocalDumpsPath, writable: true);
+            if (key is null) return (false, "The LocalDumps registry key doesn't exist.");
+            key.SetValue("DumpFolder", dumpFolder, RegistryValueKind.ExpandString);
             return (true, null);
         }
         catch (Exception ex)

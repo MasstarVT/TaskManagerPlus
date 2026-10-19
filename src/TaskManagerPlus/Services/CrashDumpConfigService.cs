@@ -60,9 +60,10 @@ public static class CrashDumpConfigService
         int? minidumpsCount = ReadDwordAsInt(CrashControlKeyPath, "MinidumpsCount");
         bool? hiberboot = ReadDwordAsBool(PowerKeyPath, "HiberbootEnabled");
 
-        var (pageFiles, ramBytes, autoManaged) = ReadPageFileInfo();
+        var (pageFiles, ramBytes, autoManaged, pageFileError) = ReadPageFileInfo();
         // System-managed with no active file yet (e.g. pending reboot) still gets one from Windows.
-        bool pageFileDisabled = pageFiles.Count == 0 && autoManaged != true;
+        // A failed query lists no files too - that's "unknown", not "no page file".
+        bool pageFileDisabled = pageFileError is null && pageFiles.Count == 0 && autoManaged != true;
 
         // Item 72: rough required sizes - Microsoft doesn't publish an exact formula, so these are
         // documented approximations ("worth a manual check," not a guarantee - CLAUDE.md's "quick
@@ -118,6 +119,7 @@ public static class CrashDumpConfigService
 
             TotalRamBytes = ramBytes,
             PageFiles = pageFiles,
+            PageFileReadError = pageFileError,
             PageFileDisabled = pageFileDisabled,
             RequiredSizeForCompleteBytes = completeReq,
             RequiredSizeForKernelBytes = kernelReq,
@@ -180,11 +182,13 @@ public static class CrashDumpConfigService
     /// AutomaticManagedPagefile is on (the Windows default) - reading settings alone made every
     /// default machine look like it had no page file. Returns an empty list (not a guess) when the
     /// query fails or Windows genuinely has no page file (item 73); AutoManaged is null when it
-    /// couldn't be read.</summary>
-    private static (List<PageFileConfigEntry> PageFiles, long RamBytes, bool? AutoManaged) ReadPageFileInfo()
+    /// couldn't be read. Error is the query's own failure message (the list is then empty because
+    /// nothing could be read).</summary>
+    private static (List<PageFileConfigEntry> PageFiles, long RamBytes, bool? AutoManaged, string? Error) ReadPageFileInfo()
     {
         var entries = new List<PageFileConfigEntry>();
-        string systemDrive = (Environment.GetEnvironmentVariable("SystemDrive") ?? "C:").TrimEnd('\\');
+        // The real system volume, not the process's %SystemDrive% variable.
+        string systemDrive = (Path.GetPathRoot(Environment.SystemDirectory) ?? "C:").TrimEnd('\\');
 
         var snapshot = PageFileConfigurationService.Query();
         foreach (var file in snapshot.Files)
@@ -215,7 +219,7 @@ public static class CrashDumpConfigService
         }
         catch { /* leave 0 - required-size fields degrade to 0 (unknown) above */ }
 
-        return (entries, ramBytes, snapshot.IsAutomaticallyManaged);
+        return (entries, ramBytes, snapshot.IsAutomaticallyManaged, snapshot.ErrorMessage);
     }
 
     /// <summary>Item 75: red/amber/green free-space read on whichever volume DumpTargetPath is
@@ -347,10 +351,15 @@ public static class CrashDumpConfigService
         // compensating for it.
         bool dedicatedConfigured = !string.IsNullOrWhiteSpace(cfg.DedicatedDumpFile);
         bool dedicatedLooksAdequate = dedicatedConfigured && cfg.DumpTargetHealthLevel != DumpTargetHealth.Red;
-        bool pageFileGateOk = !cfg.DumpTypeNeedsPageFile || cfg.SystemVolumePageFileSufficient || dedicatedLooksAdequate;
+        bool? pageFileGateOk = !cfg.DumpTypeNeedsPageFile || cfg.SystemVolumePageFileSufficient || dedicatedLooksAdequate;
         string pageFileDetail;
         if (!cfg.DumpTypeNeedsPageFile)
             pageFileDetail = "Not applicable - the configured dump type doesn't need a page file.";
+        else if (cfg.PageFileReadError is { } pageFileError && !dedicatedLooksAdequate)
+        {
+            pageFileGateOk = null;
+            pageFileDetail = $"Couldn't read the page-file configuration ({pageFileError}) - whether it's large enough is unknown.";
+        }
         else if (cfg.PageFileDisabled)
             pageFileDetail = $"No page file is configured at all - crash dumps can't be written. The configured dump type needs roughly {Formatting.FormatBytes(cfg.RequiredSizeForConfiguredTypeBytes)}.";
         else if (cfg.SystemVolumePageFileSufficient)

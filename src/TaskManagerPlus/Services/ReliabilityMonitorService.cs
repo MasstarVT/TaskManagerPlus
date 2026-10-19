@@ -102,8 +102,10 @@ public sealed class ReliabilityMonitorService
     /// <summary>Reads every Win32_ReliabilityRecords row within <paramref name="lookbackDays"/>,
     /// newest first - application failures, Windows failures, miscellaneous failures, warnings, and
     /// informational entries (software installs/updates/uninstalls) all come through this one WMI
-    /// class. Same "read everything, filter/sort in C#" tradeoff as ReadStabilityMetrics above.</summary>
-    public List<ReliabilityRecordInfo> ReadRecords(int lookbackDays = LookbackDays)
+    /// class. Same "read everything, filter/sort in C#" tradeoff as ReadStabilityMetrics above.
+    /// A failed query adds to <paramref name="errors"/>, so the caller can tell "no records" from
+    /// "couldn't read".</summary>
+    public List<ReliabilityRecordInfo> ReadRecords(int lookbackDays = LookbackDays, ICollection<string>? errors = null)
     {
         var results = new List<ReliabilityRecordInfo>();
         try
@@ -132,9 +134,10 @@ public sealed class ReliabilityMonitorService
                 });
             }
         }
-        catch
+        catch (Exception ex)
         {
             // Win32_ReliabilityRecords unavailable - degrade to empty, same as ReadStabilityMetrics.
+            errors?.Add($"Couldn't read Win32_ReliabilityRecords: {ex.Message}");
         }
 
         var cutoff = DateTime.Now.AddDays(-lookbackDays);

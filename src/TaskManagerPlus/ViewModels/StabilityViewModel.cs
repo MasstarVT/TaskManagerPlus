@@ -636,7 +636,26 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
     // ---- #165: local crash dump capture (LocalDumps) toggle ----
     private LocalDumpsSettings _localDumpsSettings = new();
-    public LocalDumpsSettings LocalDumpsSettings { get => _localDumpsSettings; private set => SetProperty(ref _localDumpsSettings, value); }
+    public LocalDumpsSettings LocalDumpsSettings
+    {
+        get => _localDumpsSettings;
+        private set
+        {
+            if (!SetProperty(ref _localDumpsSettings, value)) return;
+            LocalDumpsFolderWarning = WerReportService.IsFixedProfileDumpFolder(value.DumpFolder)
+                ? $"DumpFolder is a fixed path inside a user profile ({value.DumpFolder}), so dumps of SYSTEM and service crashes "
+                  + "are written into a folder that account can change. Earlier versions of this app wrote it this way. "
+                  + $"{LocalDumpsDefaultFolder} sends each crashing account's dumps to its own profile instead."
+                : null;
+        }
+    }
+
+    /// <summary>Set when the global DumpFolder is a fixed per-user path (see
+    /// WerReportService.IsFixedProfileDumpFolder); offers the rewrite below.</summary>
+    private string? _localDumpsFolderWarning;
+    public string? LocalDumpsFolderWarning { get => _localDumpsFolderWarning; private set => SetProperty(ref _localDumpsFolderWarning, value); }
+
+    public RelayCommand RewriteLocalDumpsFolderCommand { get; }
 
     private bool _canRevertLocalDumps;
     public bool CanRevertLocalDumps { get => _canRevertLocalDumps; private set => SetProperty(ref _canRevertLocalDumps, value); }
@@ -855,6 +874,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     /// means none when the read worked" gate as ShadowCopyEventsReadOk).</summary>
     private bool _softwareChangeLogReadOk;
     public bool SoftwareChangeLogReadOk { get => _softwareChangeLogReadOk; private set => SetProperty(ref _softwareChangeLogReadOk, value); }
+
+    /// <summary>Why the last Win32_ReliabilityRecords read failed (the feed and change log then
+    /// still show the previous good read, if any); null after a successful read.</summary>
+    private string? _reliabilityRecordsErrorText;
+    public string? ReliabilityRecordsErrorText { get => _reliabilityRecordsErrorText; private set => SetProperty(ref _reliabilityRecordsErrorText, value); }
 
     private ReliabilityAnalysisStatus _reliabilityAnalysisStatus = new();
     public ReliabilityAnalysisStatus ReliabilityAnalysisStatus { get => _reliabilityAnalysisStatus; private set => SetProperty(ref _reliabilityAnalysisStatus, value); }
@@ -1139,6 +1163,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         // #165: both gated behind their own explicit MessageBox confirmation - see EnableLocalDumps/RevertLocalDumps.
         EnableLocalDumpsCommand = new RelayCommand(EnableLocalDumps, () => !ReadOnlyModeService.IsReadOnly);
         RevertLocalDumpsCommand = new RelayCommand(RevertLocalDumps, () => CanRevertLocalDumps && !ReadOnlyModeService.IsReadOnly);
+        RewriteLocalDumpsFolderCommand = new RelayCommand(RewriteLocalDumpsFolder, () => LocalDumpsFolderWarning is not null && !ReadOnlyModeService.IsReadOnly);
         RefreshLocalDumpsBackupState();
 
         // #195: gated behind its own explicit MessageBox confirmation - see RunLodctrRebuildAsync.
@@ -1229,6 +1254,12 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         SaveMinidumpsCountCommand = new RelayCommand(() =>
         {
+            // 0 or a negative number would be stored as a DWORD like 0xFFFFFFFF - effectively unlimited.
+            if (MinidumpsCountInput < 1)
+            {
+                HousekeepingStatusText = "MinidumpsCount must be at least 1 - nothing was written.";
+                return;
+            }
             bool ok = MinidumpHousekeepingService.WriteMinidumpsCount(MinidumpsCountInput);
             HousekeepingStatusText = ok
                 ? $"MinidumpsCount set to {MinidumpsCountInput}."
@@ -1306,8 +1337,10 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
             // Recursive deletes across every profile's WER folders - off the UI thread.
             WerPurgeStatusText = "Deleting report folders…";
-            int deleted = await Task.Run(WerReportService.PurgeAll);
-            WerPurgeStatusText = $"Deleted {deleted} report folder(s).";
+            var (deleted, skipped) = await Task.Run(WerReportService.PurgeAll);
+            WerPurgeStatusText = skipped == 0
+                ? $"Deleted {deleted} report folder(s)."
+                : $"Deleted {deleted} report folder(s). Skipped {skipped} location(s) reached through a junction or symbolic link - those weren't touched.";
             _ = RefreshAsync();
         }, () => !ReadOnlyModeService.IsReadOnly);
 
@@ -2139,7 +2172,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
             var (chkdskOk, message) = await SystemRepairService.ScheduleChkdskOnSystemVolumeAsync();
             ChkdskResultText = message;
-            string systemDrive = (Environment.GetEnvironmentVariable("SystemDrive") ?? "C:").TrimEnd('\\');
+            // The OS's own system volume, not the process's %SystemDrive% variable.
+            string systemDrive = (System.IO.Path.GetPathRoot(Environment.SystemDirectory) ?? "C:").TrimEnd('\\');
             AppendRepairJournal(systemDrive, "Scheduled a disk check at next restart", $"fsutil.exe dirty set {systemDrive}", chkdskOk);
         }, () => !ReadOnlyModeService.IsReadOnly);
 
@@ -2659,8 +2693,12 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             foreach (var e in status.Events) ShadowCopyEvents.Add(e);
             ShadowStorageVolumes.Clear();
             foreach (var v in status.StorageVolumes) ShadowStorageVolumes.Add(v);
-            ShadowCopyStatusText = status.VssAdminError;
-            ShadowCopyEventsReadOk = true;
+            // The service reports a failed log read itself (it never throws for one), so the
+            // "none found" line is gated on that, not only on this catch.
+            ShadowCopyStatusText = status.VssAdminError is null ? status.EventsReadError
+                : status.EventsReadError is null ? status.VssAdminError
+                : $"{status.VssAdminError} {status.EventsReadError}";
+            ShadowCopyEventsReadOk = status.EventsReadError is null;
         }
         catch (Exception ex)
         {
@@ -2811,7 +2849,16 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         try
         {
-            var records = await Task.Run(() => _reliability.ReadRecords());
+            var recordErrors = new List<string>();
+            var records = await Task.Run(() => _reliability.ReadRecords(errors: recordErrors));
+            if (recordErrors.Count > 0)
+            {
+                // The service swallows the WMI failure into an empty list - treat it like the catch
+                // below: keep the last good lists and don't let "none found" show.
+                SoftwareChangeLogReadOk = false;
+                ReliabilityRecordsErrorText = string.Join(" ", recordErrors);
+                return;
+            }
 
             // #173: cross-highlight the informational subset against crash clusters from this same
             // refresh's already-built unified timeline (#137) - correlation only, see
@@ -2826,10 +2873,12 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             foreach (var r in records.Where(r => r.Category == ReliabilityRecordCategory.Informational))
                 SoftwareChangeLog.Add(r);
             SoftwareChangeLogReadOk = true;
+            ReliabilityRecordsErrorText = null;
         }
-        catch
+        catch (Exception ex)
         {
             SoftwareChangeLogReadOk = false;
+            ReliabilityRecordsErrorText = $"Couldn't read the reliability records: {ex.Message}";
             // degrade - ReliabilityRecords/SoftwareChangeLog keep whatever the last successful read
             // produced rather than being cleared out from under a transient failure.
         }
@@ -2911,10 +2960,29 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         // Same first-change-only backup as EnableLocalDumps below; no backup, no change.
         bool createdBackup = ReliabilityMonitorService.LoadBackup(out _) is null;
-        if (createdBackup && ReliabilityMonitorService.SaveBackup(_reliability.ReadAnalysisStatus()) is { } backupError)
+        if (createdBackup)
         {
-            ReliabilityAnalysisStatusText = $"Couldn't save a backup of the current setting, so nothing was changed: {backupError}";
-            return;
+            var current = _reliability.ReadAnalysisStatus();
+            // An older version's backup in the settings folder may hold the real original; the
+            // current value may be that version's change, so it's only recorded once confirmed.
+            if (ReliabilityMonitorService.LegacyBackupNote() is { } legacy)
+            {
+                string value = !current.KeyExists ? "(the Reliability Analysis\\WMI key doesn't exist)"
+                    : current.WmiEnableValue is { } v ? $"WMIEnable = {v.ToString(CultureInfo.InvariantCulture)}" : "(WMIEnable isn't set)";
+                var keep = MessageBox.Show(
+                    "There's no verified backup of this setting yet, and the current value may have been written by an earlier version of this app.\n\n"
+                    + legacy + "\n\nIf you continue, this becomes what \"Revert\" restores:\n\n" + value
+                    + "\n\nSave it as the value to revert to, and continue?",
+                    "Re-enable Reliability Monitor - revert point",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (keep != MessageBoxResult.Yes) return;
+            }
+            if (ReliabilityMonitorService.SaveBackup(current) is { } backupError)
+            {
+                ReliabilityAnalysisStatusText = $"Couldn't save a backup of the current setting, so nothing was changed: {backupError}";
+                return;
+            }
         }
 
         var (success, error) = _reliability.EnableAnalysis();
@@ -3014,10 +3082,36 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         // overwrite the original with the already-enabled state and make Revert a no-op. Only a
         // verified backup counts, and without one saved nothing is changed.
         bool createdBackup = WerReportService.LoadBackup(out _) is null;
-        if (createdBackup && WerReportService.SaveBackup(_wer.ReadLocalDumpsSettings()) is { } backupError)
+        if (createdBackup)
         {
-            LocalDumpsToggleStatusText = $"Couldn't save a backup of the current LocalDumps settings, so nothing was changed: {backupError}";
-            return;
+            var current = _wer.ReadLocalDumpsSettings();
+            // The current values may be an earlier version's change rather than the user's own
+            // settings (its backup sat in the settings folder, and it wrote an expanded per-user
+            // folder) - recorded as "the original" only once the user says so.
+            string? legacy = WerReportService.LegacyBackupNote();
+            bool fixedFolder = WerReportService.IsFixedProfileDumpFolder(current.DumpFolder);
+            if (legacy is not null || fixedFolder)
+            {
+                static string Shown(object? v) => v is null ? "(not set)" : Convert.ToString(v, CultureInfo.InvariantCulture) ?? "(not set)";
+                string values = current.KeyExists
+                    ? $"DumpFolder = {Shown(current.DumpFolder)}\nDumpCount = {Shown(current.DumpCount)}\nDumpType = {Shown(current.DumpType)}"
+                    : "(the LocalDumps key doesn't exist)";
+                var keep = MessageBox.Show(
+                    "There's no verified backup of the LocalDumps settings yet, and the current values may have been written by an earlier version of this app rather than being your own settings.\n\n"
+                    + (legacy is not null ? legacy + "\n\n" : string.Empty)
+                    + (fixedFolder ? "The current DumpFolder is a fixed path inside a user profile, the form earlier versions wrote.\n\n" : string.Empty)
+                    + "If you continue, these become what \"Revert\" restores:\n\n" + values
+                    + "\n\nSave these as the values to revert to, and continue?",
+                    "Enable local crash dump capture - revert point",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (keep != MessageBoxResult.Yes) return;
+            }
+            if (WerReportService.SaveBackup(current) is { } backupError)
+            {
+                LocalDumpsToggleStatusText = $"Couldn't save a backup of the current LocalDumps settings, so nothing was changed: {backupError}";
+                return;
+            }
         }
 
         var (success, error) = _wer.WriteLocalDumpsSettings(LocalDumpsDefaultFolder, dumpCount: 10, dumpType: 1);
@@ -3034,6 +3128,30 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             if (createdBackup) WerReportService.ClearBackup();
             LocalDumpsToggleStatusText = $"Couldn't enable local crash dump capture: {error}";
         }
+    }
+
+    /// <summary>Rewrites a fixed per-user global DumpFolder (see LocalDumpsFolderWarning) to the
+    /// unexpanded default. Only DumpFolder changes; the revert backup is left as it is - the fixed
+    /// value isn't something to restore.</summary>
+    private void RewriteLocalDumpsFolder()
+    {
+        string? current = LocalDumpsSettings.DumpFolder;
+        if (!WerReportService.IsFixedProfileDumpFolder(current)) return;
+
+        var confirm = MessageBox.Show(
+            "This changes one value under HKLM\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps:\n\n"
+            + $"DumpFolder: {current}\n  ->  {LocalDumpsDefaultFolder} (REG_EXPAND_SZ - each crashing account's own profile)\n\n"
+            + "DumpCount and DumpType are left as they are. Dumps already in the old folder stay there.\n\nRewrite DumpFolder now?",
+            "Rewrite crash dump folder",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        var (success, error) = _wer.WriteLocalDumpsFolder(LocalDumpsDefaultFolder);
+        LocalDumpsSettings = _wer.ReadLocalDumpsSettings();
+        LocalDumpsToggleStatusText = success
+            ? $"DumpFolder rewritten to {LocalDumpsDefaultFolder}."
+            : $"Couldn't rewrite DumpFolder: {error}";
     }
 
     /// <summary>#165: one-click revert - restores whatever LocalDumps looked like right before

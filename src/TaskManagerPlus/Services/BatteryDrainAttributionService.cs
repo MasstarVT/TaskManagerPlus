@@ -36,7 +36,8 @@ public static class BatteryDrainAttributionService
     {
         // A per-call admin-only folder, not %TEMP%: an unelevated process could swap a %TEMP%
         // folder for a junction and redirect the elevated powercfg write or the delete below.
-        var tempDir = AdminDataPaths.CreatePrivateTempDirectory("srumutil", out string? dirError);
+        // Owner-readable: the SRUM dump holds every account's per-app usage.
+        var tempDir = AdminDataPaths.CreatePrivateTempDirectory("srumutil", out string? dirError, ownerReadableOnly: true);
         if (tempDir is null)
             return (new List<BatteryDrainAttributionRow>(), $"powercfg /srumutil wasn't run: {dirError ?? "couldn't create a private folder for its output"}.");
         string tempFile = Path.Combine(tempDir.FullName, "srum.xml");
@@ -47,13 +48,13 @@ public static class BatteryDrainAttributionService
             // TracerouteService gives its own longer-than-default bound.
             var (output, exitCode) = await RunProcessAsync("powercfg.exe", $"/srumutil /output \"{tempFile}\" /xml", 60000);
 
-            if (!File.Exists(tempFile))
-            {
+            // A killed run usually leaves a truncated srum.xml - report the timeout, not a format problem.
+            if (exitCode is null)
                 return (new List<BatteryDrainAttributionRow>(),
-                    exitCode is null
-                        ? "powercfg /srumutil timed out."
-                        : $"powercfg /srumutil didn't produce output: {output.Trim()}");
-            }
+                    "powercfg /srumutil timed out and was stopped (a large SRUM database can take a while) - try again.");
+
+            if (!File.Exists(tempFile))
+                return (new List<BatteryDrainAttributionRow>(), $"powercfg /srumutil didn't produce output: {output.Trim()}");
 
             string xml = await File.ReadAllTextAsync(tempFile);
             var rows = ParseSrumXml(xml, lookbackDays);

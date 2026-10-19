@@ -31,14 +31,18 @@ public static class DebuggerToolsService
 
         try
         {
+            // Known-folder paths, not %ProgramFiles% from the (user-influenced) environment block.
+            string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
             string[] kitsRoots =
             {
-                Environment.ExpandEnvironmentVariables(@"%ProgramFiles(x86)%\Windows Kits\10\Debuggers\x64"),
-                Environment.ExpandEnvironmentVariables(@"%ProgramFiles%\Windows Kits\10\Debuggers\x64"),
-                Environment.ExpandEnvironmentVariables(@"%ProgramFiles(x86)%\Windows Kits\10\Debuggers\x86"),
+                Path.Combine(programFilesX86, "Windows Kits", "10", "Debuggers", "x64"),
+                Path.Combine(programFiles, "Windows Kits", "10", "Debuggers", "x64"),
+                Path.Combine(programFilesX86, "Windows Kits", "10", "Debuggers", "x86"),
             };
             foreach (var root in kitsRoots)
             {
+                if (!Path.IsPathFullyQualified(root)) continue;
                 try
                 {
                     var cdbPath = Path.Combine(root, "cdb.exe");
@@ -136,6 +140,13 @@ public static class DebuggerToolsService
     {
         try
         {
+            // Same admin-only check StartTrustedExecutable applies to WinDbg; cdb also loads
+            // dbgeng/dbghelp from its own folder, so the sibling binaries count too.
+            if (!Path.IsPathFullyQualified(cdbPath))
+                return new CdbAnalysisResult { AnalyzedAt = DateTime.Now, Error = $"{cdbPath} isn't a full path - cdb.exe wasn't started." };
+            if (UnattendedScanService.FindNonAdminWriteAccess(cdbPath, includeSiblingBinaries: true) is { } writable)
+                return new CdbAnalysisResult { AnalyzedAt = DateTime.Now, Error = $"Refused to start cdb.exe elevated: {writable}" };
+
             // cdb runs elevated. Its symbol path must not come from the inherited environment:
             // _NT_SYMBOL_PATH & co. are per-user variables any process running as the user can
             // set, and a symsrv*<dll>* entry makes dbghelp load that DLL. So: -sins (ignore them),

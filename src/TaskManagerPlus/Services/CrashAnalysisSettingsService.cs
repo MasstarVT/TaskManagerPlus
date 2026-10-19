@@ -23,7 +23,9 @@ public static class CrashAnalysisSettingsService
                 {
                     // The folder becomes part of the elevated cdb's symbol path, so anything but one
                     // plain local folder (blank, UNC, a second srv* leg, ...) falls back to the default.
-                    if (ValidateSymbolCacheFolder(settings.SymbolCacheFolder) is not null)
+                    // A removable drive that simply isn't plugged in keeps its setting; every use
+                    // re-validates strictly and falls back to the default while it's absent.
+                    if (ValidateSymbolCacheFolder(settings.SymbolCacheFolder, allowAbsentDrive: true) is not null)
                     {
                         AppPaths.MarkUnreadable(SettingsPath);
                         settings.SymbolCacheFolder = CrashAnalysisSettings.Defaults.SymbolCacheFolder;
@@ -59,8 +61,10 @@ public static class CrashAnalysisSettingsService
     /// <summary>Null when <paramref name="folder"/> is one fully qualified folder on a local drive
     /// (e.g. C:\Symbols); otherwise why not. It is spliced into "srv*&lt;folder&gt;*https://..."
     /// for an elevated debugger, so a '*', ';' or quote could add another symbol-server leg or
-    /// argument, and a UNC or network-drive path would read symbols from someone else's share.</summary>
-    public static string? ValidateSymbolCacheFolder(string? folder)
+    /// argument, and a UNC or network-drive path would read symbols from someone else's share.
+    /// <paramref name="allowAbsentDrive"/> accepts a drive letter with no volume behind it (only
+    /// for keeping a saved setting - never for a path about to be used).</summary>
+    public static string? ValidateSymbolCacheFolder(string? folder, bool allowAbsentDrive = false)
     {
         if (string.IsNullOrWhiteSpace(folder)) return "Enter a folder for the symbol cache.";
         string f = folder.Trim();
@@ -74,6 +78,7 @@ public static class CrashAnalysisSettingsService
         try
         {
             var type = new DriveInfo(f[..1]).DriveType;
+            if (allowAbsentDrive && type == DriveType.NoRootDirectory) return null;
             if (type is not (DriveType.Fixed or DriveType.Removable or DriveType.Ram))
                 return $"{f[..2]} isn't a local drive.";
         }

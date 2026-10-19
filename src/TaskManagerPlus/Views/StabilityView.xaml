@@ -2009,6 +2009,12 @@
                                 <StackPanel>
                                     <TextBlock Text="Page file vs. dump type" Style="{StaticResource ColorRowLabel}" Margin="0,0,0,6" FontWeight="SemiBold" />
 
+                                    <!-- The page-file query failed: the list below is empty because nothing
+                                         could be read, not because there is no page file. -->
+                                    <TextBlock Text="{Binding CrashDumpConfig.PageFileReadError, StringFormat='Could not read the page-file configuration ({0}) - whether a page file exists, and its size, is unknown.'}"
+                                               FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" Margin="0,0,0,8"
+                                               Visibility="{Binding CrashDumpConfig.PageFileReadError, Converter={StaticResource NullToVisibilityConverter}}" />
+
                                     <!-- Item 73: page file disabled entirely - the "I have 64 GB of RAM so
                                          I turned it off" case, which silently disables crash dumps. -->
                                     <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
@@ -2525,6 +2531,16 @@
                                 <Run Text=" · Keeps " /><Run Text="{Binding LocalDumpsSettings.DumpCount, Mode=OneWay}" />
                                 <Run Text=" (" /><Run Text="{Binding LocalDumpsSettings.DumpTypeLabel, Mode=OneWay}" /><Run Text=")" />
                             </TextBlock>
+                            <!-- A fixed per-user DumpFolder sends SYSTEM/service dumps into one user's folder. -->
+                            <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}" BorderThickness="1" CornerRadius="6"
+                                    Padding="10,8" Margin="0,0,0,8"
+                                    Visibility="{Binding LocalDumpsFolderWarning, Converter={StaticResource NullToVisibilityConverter}}">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding LocalDumpsFolderWarning}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" />
+                                    <Button Content="Rewrite DumpFolder..." HorizontalAlignment="Left" FontSize="{StaticResource FontBody}" Padding="8,4" Margin="0,6,0,0"
+                                            Command="{Binding RewriteLocalDumpsFolderCommand}" />
+                                </StackPanel>
+                            </Border>
                             <WrapPanel>
                                 <Button Content="Enable local dump capture..." FontSize="{StaticResource FontBody}" Padding="8,4" Margin="0,0,8,0" Command="{Binding EnableLocalDumpsCommand}" />
                                 <Button Content="Revert to previous..." FontSize="{StaticResource FontBody}" Padding="8,4" Command="{Binding RevertLocalDumpsCommand}" />
@@ -4111,8 +4127,18 @@
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Text" Value="{Binding MemoryDiagnosticStatus.Outcome}" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding MemoryDiagnosticStatus.HasEverRun}" Value="False">
+                                            <!-- "Never run" only from a finished read that worked; a failed
+                                                 System-log read is unknown, not "never". Later triggers win. -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding MemoryDiagnosticStatus.HasEverRun}" Value="False" />
+                                                    <Condition Binding="{Binding MemoryDiagnosticStatus.ReadFailed}" Value="False" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Text" Value="No memory diagnostic run found. Run mdsched.exe to test RAM (schedules a check on next restart)." />
+                                            </MultiDataTrigger>
+                                            <DataTrigger Binding="{Binding MemoryDiagnosticStatus.ReadFailed}" Value="True">
+                                                <Setter Property="Text" Value="{Binding MemoryDiagnosticStatus.ReadError, StringFormat='Whether a memory test has run is unknown - {0}'}" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
@@ -4740,6 +4766,11 @@
                                     <DataGridTextColumn Header="Product" Binding="{Binding ProductName}" Width="2*" />
                                 </DataGrid.Columns>
                             </DataGrid>
+                            <!-- The service reports a failed Win32_ReliabilityRecords query itself (it
+                                 returns an empty list rather than throwing). -->
+                            <TextBlock Text="{Binding ReliabilityRecordsErrorText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}"
+                                        TextWrapping="Wrap" Margin="0,6,0,0"
+                                        Visibility="{Binding ReliabilityRecordsErrorText, Converter={StaticResource NullToVisibilityConverter}}" />
                             <TextBlock Text="No reliability records found in the last 30 days.">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
@@ -4749,6 +4780,7 @@
                                             <MultiDataTrigger>
                                                 <MultiDataTrigger.Conditions>
                                                     <Condition Binding="{Binding ReliabilityRecords.Count}" Value="0" />
+                                                    <Condition Binding="{Binding SoftwareChangeLogReadOk}" Value="True" />
                                                     <Condition Binding="{Binding HasLoaded}" Value="True" />
                                                     <Condition Binding="{Binding IsLoading}" Value="False" />
                                                     <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />

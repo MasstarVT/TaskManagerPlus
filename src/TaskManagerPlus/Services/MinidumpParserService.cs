@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -709,12 +710,16 @@ public static class MinidumpParserService
                     catch { attachedHere = false; }
                     if (!attachedHere) continue;
 
-                    var codeMatch = Regex.Match(text, @"^Sig\[0\]\.Value=(0x[0-9A-Fa-f]+)", RegexOptions.Multiline);
+                    // WER writes the code as bare hex ("P1: 193", folder Kernel_193_...); a 0x
+                    // prefix is accepted too. Normalized to the table's lowercase 0x form.
+                    var codeMatch = Regex.Match(text, @"^Sig\[0\]\.Value=(?:0[xX])?([0-9A-Fa-f]+)\s*$", RegexOptions.Multiline);
                     if (!codeMatch.Success)
-                        codeMatch = Regex.Match(text, @"^P1=(0x[0-9A-Fa-f]+)", RegexOptions.Multiline);
-                    if (!codeMatch.Success) return (null, null);
+                        codeMatch = Regex.Match(text, @"^P1=(?:0[xX])?([0-9A-Fa-f]+)\s*$", RegexOptions.Multiline);
+                    if (!codeMatch.Success
+                        || !ulong.TryParse(codeMatch.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ulong codeValue))
+                        return (null, null);
 
-                    string code = codeMatch.Groups[1].Value;
+                    string code = $"0x{codeValue:x}";
                     string description = LiveKernelEventCodes.TryGetValue(code, out var desc) ? desc : $"{code} — unrecognized live-kernel event code";
                     return (code, description);
                 }

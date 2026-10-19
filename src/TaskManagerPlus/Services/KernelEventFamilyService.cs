@@ -197,8 +197,9 @@ public sealed class KernelEventFamilyService
     /// are surfaced together rather than left buried in the general event list.</summary>
     public ShadowCopyStatus ReadShadowCopyStatus(int lookbackDays = LookbackDays)
     {
-        var volsnapRows = ReadFamily("System", new[] { ("volsnap", 25), ("volsnap", 33), ("volsnap", 36) }, lookbackDays);
-        var vssRows = ReadFamily("Application", new[] { ("VSS", 8193), ("VSS", 12289) }, lookbackDays);
+        var errors = new List<string>();
+        var volsnapRows = ReadFamily("System", new[] { ("volsnap", 25), ("volsnap", 33), ("volsnap", 36) }, lookbackDays, errors: errors);
+        var vssRows = ReadFamily("Application", new[] { ("VSS", 8193), ("VSS", 12289) }, lookbackDays, errors: errors);
 
         var events = volsnapRows.Concat(vssRows)
             .OrderByDescending(r => r.TimeCreated)
@@ -212,7 +213,13 @@ public sealed class KernelEventFamilyService
             .ToList();
 
         var (volumes, error) = ReadShadowStorage();
-        return new ShadowCopyStatus { Events = events, StorageVolumes = volumes, VssAdminError = error };
+        return new ShadowCopyStatus
+        {
+            Events = events,
+            StorageVolumes = volumes,
+            VssAdminError = error,
+            EventsReadError = errors.Count == 0 ? null : string.Join(" ", errors),
+        };
     }
 
     private static readonly Regex ShadowForVolumeRegex = new(@"For volume:\s*(.+)", RegexOptions.Compiled);
@@ -484,10 +491,12 @@ public sealed class KernelEventFamilyService
     /// RAM ever actually tested".</summary>
     public MemoryDiagnosticStatus ReadMemoryDiagnosticStatus(int lookbackDays = MemoryDiagnosticLookbackDays)
     {
+        var errors = new List<string>();
         var rows = ReadFamily("System",
             new[] { ("Microsoft-Windows-MemoryDiagnostics-Results", 1101), ("Microsoft-Windows-MemoryDiagnostics-Results", 1201) },
-            lookbackDays);
-        if (rows.Count == 0) return new MemoryDiagnosticStatus { HasEverRun = false };
+            lookbackDays, errors: errors);
+        if (rows.Count == 0)
+            return new MemoryDiagnosticStatus { HasEverRun = false, ReadError = errors.Count == 0 ? null : string.Join(" ", errors) };
 
         var last = rows.OrderByDescending(r => r.TimeCreated).First();
         return new MemoryDiagnosticStatus
@@ -533,8 +542,12 @@ public sealed class KernelEventFamilyService
     /// that doesn't exist or isn't enabled (e.g. an Analytic/Debug channel, or a driver-specific
     /// provider absent on this PC) comes back as ReadPage's ErrorText, which this degrades to an
     /// empty list for - exactly the same "one family member unavailable doesn't blank out the
-    /// others" tolerance every multi-part read on this tab already has.</summary>
-    private List<EventRecordRow> ReadFamily(string logName, IEnumerable<(string Provider, int EventId)> pairs, int lookbackDays, int pageSize = 1000)
+    /// others" tolerance every multi-part read on this tab already has. For a required channel
+    /// (System/Application) the caller passes <paramref name="errors"/>, which receives the failure
+    /// so an empty result isn't presented as "none found"; ReadPage reports a query that merely
+    /// matched nothing as zero rows with no error.</summary>
+    private List<EventRecordRow> ReadFamily(string logName, IEnumerable<(string Provider, int EventId)> pairs, int lookbackDays, int pageSize = 1000,
+        ICollection<string>? errors = null)
     {
         var list = pairs.ToList();
         if (list.Count == 0) return new List<EventRecordRow>();
@@ -544,10 +557,13 @@ public sealed class KernelEventFamilyService
         try
         {
             var result = _explorer.ReadPage(logName, xpath, null, pageSize);
-            return result.ErrorText is null ? result.Rows : new List<EventRecordRow>();
+            if (result.ErrorText is null) return result.Rows;
+            errors?.Add($"Couldn't read the {logName} log: {result.ErrorText}");
+            return new List<EventRecordRow>();
         }
-        catch
+        catch (Exception ex)
         {
+            errors?.Add($"Couldn't read the {logName} log: {ex.Message}");
             return new List<EventRecordRow>();
         }
     }

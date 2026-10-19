@@ -225,7 +225,8 @@ public static class DismService
     /// </summary>
     private static async Task<(string Output, int ExitCode)> RunDismAsync(string args, IProgress<int>? progress, int timeoutMs, CancellationToken cancellationToken)
     {
-        var psi = new ProcessStartInfo("dism.exe", args)
+        // System32's dism.exe, not CreateProcess's search (current directory first).
+        var psi = new ProcessStartInfo(ToolRunner.ResolveTool("dism.exe"), args)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

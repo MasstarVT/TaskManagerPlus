@@ -379,6 +379,11 @@ public static class DefenderService
     {
         error = null;
         string exe = ResolveMpCmdRunPath();
+        if (MpCmdRunMissing(exe) is { } missing)
+        {
+            error = missing;
+            return new List<QuarantineItem>();
+        }
         var (exitCode, output) = RunCapturedWithExitCode(exe, "-Restore -ListAll", TimeSpan.FromSeconds(30));
         // Check the exit code before the output: a timeout returns the non-empty "(timed out)"
         // sentinel, and a failure (e.g. hr 0x80070005, exit 2) prints an error message - both
@@ -475,7 +480,9 @@ public static class DefenderService
         string args = HasUsableQuarantinePath(filePath)
             ? $"-Restore -FilePath \"{filePath}\""
             : $"-Restore -Name \"{threatName}\"";
-        var (exitCode, output) = RunCapturedWithExitCode(ResolveMpCmdRunPath(), args, TimeSpan.FromSeconds(30));
+        string exe = ResolveMpCmdRunPath();
+        if (MpCmdRunMissing(exe) is { } missing) return (false, missing);
+        var (exitCode, output) = RunCapturedWithExitCode(exe, args, TimeSpan.FromSeconds(30));
         return (exitCode == 0, string.IsNullOrWhiteSpace(output) ? $"(exit code {exitCode}, no output)" : output.Trim());
     }
 
@@ -515,17 +522,37 @@ public static class DefenderService
 
     public enum DefenderScanType { Quick = 1, Full = 2, Custom = 3 }
 
+    /// <summary>Always a full path, never a bare name: MpCmdRun isn't in System32, so a bare name
+    /// would be found by a PATH search (per-user PATH entries included) from this elevated process.
+    /// Program Files first, then the newest Defender platform folder; when neither exists the
+    /// Program Files path is still returned so the launch fails as "not found".</summary>
     public static string ResolveMpCmdRunPath()
     {
+        string programFilesCandidate = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Windows Defender", "MpCmdRun.exe");
         try
         {
-            var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            var candidate = Path.Combine(pf, "Windows Defender", "MpCmdRun.exe");
-            if (File.Exists(candidate)) return candidate;
+            if (File.Exists(programFilesCandidate)) return programFilesCandidate;
+
+            var platform = new DirectoryInfo(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Microsoft", "Windows Defender", "Platform"));
+            if (platform.Exists)
+            {
+                var newest = platform.EnumerateDirectories()
+                    .Where(d => (d.Attributes & FileAttributes.ReparsePoint) == 0)
+                    .Select(d => (Dir: d, Version: Version.TryParse(d.Name.Split('-')[0], out var v) ? v : null))
+                    .Where(x => x.Version is not null && File.Exists(Path.Combine(x.Dir.FullName, "MpCmdRun.exe")))
+                    .OrderByDescending(x => x.Version)
+                    .FirstOrDefault();
+                if (newest.Dir is not null) return Path.Combine(newest.Dir.FullName, "MpCmdRun.exe");
+            }
         }
-        catch { /* fall through to PATH lookup */ }
-        return "MpCmdRun.exe";
+        catch { /* fall through to the (missing) Program Files path */ }
+        return programFilesCandidate;
     }
+
+    private static string? MpCmdRunMissing(string exe) =>
+        File.Exists(exe) ? null : $"MpCmdRun.exe wasn't found ({exe}) - Microsoft Defender's command-line tool isn't installed on this PC.";
 
     public static string BuildScanArgs(DefenderScanType type, string? customPath = null) => type switch
     {
@@ -556,7 +583,9 @@ public static class DefenderService
     /// EnableRaisingEvents already true) guarantees the handler fires even for an instant exit.</summary>
     public static Process StartStreamingProcess(string exe, string args, Action<string> onLine, EventHandler? onExited = null)
     {
-        var psi = new ProcessStartInfo(exe, args)
+        // A bare name (the offline scan's powershell.exe) is pinned to System32 rather than left to
+        // CreateProcess's search, which tries the current directory first.
+        var psi = new ProcessStartInfo(ToolRunner.ResolveTool(exe), args)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

@@ -37,6 +37,10 @@ public sealed record CrashDumpConfiguration
     public long TotalRamBytes { get; init; }
     public List<PageFileConfigEntry> PageFiles { get; init; } = new();
 
+    /// <summary>Set when the page-file query failed - PageFiles is then empty because nothing could
+    /// be read, and PageFileDisabled stays false.</summary>
+    public string? PageFileReadError { get; init; }
+
     /// <summary>True when Windows has no page file configured at all (Win32_PageFileSetting
     /// returned zero rows) - item 73's "I disabled the page file because I have 64 GB of RAM"
     /// case, which silently disables crash dumps entirely.</summary>
