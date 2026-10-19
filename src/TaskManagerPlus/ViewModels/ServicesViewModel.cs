@@ -924,10 +924,21 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     private void JumpToRecoveryAuditService(ServiceRecoveryAuditEntry? entry)
     {
         if (entry is null) return;
-        ShowDrivers = false; // the jump lands in the services grid, so make sure it's the one shown
+        ShowService(entry.ServiceName);
+    }
+
+    /// <summary>Every cross-tab "show this service" jump lands here: the services grid (not the
+    /// drivers/svchost sub-views), the name as the filter, and the checkbox filters cleared - they're
+    /// ANDed with the name, so a leftover "Orphaned only" would otherwise show an empty grid.</summary>
+    public void ShowService(string name)
+    {
+        ShowDrivers = false;
         ShowSvcHostGroups = false;
-        FilterText = entry.ServiceName;
-        var match = Services.FirstOrDefault(r => r.ServiceName.Equals(entry.ServiceName, StringComparison.OrdinalIgnoreCase));
+        FailedToStartOnly = false;
+        CrashLoopingOnly = false;
+        OrphanedOnly = false;
+        FilterText = name;
+        var match = Services.FirstOrDefault(r => r.ServiceName.Equals(name, StringComparison.OrdinalIgnoreCase));
         if (match is not null) SelectedService = match;
     }
 
