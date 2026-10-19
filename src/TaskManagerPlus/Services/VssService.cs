@@ -600,8 +600,10 @@ public static class VssService
     /// DevicePathResolver's QueryDosDeviceW call). Falls back per-drive to the #397
     /// shadow-storage-association proxy this item's brief explicitly sanctions when the registry
     /// read isn't available or the GUID-path lookup fails for that drive - DetectionMethodText
-    /// always says which was used.</summary>
-    public static List<SystemProtectionDriveStatus> ReadSystemProtectionStatus(List<VssShadowStorageInfo> shadowStorageEntries)
+    /// always says which was used. When the shadow-storage read itself failed
+    /// (<paramref name="shadowStorageReadOk"/> false) the proxy has nothing to go on, so a drive the
+    /// registry can't answer for is left out rather than reported "Not protected".</summary>
+    public static List<SystemProtectionDriveStatus> ReadSystemProtectionStatus(List<VssShadowStorageInfo> shadowStorageEntries, bool shadowStorageReadOk = true)
     {
         var result = new List<SystemProtectionDriveStatus>();
 
@@ -653,6 +655,7 @@ public static class VssService
             }
             else
             {
+                if (!shadowStorageReadOk) continue;
                 isProtected = shadowStorageVolumes.Contains(letter);
                 method = "Detected via proxy: this volume has an active shadow-copy-storage association (#397) - " +
                     "the SPP\\Clients registry value wasn't available for a definitive per-drive read on this system.";

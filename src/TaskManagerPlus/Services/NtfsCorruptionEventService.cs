@@ -70,11 +70,16 @@ public static class NtfsCorruptionEventService
             {
                 using (record)
                 {
+                    // Healthy 98s (one per volume per mount) are skipped on the state code before
+                    // paying for FormatDescription.
+                    bool? unhealthy = eventId == VolumeHealthEventId ? VolumeHealthStateIsUnhealthy(record) : true;
+                    if (unhealthy == false) continue;
+
                     string message;
                     try { message = record.FormatDescription() ?? string.Empty; }
                     catch { message = string.Empty; } // provider's message file isn't registered - a known, common gap
 
-                    if (eventId == VolumeHealthEventId && !IsUnhealthyVolumeReport(record, message))
+                    if (unhealthy is null && (message.Trim().Length == 0 || message.Contains("is healthy", StringComparison.OrdinalIgnoreCase)))
                         continue;
 
                     count++;
@@ -96,10 +101,10 @@ public static class NtfsCorruptionEventService
     }
 
     /// <summary>98's third property is a health-state code that the message maps to text - 0 is
-    /// "is healthy. No action is needed.", logged on every routine mount. The code is checked
-    /// first (language-independent), then the formatted text; unreadable either way = skipped,
-    /// since nothing says the volume is unhealthy.</summary>
-    private static bool IsUnhealthyVolumeReport(EventRecord record, string message)
+    /// "is healthy. No action is needed.", logged on every routine mount. Language-independent, so
+    /// it's checked first; null when it can't be read (the caller then falls back to the formatted
+    /// text, and skips the event if that's unreadable too - nothing says the volume is unhealthy).</summary>
+    private static bool? VolumeHealthStateIsUnhealthy(EventRecord record)
     {
         try
         {
@@ -108,8 +113,7 @@ public static class NtfsCorruptionEventService
                 return code != 0;
         }
         catch { /* fall back to the message text */ }
-
-        return message.Trim().Length > 0 && !message.Contains("is healthy", StringComparison.OrdinalIgnoreCase);
+        return null;
     }
 
     private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";

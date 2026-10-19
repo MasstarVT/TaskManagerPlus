@@ -34,8 +34,9 @@ public static class ChkdskService
     /// <paramref name="onLine"/> is invoked on a background thread-pool thread (the Process class's
     /// own async-read callback thread), same as SurfaceScanService/FileVerificationService's
     /// progress callbacks - the caller (StorageViewModel) marshals to the UI thread itself.
-    /// Completed is false when chkdsk exited non-zero without a recognizable verdict (a non-NTFS
-    /// volume, access denied, a volume it couldn't lock) - that's a failed run, not a clean scan.</summary>
+    /// Completed is false when chkdsk gave no recognizable verdict and its exit code doesn't say the
+    /// scan finished (a non-NTFS volume, access denied, a volume it couldn't lock) - that's a
+    /// failed run, not a clean scan.</summary>
     public static async Task<(bool Completed, bool ProblemsFound, string Verdict)> RunOnlineScanAsync(string driveLetter, Action<string> onLine, CancellationToken token)
     {
         var psi = new ProcessStartInfo("chkdsk.exe", $"{driveLetter}: /scan")
@@ -88,9 +89,9 @@ public static class ChkdskService
     /// <summary>chkdsk's own console wording for a clean /scan varies slightly across Windows
     /// versions ("found no problems" / "found no further problems") - checked first since it's the
     /// unambiguous common case; a bad-sectors KB figure or "found problems" wording otherwise marks
-    /// a real finding. With neither, chkdsk's documented exit code decides: 0 (no errors) and 1
-    /// (errors found and fixed) are completed scans; anything else is reported as a failed run,
-    /// never as a clean one.</summary>
+    /// a real finding. With neither, chkdsk's documented exit code decides: 0/1/2 are completed
+    /// scans; 3 (couldn't check, or errors left unfixed) and anything else are reported as an
+    /// inconclusive run, never as a clean one.</summary>
     private static (bool Completed, bool ProblemsFound, string Verdict) ParseScanVerdict(string output, int exitCode)
     {
         if (output.Contains("found no problems", StringComparison.OrdinalIgnoreCase) ||
@@ -105,11 +106,15 @@ public static class ChkdskService
             output.Contains("has made corrections", StringComparison.OrdinalIgnoreCase))
             return (true, true, "Problems found - see the log above for detail.");
 
+        // Documented chkdsk exit codes: 0 no errors, 1 errors found and fixed, 2 cleanup performed
+        // (or not, without /f), 3 couldn't check / errors found but not fixed.
         return exitCode switch
         {
             0 => (true, false, "Scan completed (chkdsk exit code 0: no errors found) - no verdict line was recognized in the output; see the log above."),
             1 => (true, true, "Scan completed (chkdsk exit code 1: errors were found and fixed) - see the log above."),
-            _ => (false, false, $"chkdsk exited with code {exitCode} without a scan verdict - the volume couldn't be checked (/scan only supports NTFS); see the log above."),
+            2 => (true, false, "Scan completed (chkdsk exit code 2: cleanup only, no errors reported) - see the log above."),
+            3 => (false, false, "chkdsk exited with code 3 - it either couldn't check the volume or found errors it didn't fix; no verdict line was recognized, see the log above."),
+            _ => (false, false, $"chkdsk exited with code {exitCode} without a scan verdict - see the log above."),
         };
     }
 
@@ -198,7 +203,9 @@ public static class ChkdskService
     // full rather than only the 0/success case, since every value is documented.
     // ================================================================================
 
-    public static async Task<(bool Success, uint ReturnCode, string CodeText, string ExtraDetail)> RunVolumeRepairAsync(string driveLetter, VolumeRepairMode mode)
+    /// <summary>ProblemsFound comes from the [out] Output status (null when the call failed or the
+    /// status isn't a scan/repair verdict) - a failed call is never a clean or dirty result.</summary>
+    public static async Task<(bool Success, uint ReturnCode, string CodeText, string ExtraDetail, bool? ProblemsFound)> RunVolumeRepairAsync(string driveLetter, VolumeRepairMode mode)
     {
         return await Task.Run(() =>
         {
@@ -216,13 +223,16 @@ public static class ChkdskService
 
                     var outParams = vol.InvokeMethod("Repair", inParams, null);
                     uint code = outParams?["ReturnValue"] is null ? uint.MaxValue : Convert.ToUInt32(outParams["ReturnValue"]);
-                    return (code == 0, code, RepairReturnCodeText(code), BuildExtraDetail(outParams));
+                    uint? output = null;
+                    try { if (outParams?["Output"] is { } o) output = Convert.ToUInt32(o); } catch { /* leave null */ }
+                    bool? problems = code == 0 && output is { } status ? RepairStatusProblems(status) : null;
+                    return (code == 0, code, RepairReturnCodeText(code), BuildExtraDetail(outParams), problems);
                 }
-                return (false, uint.MaxValue, "No MSFT_Volume instance found for this drive letter.", string.Empty);
+                return (false, uint.MaxValue, "No MSFT_Volume instance found for this drive letter.", string.Empty, (bool?)null);
             }
             catch (Exception ex)
             {
-                return (false, uint.MaxValue, $"Failed: {ex.Message}", string.Empty);
+                return (false, uint.MaxValue, $"Failed: {ex.Message}", string.Empty, (bool?)null);
             }
         });
     }
@@ -254,9 +264,41 @@ public static class ChkdskService
         _ => $"Unrecognized return code {code}.",
     };
 
+    /// <summary>Repair's [out] Output is the RepairStatus enum Repair-Volume itself returns (names
+    /// read from the Storage module's own generated type,
+    /// Microsoft.PowerShell.Cmdletization.GeneratedTypes.Volume.RepairStatus).</summary>
+    private static string RepairStatusText(uint status) => status switch
+    {
+        0 => "NoErrorsFound",
+        1 => "ErrorsFixed",
+        2 => "MinorErrorsFixedOrCleanup",
+        3 => "Failed",
+        4 => "ScanNoErrorsFound",
+        5 => "ScanErrorsFoundAndFixedOnline",
+        6 => "ScanErrorsFixedOnlineAlsoNeedSpotFix",
+        7 => "ScanErrorsFoundNeedSpotFix",
+        8 => "ScanNeedsRetry",
+        9 => "ScanRunning",
+        10 => "ScanTransientSnapshotError",
+        11 => "ScanFatalSnapshotError",
+        12 => "ScanNeedsMetaDataRetry",
+        13 => "NeedOfflineScanAndFix",
+        15 => "ScanFoundLeaks",
+        16 => "ScanFoundAndFixedLeaks",
+        _ => $"status {status}",
+    };
+
+    /// <summary>True/false only for a RepairStatus that is an actual verdict; null for failed,
+    /// retry-needed, still-running or snapshot-error states (nothing was concluded).</summary>
+    private static bool? RepairStatusProblems(uint status) => status switch
+    {
+        0 or 4 => false,
+        1 or 2 or 5 or 6 or 7 or 13 or 15 or 16 => true,
+        _ => null,
+    };
+
     /// <summary>The Repair method's [out] Output/ExtendedStatus parameters, best-effort flattened.
-    /// Output's meaning isn't documented beyond "the output of the repair operation," so it's shown
-    /// as a raw number with that caveat rather than interpreted; ExtendedStatus is documented as "a
+    /// Output is decoded via RepairStatusText; ExtendedStatus is documented as "a
     /// string that contains an embedded MSFT_StorageExtendedStatus object" - System.Management has
     /// been observed to surface an embedded WMI object as its own ManagementBaseObject rather than a
     /// literal string, so both shapes are handled.</summary>
@@ -270,7 +312,7 @@ public static class ChkdskService
             if (outParams["Output"] is not null)
             {
                 uint output = Convert.ToUInt32(outParams["Output"]);
-                if (output != 0) parts.Add($"Operation output code: {output} (meaning not documented by Microsoft for this field).");
+                parts.Add($"Result: {RepairStatusText(output)}.");
             }
         }
         catch { /* best-effort */ }

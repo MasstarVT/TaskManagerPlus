@@ -1486,8 +1486,10 @@ public sealed class StorageViewModel : ObservableObject
         // been read via ReadSmartDetailsCommand above (ShowNvmeHealth).
         ReadNvmeErrorLogCommand = new AsyncRelayCommand(ReadNvmeErrorLogAsync, () => ShowNvmeHealth && !IsReadingNvmeErrorLog && SelectedSmartDisk is not null);
         ReadNvmeSelfTestLogCommand = new AsyncRelayCommand(ReadNvmeSelfTestLogAsync, () => ShowNvmeHealth && !IsReadingNvmeSelfTestLog && SelectedSmartDisk is not null);
-        RunNvmeShortSelfTestCommand = new RelayCommand(() => RunNvmeSelfTest(extended: false), () => ShowNvmeHealth && SelectedSmartDisk is not null);
-        RunNvmeExtendedSelfTestCommand = new RelayCommand(() => RunNvmeSelfTest(extended: true), () => ShowNvmeHealth && SelectedSmartDisk is not null);
+        // A drive self-test runs in firmware and this app can't stop it once started - gated like
+        // any other action that changes device state.
+        RunNvmeShortSelfTestCommand = new RelayCommand(() => RunNvmeSelfTest(extended: false), () => ShowNvmeHealth && SelectedSmartDisk is not null && !ReadOnlyModeService.IsReadOnly);
+        RunNvmeExtendedSelfTestCommand = new RelayCommand(() => RunNvmeSelfTest(extended: true), () => ShowNvmeHealth && SelectedSmartDisk is not null && !ReadOnlyModeService.IsReadOnly);
 
         // #323: pure WMI, any disk - independent of the NVMe gating above.
         ResetReliabilityCountersCommand = new AsyncRelayCommand(ResetReliabilityCountersAsync, () => SelectedSmartDisk is not null && !ReadOnlyModeService.IsReadOnly);
@@ -1511,8 +1513,8 @@ public sealed class StorageViewModel : ObservableObject
         CancelFileVerificationCommand = new RelayCommand(() => _fileVerificationCts?.Cancel(), () => IsVerifyingFiles);
 
         // #334
-        RunAtaShortSelfTestCommand = new RelayCommand(() => RunAtaSelfTest(extended: false), () => ShowAtaSelfTest && SelectedSmartDisk is not null);
-        RunAtaExtendedSelfTestCommand = new RelayCommand(() => RunAtaSelfTest(extended: true), () => ShowAtaSelfTest && SelectedSmartDisk is not null);
+        RunAtaShortSelfTestCommand = new RelayCommand(() => RunAtaSelfTest(extended: false), () => ShowAtaSelfTest && SelectedSmartDisk is not null && !ReadOnlyModeService.IsReadOnly);
+        RunAtaExtendedSelfTestCommand = new RelayCommand(() => RunAtaSelfTest(extended: true), () => ShowAtaSelfTest && SelectedSmartDisk is not null && !ReadOnlyModeService.IsReadOnly);
 
         // Round 15, #337/#338/#339/#343/#345
         RefreshVolumeFilesystemFactsCommand = new AsyncRelayCommand(LoadVolumeFilesystemFactsAsync, () => !IsLoadingVolumeFilesystemFacts);
@@ -3614,18 +3616,23 @@ public sealed class StorageViewModel : ObservableObject
         VolumeRepairStatusText = $"Running ({mode})...";
         try
         {
-            var (success, _, codeText, extraDetail) = await ChkdskService.RunVolumeRepairAsync(drive, mode);
+            var (success, _, codeText, extraDetail, problemsFound) = await ChkdskService.RunVolumeRepairAsync(drive, mode);
             VolumeRepairStatusText = extraDetail.Length > 0 ? $"{codeText} {extraDetail}" : codeText;
 
-            ChkdskService.AppendScanRecord(new ChkdskScanRecord
+            // Only a call that returned an actual verdict is a scan result - a failed call
+            // (access denied, no volume, scan needs retry) isn't "problems found".
+            if (problemsFound is { } found)
             {
-                DriveLetter = drive,
-                Timestamp = DateTime.Now,
-                Source = $"WMI {mode}",
-                ProblemsFound = !success,
-                Summary = VolumeRepairStatusText,
-            });
-            UpdateChkdskLastScanText(drive);
+                ChkdskService.AppendScanRecord(new ChkdskScanRecord
+                {
+                    DriveLetter = drive,
+                    Timestamp = DateTime.Now,
+                    Source = $"WMI {mode}",
+                    ProblemsFound = found,
+                    Summary = VolumeRepairStatusText,
+                });
+                UpdateChkdskLastScanText(drive);
+            }
             // Scan mode only scans and logs; SpotFix/OfflineScanAndFix change the volume.
             if (mode != VolumeRepairMode.Scan)
                 JournalOneShotRun($"{drive}:", $"Ran volume repair ({mode})", $"MSFT_Volume.Repair ({mode}) on {drive}:", success);
@@ -4671,7 +4678,7 @@ public sealed class StorageViewModel : ObservableObject
             var providers = await VssService.ReadProvidersAsync(providerErrors);
             var events = await Task.Run(VssService.ReadRelatedEvents);
             var restorePoints = await Task.Run(() => VssService.ReadRestorePoints(restorePointErrors));
-            var systemProtection = await Task.Run(() => VssService.ReadSystemProtectionStatus(shadowStorage));
+            var systemProtection = await Task.Run(() => VssService.ReadSystemProtectionStatus(shadowStorage, storageErrors.Count == 0));
 
             VssWriters.Clear();
             foreach (var w in writers) VssWriters.Add(w);
