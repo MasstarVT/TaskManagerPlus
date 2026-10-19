@@ -27,7 +27,8 @@ namespace TaskManagerPlus.Services;
 ///     to run while offline. The catalog says so plainly rather than calling them "never automatic".
 ///   - The Network tab's other diagnostics (speed/bufferbloat tests, latency and DNS-response
 ///     monitors, hop monitor, jitter and path-MTU tests, the NCSI check, DNS comparisons). Each
-///     runs only from its own button or toggle.
+///     runs only from its own button or toggle - except the PAC script fetch, which the proxy card
+///     also runs once at startup when Windows has a PAC URL configured.
 /// </summary>
 public static class NetworkActivityCatalogService
 {
@@ -94,6 +95,20 @@ public static class NetworkActivityCatalogService
             Name = "DNS resolver comparison and VPN DNS-leak check",
             Trigger = "Network tab → DNS compare and VPN tunnel check buttons (never automatic)",
             Destination = "nslookup queries to your configured resolvers and 1.1.1.1 / 8.8.8.8 / 9.9.9.9, and to your default resolver for www.msftconnecttest.com",
+            GatedByOfflineMode = false,
+        },
+        new()
+        {
+            Name = "Proxy auto-config (PAC) script fetch",
+            Trigger = "Automatic: once at app startup (Network tab's proxy card), plus its Refresh button - only when Windows has a PAC URL configured",
+            Destination = "The PAC/auto-config URL configured in Windows' proxy settings",
+            GatedByOfflineMode = false,
+        },
+        new()
+        {
+            Name = "Other Network tab tests",
+            Trigger = "Network tab → \"Resolve names\", dual-stack test and LAN throughput test buttons (never automatic)",
+            Destination = "Reverse-DNS lookups of the connections listed, via your resolver; the host name you type in (IPv4 and IPv6 TCP connects); the LAN host or share you enter",
             GatedByOfflineMode = false,
         },
         new()
