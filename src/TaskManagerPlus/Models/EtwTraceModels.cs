@@ -309,6 +309,9 @@ public sealed class EtwStaleArtifact
     public long SizeBytes { get; set; }
     public DateTime LastWriteUtc { get; set; }
 
+    /// <summary>For display - LastWriteUtc shown unconverted read as local time, off by the UTC offset.</summary>
+    public DateTime LastWriteLocal => LastWriteUtc.ToLocalTime();
+
     public bool IsOld => (DateTime.UtcNow - LastWriteUtc).TotalDays > 30;
     public bool IsOversized => SizeBytes > 200L * 1024 * 1024;
 }

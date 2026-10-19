@@ -556,7 +556,7 @@
                                 <DataGridTextColumn Header="Location" Binding="{Binding Location}" Width="1.3*" />
                                 <DataGridTextColumn Header="File" Binding="{Binding Path}" Width="2*" />
                                 <DataGridTextColumn Header="Size" Binding="{Binding SizeBytes, Converter={StaticResource BytesToReadableConverter}}" Width="90" />
-                                <DataGridTextColumn Header="Last write" Binding="{Binding LastWriteUtc, StringFormat='{}{0:g}'}" Width="130" />
+                                <DataGridTextColumn Header="Last write" Binding="{Binding LastWriteLocal, StringFormat='{}{0:g}'}" Width="130" />
                                 <DataGridTemplateColumn Header="" Width="90">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate DataType="{x:Type models:EtwStaleArtifact}">
