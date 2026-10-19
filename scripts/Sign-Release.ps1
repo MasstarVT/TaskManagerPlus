@@ -40,12 +40,12 @@ if (-not $exePath) {
 }
 
 $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
-    Where-Object { $_.Subject -eq 'CN=Task Manager Plus (Dev Build)' } |
+    Where-Object { $_.Subject -eq 'CN=Task Manager Plus (Dev Build)' -and $_.NotAfter -gt (Get-Date) } |
     Sort-Object NotBefore -Descending |
     Select-Object -First 1
 
 if (-not $cert) {
-    throw "No dev signing certificate found in Cert:\CurrentUser\My. Run scripts\New-DevCertificate.ps1 first."
+    throw "No unexpired dev signing certificate in Cert:\CurrentUser\My (expired or missing - it's valid for one year). Re-run scripts\New-DevCertificate.ps1."
 }
 
 Write-Host "Signing $exePath with certificate $($cert.Thumbprint) (expires $($cert.NotAfter))..."
