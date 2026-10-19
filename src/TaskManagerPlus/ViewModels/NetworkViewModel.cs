@@ -2313,8 +2313,9 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             int staticOnDhcp = result.Adapters.Count(a => a.StaticDnsOnDhcpAdapter);
             DnsPostureStatusText = $"{result.Adapters.Count} adapter(s) checked" +
                 (staticOnDhcp > 0 ? $" - {staticOnDhcp} has static DNS set on an otherwise-DHCP adapter (see Security tab for the mirrored finding)." : ".") +
-                (result.DohCmdletAvailable ? $" DoH servers configured: {result.DohServers.Count}." : " DoH state: cmdlet not available on this Windows build.") +
-                (result.NrptCmdletAvailable ? $" NRPT rules: {result.NrptRules.Count}." : " NRPT state: cmdlet not available.");
+                // The service's own availability text tells "couldn't read" apart from "not available".
+                (result.DohCmdletAvailable ? $" DoH servers configured: {result.DohServers.Count}." : $" DoH state: {result.DohAvailabilityText}.") +
+                (result.NrptCmdletAvailable ? $" NRPT rules: {result.NrptRules.Count}." : $" NRPT state: {result.NrptAvailabilityText}.");
         }
         catch (Exception ex)
         {
