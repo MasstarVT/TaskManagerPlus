@@ -242,7 +242,7 @@ public static class BcdInspectorService
         "Нет", "Ні", "Не", "Όχι", "いいえ", "否", "아니요", "לא", "لا", "ไม่",
     };
 
-    private static bool IsBcdOffValue(string value) => BcdOffValues.Contains(value.Trim());
+    internal static bool IsBcdOffValue(string value) => BcdOffValues.Contains(value.Trim());
 
     /// <summary>Runs the exact bcdedit command a BootModeFlag's ClearCommandText already showed
     /// the user in the confirmation dialog - see StartupViewModel.ClearBootModeFlagAsync.</summary>

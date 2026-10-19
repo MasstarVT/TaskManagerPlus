@@ -3064,7 +3064,7 @@ public static class AutorunsService
                 {
                     Severity = FindingSeverity.High,
                     Title = "Per-user registration of the WScript.Shell COM object",
-                    Reason = @"HKCU\Software\Classes has its own WScript.Shell or {72C24DD5-D70A-438B-8A42-98424B88AFB8} entry, which overrides the system's Windows Script Host shell object for this user - a known COM-hijack persistence trick, since anything that creates the object then loads the per-user DLL instead. Shortcut targets weren't checked, because resolving them would load that DLL into this elevated app.",
+                    Reason = @"HKCU\Software\Classes has (or couldn't be checked for) its own WScript.Shell or {72C24DD5-D70A-438B-8A42-98424B88AFB8} entry, which would override the system's Windows Script Host shell object for this user - a known COM-hijack persistence trick, since anything that creates the object then loads the per-user DLL instead. Shortcut targets weren't checked, because resolving them would load that DLL into this elevated app.",
                     Path = @"HKCU\Software\Classes\WScript.Shell, HKCU\Software\Classes\CLSID\{72C24DD5-D70A-438B-8A42-98424B88AFB8}",
                     WhatDisablingDoes = "If no software you installed explains it, export the per-user key with regedit (as a backup) and delete it, then rescan. Quick flag, not a verdict.",
                 });
