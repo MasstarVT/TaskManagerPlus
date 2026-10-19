@@ -118,9 +118,29 @@ public static class CliDumpService
         if (scrub) json = await ScrubTextAsync(json);
 
         string resolvedPath = ResolveScanOutputPath(outputPath);
+        ThrowIfRedirectedWhileSystem(resolvedPath);
         var dir = Path.GetDirectoryName(Path.GetFullPath(resolvedPath));
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         File.WriteAllText(resolvedPath, json);
+    }
+
+    /// <summary>The unattended scan runs as SYSTEM (UnattendedScanService) but writes under the
+    /// registering user's own, user-writable %AppData% folder, so a standard user could replace a
+    /// folder on that path with a junction and have SYSTEM create directories and files wherever
+    /// it points. Under SYSTEM, refuse to write through any reparse point on the path. (A swap
+    /// between this check and the write is still conceivable; this closes the plain redirect.)</summary>
+    internal static void ThrowIfRedirectedWhileSystem(string path)
+    {
+        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+        if (!identity.IsSystem) return;
+        string? current = Path.GetFullPath(path);
+        while (!string.IsNullOrEmpty(current))
+        {
+            if ((File.Exists(current) || Directory.Exists(current))
+                && File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
+                throw new IOException($"Refusing to write through a junction or symbolic link ({current}) while running as SYSTEM.");
+            current = Path.GetDirectoryName(current);
+        }
     }
 
     private static string ResolveScanOutputPath(string outputPath) =>

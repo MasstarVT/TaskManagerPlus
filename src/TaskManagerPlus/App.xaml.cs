@@ -54,7 +54,11 @@ public partial class App : Application
             }
             catch (Exception ex)
             {
-                try { File.WriteAllText(outputPath + ".error.txt", ex.ToString()); }
+                try
+                {
+                    CliDumpService.ThrowIfRedirectedWhileSystem(outputPath + ".error.txt");
+                    File.WriteAllText(outputPath + ".error.txt", ex.ToString());
+                }
                 catch { /* best-effort - nothing more useful to do from a CLI path */ }
             }
             Shutdown(exitCode);
@@ -82,7 +86,11 @@ public partial class App : Application
             }
             catch (Exception ex)
             {
-                try { File.WriteAllText(outputPath + ".error.txt", ex.ToString()); }
+                try
+                {
+                    CliDumpService.ThrowIfRedirectedWhileSystem(outputPath + ".error.txt");
+                    File.WriteAllText(outputPath + ".error.txt", ex.ToString());
+                }
                 catch { /* best-effort - nothing more useful to do from a CLI path */ }
             }
             Shutdown(exitCode);
@@ -101,7 +109,11 @@ public partial class App : Application
             }
             catch (Exception ex)
             {
-                try { File.WriteAllText(outputPath + ".error.txt", ex.ToString()); }
+                try
+                {
+                    CliDumpService.ThrowIfRedirectedWhileSystem(outputPath + ".error.txt");
+                    File.WriteAllText(outputPath + ".error.txt", ex.ToString());
+                }
                 catch { /* best-effort - nothing more useful to do from a CLI path */ }
             }
             Shutdown(exitCode);
