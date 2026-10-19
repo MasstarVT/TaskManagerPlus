@@ -37,6 +37,8 @@ public static class DriverLoadTraceService
         catch (Exception ex) { return (false, null, $"Couldn't create the traces folder: {ex.Message}"); }
 
         string filePath = Path.Combine(tracesDir, $"DriverLoads-{DateTime.Now:yyyyMMdd-HHmmss}.etl");
+        if (AppPaths.FindRedirectedOutput(filePath) is { } redirected)
+            return (false, null, $"Refused to start the trace: {redirected}.");
 
         // Best-effort cleanup in case a previous run crashed mid-capture and left the kernel
         // session registered - logman just reports "not running" if there's nothing to stop.

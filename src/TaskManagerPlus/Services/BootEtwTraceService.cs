@@ -142,6 +142,8 @@ public static class BootEtwTraceService
         }
         catch { /* best-effort - wpr itself will report a real path failure below */ }
 
+        if (AppPaths.FindRedirectedOutput(state.OutputPath) is { } redirected)
+            return (false, $"Refused to collect the boot trace: {redirected}.", null, false);
         var (output, exitCode) = await RunCapturedAsync(WprPath, $"-boottrace -stopboot \"{state.OutputPath}\"", timeoutMs: 60000);
         SaveState(new BootEtwTraceState());
 

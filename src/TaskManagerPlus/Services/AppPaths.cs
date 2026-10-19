@@ -224,6 +224,28 @@ public static class AppPaths
     /// when that copy failed - the caller then skips the write rather than destroy the only copy.
     /// Done at save time, not load time, so a damaged file that is never re-saved doesn't leave a
     /// new .bak behind on every launch.</summary>
+    /// <summary>For an output path an ELEVATED tool (wpr, logman, tracerpt) is about to write or
+    /// delete: when it is inside the user-writable settings folder, a short reason if any folder
+    /// from the settings root down to it is a junction/symbolic link (which would redirect the
+    /// elevated write elsewhere); null when it's safe to use. Paths outside the settings folder
+    /// were chosen by the user in a save dialog and are left to them. This narrows the swap to a
+    /// timing race; per-operation files that never need to be user-visible belong in
+    /// AdminDataPaths instead.</summary>
+    public static string? FindRedirectedOutput(string path)
+    {
+        try
+        {
+            string settings = Path.TrimEndingDirectorySeparator(Path.GetFullPath(SettingsDirectory));
+            string full = Path.GetFullPath(path);
+            if (!full.StartsWith(settings + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return null;
+            return QuarantineService.FindReparsePoint(full);
+        }
+        catch (Exception ex)
+        {
+            return $"couldn't check {path} ({ex.Message})";
+        }
+    }
+
     public static bool PreserveUnreadable(string path)
     {
         lock (UnreadableFiles)

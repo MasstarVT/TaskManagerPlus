@@ -75,6 +75,9 @@ public sealed class HardwareFingerprint
     public double RamTotalGb { get; init; }
     public List<string> DiskModels { get; init; } = new();
     public List<string> GpuNames { get; init; } = new();
+    /// <summary>False when the System tab's inventory hadn't loaded when this was built (empty
+    /// CPU/disk/GPU lists that mean "not read yet", not "none"). Older files default to true.</summary>
+    public bool IsComplete { get; init; } = true;
 
     /// <summary>True when both fingerprints look like the same machine's hardware. Order-independent
     /// on the disk/GPU lists (a re-enumeration can return devices in a different order) and RAM is
@@ -83,6 +86,8 @@ public sealed class HardwareFingerprint
     /// hardware change.</summary>
     public bool MatchesHardware(HardwareFingerprint other)
     {
+        // An incomplete side can't show a change - don't report one.
+        if (!IsComplete || !other.IsComplete) return true;
         if (!string.Equals(CpuName, other.CpuName, StringComparison.OrdinalIgnoreCase)) return false;
         if (Math.Abs(RamTotalGb - other.RamTotalGb) > 0.5) return false;
         if (!SameSet(DiskModels, other.DiskModels)) return false;

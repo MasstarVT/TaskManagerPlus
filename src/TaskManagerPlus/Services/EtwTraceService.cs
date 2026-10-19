@@ -582,6 +582,8 @@ public static class EtwTraceService
     /// its .etl genuinely can take a couple of minutes, unlike every other command in this file.</summary>
     public static async Task<(bool Success, string Message)> StopCaptureAsync(string etlPath, CancellationToken ct = default)
     {
+        if (AppPaths.FindRedirectedOutput(etlPath) is { } redirected)
+            return (false, $"Refused to save the trace: {redirected}.");
         var (output, exitCode) = await RunCapturedAsync("wpr.exe", $"-stop \"{etlPath}\"", 300000, ct);
         bool success = exitCode == 0 && !LooksLikeWprError(output) && File.Exists(etlPath);
         return success ? (true, $"Trace saved to {etlPath}.") : (false, ExplainWprError(output));
@@ -669,6 +671,8 @@ public static class EtwTraceService
     /// so this is a one-shot action, not something that needs a separate "disarm" step.</summary>
     public static async Task<(bool Success, string Message)> CollectBootTraceAsync(string etlPath, CancellationToken ct = default)
     {
+        if (AppPaths.FindRedirectedOutput(etlPath) is { } redirected)
+            return (false, $"Refused to collect the boot trace: {redirected}.");
         var (output, exitCode) = await RunCapturedAsync("wpr.exe", $"-stopboot \"{etlPath}\"", 300000, ct);
         bool success = exitCode == 0 && !LooksLikeWprError(output) && File.Exists(etlPath);
         return success ? (true, $"Boot trace saved to {etlPath}.") : (false, ExplainWprError(output));
@@ -777,6 +781,11 @@ public static class EtwTraceService
 
             string reportDir = AppPaths.GetPath("Traces", "Reports",
                 $"{Path.GetFileNameWithoutExtension(etlPath)}-{DateTime.Now:yyyyMMdd-HHmmss}");
+            if (AppPaths.FindRedirectedOutput(reportDir) is { } redirected)
+            {
+                result.ErrorMessage = $"Refused to write the report: {redirected}.";
+                return result;
+            }
             Directory.CreateDirectory(reportDir);
 
             string dumpPath = Path.Combine(workDir.FullName, "dumpfile.xml");

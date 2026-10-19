@@ -49,6 +49,8 @@ public static class PageFaultTraceService
         catch (Exception ex) { return (false, null, $"Couldn't create the traces folder: {ex.Message}"); }
 
         string filePath = Path.Combine(tracesDir, $"PageFaults-{DateTime.Now:yyyyMMdd-HHmmss}.etl");
+        if (AppPaths.FindRedirectedOutput(filePath) is { } redirected)
+            return (false, null, $"Refused to start the trace: {redirected}.");
 
         if (!KernelLoggerSession.TryClaim(KernelLoggerSession.Owner.PageFaultCapture, out var holder))
         {

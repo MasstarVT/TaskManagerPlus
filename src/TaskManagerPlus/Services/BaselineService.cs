@@ -45,6 +45,7 @@ public static class BaselineService
         bool wasAutomatic,
         CancellationToken ct)
     {
+        await WaitForInventoryAsync(systemSpecs, ct);
         var fingerprint = BuildCurrentFingerprint(systemSpecs, ramTotalGb);
 
         // #950: SnapshotService.CaptureAsync (a registry Uninstall-key sweep + ServiceController +
@@ -123,12 +124,24 @@ public static class BaselineService
         }
     }
 
+    /// <summary>Gives the System tab's on-demand inventory (it loads at startup) up to 30 s to
+    /// arrive before a fingerprint is taken from it; after that the fingerprint is marked
+    /// incomplete rather than recording empty lists as the machine's hardware.</summary>
+    public static async Task WaitForInventoryAsync(SystemSpecsViewModel systemSpecs, CancellationToken ct = default)
+    {
+        for (int i = 0; i < 120 && !systemSpecs.HasLoaded && !ct.IsCancellationRequested; i++)
+        {
+            try { await Task.Delay(250, ct); } catch (OperationCanceledException) { return; }
+        }
+    }
+
     /// <summary>#953's fingerprint-building logic, factored out of CaptureAsync so
     /// suggestions.md #994's "known-good comparison" flow can build the CURRENT machine's
     /// fingerprint on demand (to compare against an imported reference profile) without needing a
     /// full baseline capture first.</summary>
     public static HardwareFingerprint BuildCurrentFingerprint(SystemSpecsViewModel systemSpecs, double ramTotalGb) => new()
     {
+        IsComplete = systemSpecs.HasLoaded,
         CpuName = systemSpecs.CpuName,
         RamTotalGb = ramTotalGb,
         DiskModels = systemSpecs.Disks.Select(d => d.Primary).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),

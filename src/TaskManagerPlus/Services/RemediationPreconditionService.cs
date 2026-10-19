@@ -89,6 +89,15 @@ public static class RemediationPreconditionService
 
             case PreconditionKind.RequiresNoRebootPending:
             {
+                if (!systemSpecs.HasLoaded)
+                {
+                    return new PreconditionCheckResult
+                    {
+                        Precondition = pre,
+                        Passed = null,
+                        Reason = "System inventory hasn't loaded yet - couldn't check for a pending restart.",
+                    };
+                }
                 bool pending = systemSpecs.RebootPending;
                 return new PreconditionCheckResult
                 {

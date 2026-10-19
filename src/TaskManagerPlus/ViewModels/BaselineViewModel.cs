@@ -815,6 +815,7 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
         var currentSnapshot = await SnapshotService.CaptureAsync();
         ReferenceDiff = SnapshotService.Diff(imported.Snapshot, currentSnapshot);
 
+        await BaselineService.WaitForInventoryAsync(_systemSpecs);
         CurrentFingerprint = BaselineService.BuildCurrentFingerprint(_systemSpecs, _performance.RamTotalGb);
         ReferenceFingerprintMismatch = !imported.Fingerprint.MatchesHardware(CurrentFingerprint);
 
