@@ -761,6 +761,12 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     private string? _refreshErrorText;
     public string? RefreshErrorText { get => _refreshErrorText; private set => SetProperty(ref _refreshErrorText, value); }
 
+    /// <summary>True once RefreshAsync has completed successfully at least once - the Overview
+    /// meters stay hidden until then, since their defaults (index 10.0, no crash found) would
+    /// otherwise read as a healthy machine while loading or after a failed read.</summary>
+    private bool _hasLoaded;
+    public bool HasLoaded { get => _hasLoaded; private set => SetProperty(ref _hasLoaded, value); }
+
     private bool _wasLastShutdownUnexpected;
     public bool WasLastShutdownUnexpected { get => _wasLastShutdownUnexpected; private set => SetProperty(ref _wasLastShutdownUnexpected, value); }
 
@@ -910,6 +916,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
     private int _wheaFatalCount;
     public int WheaFatalCount { get => _wheaFatalCount; private set => SetProperty(ref _wheaFatalCount, value); }
+
+    /// <summary>Loading/failure line for the WHEA card - empty once a read has succeeded, so a
+    /// failed or still-running read isn't mistaken for "0 hardware errors".</summary>
+    private string _wheaStatusText = string.Empty;
+    public string WheaStatusText { get => _wheaStatusText; private set => SetProperty(ref _wheaStatusText, value); }
 
     private int _wheaCorrectedCount;
     public int WheaCorrectedCount { get => _wheaCorrectedCount; private set => SetProperty(ref _wheaCorrectedCount, value); }
@@ -1494,15 +1505,16 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         ResetVerifierCommand = new AsyncRelayCommand(async () =>
         {
             var confirm = System.Windows.MessageBox.Show(
-                "Clears every Driver Verifier setting (verifier /reset).\n\nA reboot is needed for a currently-running verified session to actually stop, and for the machine to go back to full speed. This app will also forget when Verifier was turned on. Continue?",
+                "Clears every Driver Verifier setting (verifier /reset), and puts the Special Pool tag (PoolTag) back to what it was if this app changed it.\n\nA reboot is needed for a currently-running verified session to actually stop, and for the machine to go back to full speed. This app will also forget when Verifier was turned on. Continue?",
                 "Reset Driver Verifier",
                 System.Windows.MessageBoxButton.YesNo,
                 System.Windows.MessageBoxImage.Warning);
             if (confirm != System.Windows.MessageBoxResult.Yes) return;
 
-            bool ok = await DriverVerifierService.ResetAsync();
+            var (ok, poolTagNote) = await DriverVerifierService.ResetAsync();
             VerifierResetStatusText = ok
                 ? "Reset. Reboot for this to fully take effect - Driver Verifier will not verify any driver after that reboot."
+                    + (poolTagNote is not null ? " " + poolTagNote : string.Empty)
                 : "Couldn't reset Driver Verifier - see the status above for what verifier.exe reported.";
             if (ok) VerifierEnableHistoryService.ClearEnabled();
             await RefreshVerifierStatusAsync();
@@ -1664,7 +1676,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         {
             if (param is not string tag || string.IsNullOrWhiteSpace(tag)) return;
 
-            var (driver, source) = PoolTagLookup.Resolve(tag);
+            // Task.Run: Resolve can byte-search up to 250 driver files (a 4s budget).
+            var (driver, source) = await Task.Run(() => PoolTagLookup.Resolve(tag));
             string scopeText = driver is not null
                 ? $"via the PoolTag registry value, with Driver Verifier's Special Pool also scoped to {driver} ({source})"
                 : "via the PoolTag registry value only (no owning driver could be identified, so Driver Verifier settings are left unchanged)";
@@ -2020,6 +2033,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             {
                 var (ok, output) = await SystemRepairService.RunSfcAsync();
                 SfcResultText = (ok ? "Completed. " : "Finished with a non-zero exit code. ") + output.Trim();
+                AppendRepairJournal("Windows system files", "Ran sfc /scannow", "sfc.exe /scannow", ok);
             }
             catch (Exception ex)
             {
@@ -2046,6 +2060,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             {
                 var (ok, output) = await SystemRepairService.RunDismRestoreHealthAsync();
                 DismResultText = (ok ? "Completed. " : "Finished with a non-zero exit code. ") + output.Trim();
+                AppendRepairJournal("Windows component store", "Ran DISM /RestoreHealth", "DISM.exe /Online /Cleanup-Image /RestoreHealth", ok);
             }
             catch (Exception ex)
             {
@@ -2066,8 +2081,10 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 System.Windows.MessageBoxImage.Warning);
             if (confirm != System.Windows.MessageBoxResult.Yes) return;
 
-            var (_, message) = await SystemRepairService.ScheduleChkdskOnSystemVolumeAsync();
+            var (chkdskOk, message) = await SystemRepairService.ScheduleChkdskOnSystemVolumeAsync();
             ChkdskResultText = message;
+            string systemDrive = (Environment.GetEnvironmentVariable("SystemDrive") ?? "C:").TrimEnd('\\');
+            AppendRepairJournal(systemDrive, "Scheduled a disk check at next restart", $"fsutil.exe dirty set {systemDrive}", chkdskOk);
         }, () => !ReadOnlyModeService.IsReadOnly);
 
         LaunchMemoryDiagnosticCommand = new RelayCommand(() =>
@@ -2176,6 +2193,23 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         var (_, message) = await BootRecoveryService.RebootToSafeModeAsync(withNetworking);
         SafeModeStatusText = message;
+    }
+
+    /// <summary>Journals one of the guided-repair tool runs (sfc, DISM, the chkdsk schedule) -
+    /// one-shot runs with nothing to reverse.</summary>
+    private static void AppendRepairJournal(string target, string action, string commandLine, bool success)
+    {
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.OneShotToolRun,
+            Target = target,
+            ActionDescription = action,
+            AfterValue = commandLine,
+            TriggeredBy = "Stability tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "One-shot tool run - nothing to reverse.",
+        });
     }
 
     private async Task RefreshBootConfigAsync()
@@ -2418,6 +2452,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             await RefreshRestorePointsAsync();
 
             RefreshErrorText = null;
+            HasLoaded = true;
         }
         catch (Exception ex)
         {
@@ -2793,7 +2828,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     private void EnableReliabilityAnalysis()
     {
         var confirm = MessageBox.Show(
-            "This writes to HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Reliability Analysis\\WMI\\WMIEnable "
+            "This writes to HKLM\\SOFTWARE\\Microsoft\\Reliability Analysis\\WMI\\WMIEnable "
             + "(sets it to 1) so Windows resumes recording Reliability Monitor data on this PC.\n\n"
             + "Re-enable Reliability Monitor data collection now?",
             "Re-enable Reliability Monitor",
@@ -2801,8 +2836,9 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
-        var previous = _reliability.ReadAnalysisStatus();
-        ReliabilityMonitorService.SaveBackup(previous);
+        // Same first-change-only backup as EnableLocalDumps below.
+        bool createdBackup = !ReliabilityMonitorService.BackupExists();
+        if (createdBackup) ReliabilityMonitorService.SaveBackup(_reliability.ReadAnalysisStatus());
 
         var (success, error) = _reliability.EnableAnalysis();
         if (success)
@@ -2814,7 +2850,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         }
         else
         {
-            ReliabilityMonitorService.ClearBackup(); // nothing actually changed - don't leave a stale backup around
+            if (createdBackup) ReliabilityMonitorService.ClearBackup(); // nothing changed, and an older backup is still the original
             ReliabilityAnalysisStatusText = $"Couldn't re-enable Reliability Monitor: {error}";
         }
     }
@@ -2874,8 +2910,10 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
-        var previous = _wer.ReadLocalDumpsSettings();
-        WerReportService.SaveBackup(previous);
+        // Back up only the state before this app's first change - a second Enable would otherwise
+        // overwrite the original with the already-enabled state and make Revert a no-op.
+        bool createdBackup = !WerReportService.BackupExists();
+        if (createdBackup) WerReportService.SaveBackup(_wer.ReadLocalDumpsSettings());
 
         var (success, error) = _wer.WriteLocalDumpsSettings(suggestedFolder, dumpCount: 10, dumpType: 1);
         if (success)
@@ -2886,7 +2924,9 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         }
         else
         {
-            WerReportService.ClearBackup(); // nothing actually changed - don't leave a stale backup around
+            // Nothing changed - drop the backup only if this call made it; an earlier one still
+            // holds the original state that Revert needs.
+            if (createdBackup) WerReportService.ClearBackup();
             LocalDumpsToggleStatusText = $"Couldn't enable local crash dump capture: {error}";
         }
     }
@@ -3843,21 +3883,35 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     /// (#638). The whole batch runs off the UI thread, same shape as RefreshAsync above.</summary>
     private async Task LoadWheaEventsAsync()
     {
-        var (events, conditionRows) = await Task.Run(() =>
+        WheaStatusText = "Reading WHEA events...";
+        List<WheaEvent> events;
+        List<WheaConditionRow> conditionRows;
+        try
         {
-            var raw = _service.ReadWheaEvents();
+            (events, conditionRows) = await Task.Run(() =>
+            {
+                var raw = _service.ReadWheaEvents();
 
-            // #639: one WMI enumeration for the whole batch, not one per event.
-            var locationMap = PciDeviceResolverService.BuildLocationMap();
-            var resolved = raw.Select(e => ResolveWheaPcieDevice(e, locationMap)).ToList();
+                // #639: one WMI enumeration for the whole batch, not one per event.
+                var locationMap = PciDeviceResolverService.BuildLocationMap();
+                var resolved = raw.Select(e => ResolveWheaPcieDevice(e, locationMap)).ToList();
 
-            // #638: joined against whatever power-history samples exist - null fields (shown as
-            // "Unknown") when nothing was recorded within the join's tolerance window.
-            var history = PowerHistoryLogService.Load();
-            var rows = resolved.Select(e => BuildWheaConditionRow(e, history)).ToList();
+                // #638: joined against whatever power-history samples exist - null fields (shown as
+                // "Unknown") when nothing was recorded within the join's tolerance window.
+                var history = PowerHistoryLogService.Load();
+                var rows = resolved.Select(e => BuildWheaConditionRow(e, history)).ToList();
 
-            return (resolved, rows);
-        });
+                return (resolved, rows);
+            });
+        }
+        catch (Exception ex)
+        {
+            // Fired from the constructor and a button - an unobserved fault would otherwise leave
+            // the card showing 0/0 as if the read had found nothing.
+            WheaStatusText = $"Couldn't read WHEA events: {ex.Message}";
+            return;
+        }
+        WheaStatusText = string.Empty;
 
         WheaEvents.Clear();
         foreach (var e in events) WheaEvents.Add(e);

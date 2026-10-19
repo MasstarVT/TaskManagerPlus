@@ -27,7 +27,9 @@ namespace TaskManagerPlus.Services;
 public sealed class ReliabilityMonitorService
 {
     private const int LookbackDays = 30;
-    private const string ReliabilityAnalysisPath = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Reliability Analysis";
+    // The RAC WMI provider (racwmiprov.dll) reads SOFTWARE\Microsoft\Reliability Analysis\WMI -
+    // there is no "Reliability Analysis" key under Windows NT\CurrentVersion.
+    private const string ReliabilityAnalysisPath = @"SOFTWARE\Microsoft\Reliability Analysis";
     private const string ReliabilityAnalysisWmiPath = ReliabilityAnalysisPath + @"\WMI";
 
     // ==== #169: Windows' own per-hour stability index ====

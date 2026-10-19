@@ -1114,6 +1114,27 @@ public sealed class StartupViewModel : ObservableObject
         {
             StatusMessage = $"Couldn't change {item.Name}: {error}";
         }
+        AppendScheduledTaskToggleJournal(item.Name, newState, success);
+    }
+
+    /// <summary>Journals a scheduled-task enable/disable (schtasks /change). Not undoable from the
+    /// journal - its inverse only knows the StartupApproved flag flip, which a task doesn't have.</summary>
+    private static void AppendScheduledTaskToggleJournal(string taskName, bool newState, bool success)
+    {
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.StartupToggle,
+            Target = taskName,
+            ActionDescription = newState ? "Enabled scheduled task" : "Disabled scheduled task",
+            BeforeValue = newState ? "Disabled" : "Enabled",
+            AfterValue = (success ? newState : !newState) ? "Enabled" : "Disabled",
+            TriggeredBy = "Startup tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = $"Scheduled task - toggle it back from the Startup tab (schtasks /change /tn \"{taskName}\" /{(newState ? "disable" : "enable")}).",
+            StartupItemName = taskName,
+            StartupItemSource = StartupSource.ScheduledTaskTrigger.ToString(),
+        });
     }
 
     /// <summary>#739: `reagentc /enable` - confirmed first.</summary>
@@ -1361,7 +1382,7 @@ public sealed class StartupViewModel : ObservableObject
     private async Task DisarmBootEtwTraceAsync()
     {
         var (success, error) = await BootEtwTraceService.DisarmAsync();
-        IsBootEtwTraceArmed = false;
+        IsBootEtwTraceArmed = !success;
         StatusMessage = success ? "Boot ETW trace canceled." : $"Couldn't cancel the boot ETW trace: {error}";
     }
 
@@ -1506,6 +1527,7 @@ public sealed class StartupViewModel : ObservableObject
         {
             StatusMessage = $"Couldn't change {task.Name}: {error}";
         }
+        AppendScheduledTaskToggleJournal(task.Name, newState, success);
     }
 
     private async Task CheckLogonDelayAsync()

@@ -493,7 +493,9 @@ public sealed class WerReportService
             {
                 TargetExecutable = exeName,
                 Exists = true,
-                DumpFolder = key.GetValue("DumpFolder") as string,
+                // REG_EXPAND_SZ: keep the stored %VAR% form - expanded here it would resolve to
+                // this (elevated) user's own profile and be written back that way.
+                DumpFolder = key.GetValue("DumpFolder", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string,
                 DumpCount = key.GetValue("DumpCount") is { } dc ? Convert.ToInt32(dc) : null,
                 DumpType = key.GetValue("DumpType") is { } dt ? Convert.ToInt32(dt) : null,
                 CustomDumpFlags = key.GetValue("CustomDumpFlags") is { } cdf ? Convert.ToInt32(cdf) : null,
@@ -953,7 +955,9 @@ public sealed class WerReportService
             return new LocalDumpsSettings
             {
                 KeyExists = true,
-                DumpFolder = key.GetValue("DumpFolder") as string,
+                // REG_EXPAND_SZ: keep the stored %VAR% form - expanded here it would resolve to
+                // this (elevated) user's own profile and be written back that way.
+                DumpFolder = key.GetValue("DumpFolder", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string,
                 DumpCount = key.GetValue("DumpCount") as int?,
                 DumpType = key.GetValue("DumpType") as int?,
             };

@@ -55,9 +55,13 @@ public static class WinlogonIntegrityService
                 // doesn't just repeat four "not set" rows that only mean something at HKLM scope.
                 if (isHkcu && actual is null && valueName != "Shell") continue;
 
-                bool isMismatch = expected is not null
-                    ? !string.Equals(actual ?? string.Empty, expected, StringComparison.OrdinalIgnoreCase)
-                    : actual is not null; // any value at all where none is expected is itself the flag
+                // An absent HKCU value is the normal case (no per-user override; HKLM applies), so
+                // only a value actually present at HKCU scope is compared.
+                bool isMismatch = isHkcu && actual is null
+                    ? false
+                    : expected is not null
+                        ? !string.Equals(actual ?? string.Empty, expected, StringComparison.OrdinalIgnoreCase)
+                        : actual is not null; // any value at all where none is expected is itself the flag
 
                 result.Add(new WinlogonCheckEntry
                 {

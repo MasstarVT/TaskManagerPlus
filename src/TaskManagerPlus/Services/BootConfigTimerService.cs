@@ -43,11 +43,21 @@ public static class BootConfigTimerService
         var rows = new List<PlatformLatencySettingRow>();
         try
         {
-            string output = await RunCapturedAsync("bcdedit.exe", "/enum {current}");
+            var (output, exitCode) = await RunCapturedAsync("bcdedit.exe", "/enum {current}");
             if (string.IsNullOrWhiteSpace(output))
             {
                 foreach (var s in Settings)
                     rows.Add(new PlatformLatencySettingRow { SettingName = s.DisplayName, ValueText = "Unknown", Note = "bcdedit /enum produced no output." });
+                return rows;
+            }
+
+            // A failed read (access denied, store unavailable) prints an error, not the entry -
+            // without this check every row would read "Not set" as if the defaults were confirmed.
+            if (exitCode != 0)
+            {
+                string reason = output.Trim().Split('\n')[0].Trim();
+                foreach (var s in Settings)
+                    rows.Add(new PlatformLatencySettingRow { SettingName = s.DisplayName, ValueText = "Unknown", Note = $"bcdedit /enum failed: {reason}" });
                 return rows;
             }
 
@@ -85,8 +95,8 @@ public static class BootConfigTimerService
     }
 
     /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout
-    /// mechanism; this wrapper keeps the service's historical output-only shape (empty string
-    /// for a timed-out run).</summary>
-    private static async Task<string> RunCapturedAsync(string exe, string args, int timeoutMs = 15000)
-        => (await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: string.Empty)).Output;
+    /// mechanism; this wrapper keeps the service's historical empty-string output for a
+    /// timed-out run.</summary>
+    private static Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 15000)
+        => ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: string.Empty);
 }

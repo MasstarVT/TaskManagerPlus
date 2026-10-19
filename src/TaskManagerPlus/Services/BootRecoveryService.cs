@@ -159,12 +159,14 @@ public static class BootRecoveryService
         if (setExit != 0)
             return (false, $"Couldn't set the Safe Mode boot flag: {setOutput.Trim()}");
 
-        // shutdown.exe restarts the machine almost immediately - a null/nonzero exit code here
-        // usually just means the process itself couldn't be read back in time, not that the
-        // restart didn't happen; the bcdedit write above is what actually matters and already
-        // succeeded, so this is reported as best-effort success rather than re-checked.
-        await RunCapturedAsync("shutdown.exe", "/r /t 0", timeoutMs: 5000);
-        return (true, $"Safe Mode boot flag set ({(withNetworking ? "with networking" : "minimal")}). Restarting now.");
+        // shutdown.exe restarts the machine almost immediately - a null exit code (timed out
+        // reading it back) still means the restart is under way. A nonzero code is a real refusal
+        // (e.g. 1190, a shutdown already pending), and the flag is set regardless, so say so.
+        string modeText = withNetworking ? "with networking" : "minimal";
+        var (shutdownOutput, shutdownExit) = await RunCapturedAsync("shutdown.exe", "/r /t 0", timeoutMs: 5000);
+        if (shutdownExit is not (0 or null))
+            return (false, $"Safe Mode boot flag set ({modeText}), but the restart couldn't be started: {shutdownOutput.Trim()} Restart manually to boot into Safe Mode, or use \"Revert Safe Mode boot\" to cancel.");
+        return (true, $"Safe Mode boot flag set ({modeText}). Restarting now.");
     }
 
     /// <summary>Item 96: `shutdown /r /o /t 0` - restarts directly into the Advanced Startup

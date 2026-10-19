@@ -134,7 +134,7 @@
                                     <DataTemplate>
                                         <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                                             <Run Text="{Binding Publisher, Mode=OneWay}" />
-                                            <Run Text=" (self-signed)" Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}">
+                                            <Run Foreground="{DynamicResource WarningBrush}" FontSize="{StaticResource FontBody}">
                                                 <Run.Style>
                                                     <Style TargetType="Run">
                                                         <Setter Property="Text" Value="" />
@@ -392,8 +392,8 @@
                                         <Border Background="{DynamicResource BorderBrush2}" CornerRadius="0,4,4,0"
                                                 Width="{Binding BootBreakdown.OtherMs, Converter={StaticResource BootPhaseMsToWidthConverter}}" />
                                     </StackPanel>
-                                    <Rectangle Width="2" Fill="{DynamicResource DangerBrush}" HorizontalAlignment="Left" Margin="32,0,0,0" ToolTip="~20s healthy-boot target for main path" />
-                                    <Rectangle Width="2" Fill="{DynamicResource DangerBrush}" HorizontalAlignment="Left" Margin="32,0,0,0" ToolTip="~10s more healthy-boot target for post-boot (30s cumulative)" />
+                                    <Rectangle Width="2" Fill="{DynamicResource DangerBrush}" HorizontalAlignment="Left" Margin="150,0,0,0" ToolTip="~20s healthy-boot target for main path" />
+                                    <Rectangle Width="2" Fill="{DynamicResource DangerBrush}" HorizontalAlignment="Left" Margin="225,0,0,0" ToolTip="~10s more healthy-boot target for post-boot (30s cumulative)" />
                                 </Grid>
                                 <TextBlock Style="{StaticResource SubStat}" Margin="0,4,0,0" TextWrapping="Wrap">
                                     <Run Text="Main path " /><Run Text="{Binding BootBreakdown.MainPathBootMs, Converter={StaticResource BootMsToSecondsConverter}, Mode=OneWay}" FontWeight="SemiBold" />
@@ -1043,7 +1043,7 @@
                                         <Run Text="   ·   Last full restart: " FontWeight="SemiBold" /><Run Text="{Binding FastStartupInfo.LastFullBootText, Mode=OneWay}" />
                                     </TextBlock>
                                     <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0">
-                                        <Run Text="Tick-count uptime (this session): " /><Run Text="{Binding Performance.Uptime, Mode=OneWay}" />
+                                        <Run Text="Tick-count uptime (this session): " /><Run Text="{Binding DataContext.Performance.Uptime, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" />
                                         <Run Text="   ·   WMI LastBootUpTime: " /><Run Text="{Binding FastStartupInfo.LastBootUpTimeWmiText, Mode=OneWay}" />
                                     </TextBlock>
                                 </StackPanel>
@@ -1229,7 +1229,7 @@
                                             BorderThickness="1" CornerRadius="8" Padding="10,8">
                                         <Border.Style>
                                             <Style TargetType="Border">
-                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Setter Property="Visibility" Value="Visible" />
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding EspHealth.NearFullWarning}" Value="{x:Null}">
                                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -1705,7 +1705,7 @@
                                                 <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,2,0,0" Foreground="{DynamicResource TextSecondaryBrush}">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Setter Property="Visibility" Value="Visible" />
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding SizeInfo}" Value="{x:Null}">
                                                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -1950,7 +1950,7 @@
                             <Border Margin="0,8,0,0" Padding="10,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6">
                                 <Border.Style>
                                     <Style TargetType="Border">
-                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Setter Property="Visibility" Value="Visible" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding SelectedScheduledTask.TriggerSummaryText}" Value="">
                                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -2196,9 +2196,10 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,8,8" Width="260">
+                                        <Border CornerRadius="6" Padding="10,8" Margin="0,0,8,8" Width="260">
                                             <Border.Style>
                                                 <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding IsMismatch}" Value="True">
                                                             <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />

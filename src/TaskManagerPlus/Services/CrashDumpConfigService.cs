@@ -468,11 +468,17 @@ public static class CrashDumpConfigService
         var notes = new List<string>();
         bool ok = true;
 
-        ok &= WriteDword(CrashControlKeyPath, "CrashDumpEnabled", 7);
-        notes.Add("Dump type set to Automatic memory dump - takes effect on the next crash, no restart needed.");
+        bool dumpTypeOk = WriteDword(CrashControlKeyPath, "CrashDumpEnabled", 7);
+        ok &= dumpTypeOk;
+        notes.Add(dumpTypeOk
+            ? "Dump type set to Automatic memory dump - takes effect on the next crash, no restart needed."
+            : "Couldn't set the dump type (CrashDumpEnabled).");
 
-        ok &= WriteDword(CrashControlKeyPath, "MinidumpsCount", 10);
-        notes.Add("MinidumpsCount set to 10 - takes effect immediately.");
+        bool countOk = WriteDword(CrashControlKeyPath, "MinidumpsCount", 10);
+        ok &= countOk;
+        notes.Add(countOk
+            ? "MinidumpsCount set to 10 - takes effect immediately."
+            : "Couldn't set MinidumpsCount.");
 
         try
         {
@@ -495,11 +501,16 @@ public static class CrashDumpConfigService
                 notes.Add("Page file switched to system-managed - Windows will resize it (on the system volume) after a restart.");
                 break;
             }
-            if (!wrote) ok = false;
+            if (!wrote)
+            {
+                ok = false;
+                notes.Add("Couldn't read the page file setting (Win32_ComputerSystem) - page file left unchanged.");
+            }
         }
-        catch
+        catch (Exception ex)
         {
             ok = false;
+            notes.Add($"Couldn't switch the page file to system-managed: {ex.Message}");
         }
 
         return (ok, notes);

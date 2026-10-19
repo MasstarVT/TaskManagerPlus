@@ -236,7 +236,48 @@ public sealed class StartupManagerService
         }
 
         int space = trimmed.IndexOf(' ');
-        return space > 0 ? trimmed[..space] : trimmed;
+        if (space <= 0) return trimmed;
+
+        // An unquoted path with spaces resolves the way CreateProcess does it: grow the
+        // space-delimited prefix (with and without .exe) until it names a file, so
+        // "C:\Program Files\Foo\foo.exe -bg" is foo.exe, not "C:\Program". UNC paths and mapped
+        // network drives keep the first-token rule without touching the disk - probing a dead
+        // share can block for seconds (ScheduledTaskService falls back here after a probe of its
+        // own timed out, so this must stay cheap for those).
+        if (!IsNetworkPath(trimmed))
+        {
+            try
+            {
+                for (int i = space; i > 0; i = trimmed.IndexOf(' ', i + 1))
+                {
+                    string prefix = trimmed[..i];
+                    string expanded = Environment.ExpandEnvironmentVariables(prefix);
+                    if (File.Exists(expanded)) return prefix;
+                    if (!prefix.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(expanded + ".exe"))
+                        return prefix + ".exe";
+                }
+                if (File.Exists(Environment.ExpandEnvironmentVariables(trimmed))) return trimmed;
+            }
+            catch { /* malformed path - fall back to the first token below */ }
+        }
+
+        return trimmed[..space];
+    }
+
+    /// <summary>UNC, or a drive letter mapped to a share - GetDriveType reads the local mapping,
+    /// it doesn't contact the server. Unknown counts as network, so nothing is probed.</summary>
+    private static bool IsNetworkPath(string path)
+    {
+        if (path.StartsWith(@"\\", StringComparison.Ordinal)) return true;
+        try
+        {
+            string? root = Path.GetPathRoot(Environment.ExpandEnvironmentVariables(path));
+            return !string.IsNullOrEmpty(root) && new DriveInfo(root).DriveType == DriveType.Network;
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     /// <summary>Flips the enabled/disabled flag for a startup item. Requires admin for HKLM/all-users entries.

@@ -68,9 +68,11 @@ public sealed class ProfileListEntry : ObservableObject
 
     /// <summary>RefCount counts loads of the profile's hive, so it is legitimately nonzero for any
     /// profile in use: LocalSystem/LocalService/NetworkService (S-1-5-18/19/20) stay loaded for the
-    /// life of the system, and so does the profile of the account running this app. Only a nonzero
-    /// count on some other profile reads as possibly stuck.</summary>
-    public bool RefCountStuck => RefCount is > 0 && !IsAlwaysLoadedSid(Sid);
+    /// life of the system, and so does the profile of the account running this app - and of any
+    /// other signed-in user (the interactive standard user behind an over-the-shoulder elevation,
+    /// a fast-user-switched or RDP session). Only a nonzero count on a profile whose hive isn't
+    /// loaded under HKEY_USERS reads as possibly stuck.</summary>
+    public bool RefCountStuck => RefCount is > 0 && !IsAlwaysLoadedSid(Sid) && !IsHiveLoaded(Sid);
 
     private static readonly Lazy<string?> CurrentUserSid = new(() =>
     {
@@ -81,6 +83,21 @@ public sealed class ProfileListEntry : ObservableObject
     private static bool IsAlwaysLoadedSid(string sid)
         => sid is "S-1-5-18" or "S-1-5-19" or "S-1-5-20"
            || string.Equals(sid, CurrentUserSid.Value, StringComparison.OrdinalIgnoreCase);
+
+    // Read live rather than cached - users sign in and out while the app runs. Unreadable means
+    // "can't tell", so the RefCount flag is left to decide on its own.
+    private static bool IsHiveLoaded(string sid)
+    {
+        try
+        {
+            return Microsoft.Win32.Registry.Users.GetSubKeyNames()
+                .Contains(sid, StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     public bool PathMissing => !string.IsNullOrEmpty(ProfileImagePath) && !ProfileImagePathExists;
 

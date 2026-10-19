@@ -451,7 +451,9 @@ public static class BootPerformanceService
     private static extern uint GetSystemFirmwareTable(uint firmwareTableProviderSignature, uint firmwareTableID, IntPtr firmwareTableBuffer, uint bufferSize);
 
     private const uint AcpiProvider = 0x41435049; // 'ACPI'
-    private const uint FpdtTableId = 0x46504454; // 'FPDT'
+    // Table IDs are little-endian (the docs' 'PCAF' for FACP), unlike the provider signature:
+    // 0x54445046 is the bytes "FPDT" in memory. 0x46504454 asks for "TDPF" and always returns 0.
+    private const uint FpdtTableId = 0x54445046;
 
     /// <summary>
     /// #704: "Last BIOS time" - not in any event log; it comes from the ACPI Firmware Performance

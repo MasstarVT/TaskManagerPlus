@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.IO;
+using System.Globalization;
 using System.Management;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
@@ -131,11 +133,14 @@ public static class DriverVerifierService
 
     /// <summary>Item 82's one-click reset - `verifier /reset` clears every Driver Verifier setting
     /// (persistent and, per Microsoft's docs, the settings that would apply after the next boot);
-    /// still requires a reboot to actually stop a currently-running verified session.</summary>
-    public static async Task<bool> ResetAsync()
+    /// still requires a reboot to actually stop a currently-running verified session. `/reset`
+    /// leaves the PoolTag value alone, so a successful reset also restores it (see
+    /// <see cref="RestorePoolTagFromBackup"/>); PoolTagNote says what happened to it, if anything.</summary>
+    public static async Task<(bool Ok, string? PoolTagNote)> ResetAsync()
     {
         var (_, exitCode) = await RunCapturedAsync("verifier.exe", "/reset");
-        return exitCode is 0 or 2; // 2 = EXIT_CODE_REBOOT_NEEDED, still a successful reset
+        bool ok = exitCode is 0 or 2; // 2 = EXIT_CODE_REBOOT_NEEDED, still a successful reset
+        return (ok, ok ? RestorePoolTagFromBackup() : null);
     }
 
     /// <summary>Item 83: loaded kernel drivers whose embedded Authenticode signature (or lack of
@@ -237,7 +242,25 @@ public static class DriverVerifierService
             return (false, $"'{tag}' isn't a valid pool tag (up to 4 printable ASCII characters).");
 
         string? previous = ReadCurrentPoolTag();
+        int? previousDword = ReadPoolTagDword();
+        bool createdBackup = SavePoolTagBackupIfMissing(previousDword);
         bool registryOk = WritePoolTag(packed);
+        if (registryOk)
+        {
+            RegistryChangeJournalService.Record(
+                source: "Stability",
+                description: $"Set Special Pool tag '{tag.Trim()}'",
+                hive: "HKLM",
+                subKeyPath: PoolTagRegistryPath,
+                valueName: PoolTagValueName,
+                kind: RegistryValueKind.DWord,
+                oldValueText: previousDword?.ToString(CultureInfo.InvariantCulture),
+                newValueText: packed.ToString(CultureInfo.InvariantCulture));
+        }
+        else if (createdBackup)
+        {
+            DeletePoolTagBackup();
+        }
         string registryText = registryOk
             ? "PoolTag registry value set" + (previous is not null ? $" (replaced previous tag '{previous}'). " : ". ")
             : "Couldn't write the PoolTag registry value. ";
@@ -286,6 +309,98 @@ public static class DriverVerifierService
         return bytes.All(b => b >= 0x20 && b <= 0x7E)
             ? System.Text.Encoding.ASCII.GetString(bytes)
             : $"0x{value:X8}";
+    }
+
+    private static int? ReadPoolTagDword()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(PoolTagRegistryPath);
+            return key?.GetValue(PoolTagValueName) is int dword ? dword : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // ---- PoolTag backup: the value as it was before this app first set it, so a Driver Verifier
+    // reset can put it back. Only the first write is backed up - a second Apply must not replace
+    // the original with the app's own earlier tag. A legacy non-DWORD value (which Windows
+    // ignores) is backed up as "absent". ----
+
+    private sealed class PoolTagBackup
+    {
+        public int? PreviousValue { get; set; }
+    }
+
+    private static string PoolTagBackupPath => AppPaths.GetPath("pooltag-backup.json");
+
+    private static bool SavePoolTagBackupIfMissing(int? previousDword)
+    {
+        try
+        {
+            if (File.Exists(PoolTagBackupPath)) return false;
+            Directory.CreateDirectory(Path.GetDirectoryName(PoolTagBackupPath)!);
+            File.WriteAllText(PoolTagBackupPath, JsonSerializer.Serialize(new PoolTagBackup { PreviousValue = previousDword }));
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void DeletePoolTagBackup()
+    {
+        try { File.Delete(PoolTagBackupPath); } catch { /* best-effort */ }
+    }
+
+    /// <summary>Puts PoolTag back to what it was before this app first set it - deleting it when
+    /// there was none - from the backup <see cref="ApplySpecialPoolForTagAsync"/> saved. Called by
+    /// both Driver Verifier reset paths. Null when this app never changed the value.</summary>
+    internal static string? RestorePoolTagFromBackup()
+    {
+        PoolTagBackup? backup;
+        try
+        {
+            if (!File.Exists(PoolTagBackupPath)) return null;
+            backup = JsonSerializer.Deserialize<PoolTagBackup>(File.ReadAllText(PoolTagBackupPath));
+        }
+        catch
+        {
+            return "Couldn't read the saved PoolTag backup - the Special Pool tag was left as it is.";
+        }
+        if (backup is null) return null;
+
+        try
+        {
+            using var key = Registry.LocalMachine.CreateSubKey(PoolTagRegistryPath, writable: true);
+            if (key is null) return "Couldn't open the Memory Management key - the Special Pool tag was left as it is.";
+
+            int? current = key.GetValue(PoolTagValueName) is int dword ? dword : null;
+            if (backup.PreviousValue is { } previous) key.SetValue(PoolTagValueName, previous, RegistryValueKind.DWord);
+            else key.DeleteValue(PoolTagValueName, throwOnMissingValue: false);
+
+            RegistryChangeJournalService.Record(
+                source: "Stability",
+                description: "Restored the Special Pool tag after a Driver Verifier reset",
+                hive: "HKLM",
+                subKeyPath: PoolTagRegistryPath,
+                valueName: PoolTagValueName,
+                kind: RegistryValueKind.DWord,
+                oldValueText: current?.ToString(CultureInfo.InvariantCulture),
+                newValueText: backup.PreviousValue?.ToString(CultureInfo.InvariantCulture));
+
+            DeletePoolTagBackup();
+            return backup.PreviousValue is { } p
+                ? $"The Special Pool tag was restored to '{UnpackPoolTag(p)}'."
+                : "The Special Pool tag (PoolTag) this app set was removed.";
+        }
+        catch (Exception ex)
+        {
+            return $"Couldn't restore the Special Pool tag: {ex.Message}";
+        }
     }
 
     private static bool WritePoolTag(int packed)
@@ -491,8 +606,15 @@ public static class DriverVerifierControlService
     // toggle for when the machine is already bugchecking on every normal boot.
     // ------------------------------------------------------------------------------------------
 
-    public static Task<(bool Success, string Message)> ResetAsync() =>
-        RunArgsAsync("verifier.exe", "/reset", timeoutMs: 30000, rebootNeededExitCodeOk: true);
+    public static async Task<(bool Success, string Message)> ResetAsync()
+    {
+        var (success, message) = await RunArgsAsync("verifier.exe", "/reset", timeoutMs: 30000, rebootNeededExitCodeOk: true);
+        // `verifier /reset` leaves the PoolTag value alone - put back what the Stability tab's
+        // Special Pool action changed, the same as that tab's own reset does.
+        if (success && DriverVerifierService.RestorePoolTagFromBackup() is { } note)
+            message = $"{message}\n{note}";
+        return (success, message);
+    }
 
     /// <summary>Reads whether {current}'s BCD entry currently has a safeboot value set, and which
     /// mode - `bcdedit /enum {current}` only ever prints a "safeboot" line when one is configured.</summary>

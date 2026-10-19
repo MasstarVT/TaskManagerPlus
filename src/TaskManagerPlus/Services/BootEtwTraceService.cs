@@ -74,18 +74,20 @@ public static class BootEtwTraceService
         return (true, null);
     }
 
-    /// <summary>Cancels a still-pending (not yet collected) boot trace via `wpr -cancel` and
-    /// clears the pending state - the "disarm before rebooting" escape hatch.</summary>
+    /// <summary>Cancels a still-pending (not yet collected) boot trace via `wpr -boottrace
+    /// -cancelboot` and clears the pending state - the "disarm before rebooting" escape hatch.
+    /// Plain `wpr -cancel` only cancels a `-start` session and leaves the boot Autologger armed,
+    /// so the pending state is kept (and failure reported) unless wpr actually removed it.</summary>
     public static async Task<(bool Success, string? Error)> DisarmAsync()
     {
-        string? error = null;
         if (IsAvailable)
         {
-            var (output, exitCode) = await RunCapturedAsync(WprPath, "-cancel");
-            if (exitCode != 0) error = string.IsNullOrWhiteSpace(output) ? null : output.Trim();
+            var (output, exitCode) = await RunCapturedAsync(WprPath, "-boottrace -cancelboot");
+            if (exitCode != 0)
+                return (false, string.IsNullOrWhiteSpace(output) ? "wpr failed to cancel the boot trace." : output.Trim());
         }
         SaveState(new BootEtwTraceState());
-        return (true, error);
+        return (true, null);
     }
 
     /// <summary>Called once at startup: if a trace is pending AND the machine has restarted since it
