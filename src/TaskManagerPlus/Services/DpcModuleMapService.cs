@@ -53,7 +53,10 @@ public static class DpcModuleMapService
             IntPtr buffer = Marshal.AllocHGlobal(size);
             try
             {
-                int status = NtQuerySystemInformation(SystemModuleInformation, buffer, size, out int returnLength);
+                // Windows 11 24H2+ zeroes every ImageBase unless SeDebugPrivilege is enabled, which
+                // would leave DPC-to-module mapping matching nothing.
+                int returnLength = 0;
+                int status = HandleInspectionService.WithDebugPrivilege(() => NtQuerySystemInformation(SystemModuleInformation, buffer, size, out returnLength));
                 if (status == StatusInfoLengthMismatch)
                 {
                     size = returnLength > size ? returnLength + 0x10000 : size * 2;

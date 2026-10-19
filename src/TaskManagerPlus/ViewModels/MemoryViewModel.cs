@@ -1187,5 +1187,11 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         }
     }
 
-    public void Dispose() => _leakGrowthTimer.Stop();
+    public void Dispose()
+    {
+        _leakGrowthTimer.Stop();
+        // An app exit mid page-fault scan would otherwise leave the shared NT Kernel Logger
+        // session running until reboot.
+        PageFaultTraceService.StopOnExit();
+    }
 }
