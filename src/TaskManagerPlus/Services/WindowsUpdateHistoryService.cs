@@ -92,7 +92,7 @@ public static class WindowsUpdateHistoryService
                         EventId = record.Id,
                         Kind = KindLabel(record.Id),
                         IsFailure = WuFailureEventIds.Contains(record.Id),
-                        Title = ExtractTitle(message),
+                        Title = ExtractTitle(message) is { Length: > 0 } title ? title : ReadUpdateTitle(record),
                         ErrorCode = ExtractErrorCode(message),
                         RawMessage = Truncate(message, 400),
                     });
@@ -280,6 +280,24 @@ public static class WindowsUpdateHistoryService
         int idx = message.LastIndexOf(": ", StringComparison.Ordinal);
         if (idx < 0 || idx + 2 >= message.Length) return string.Empty;
         return message[(idx + 2)..].Trim().TrimEnd('.', ' ');
+    }
+
+    // Events 41/44's messages ("An update was downloaded.") carry no title, but their EventData has
+    // a named updateTitle field - selected by name, not by position.
+    private static readonly EventLogPropertySelector UpdateTitleSelector = new(new[] { "Event/EventData/Data[@Name='updateTitle']" });
+
+    private static string ReadUpdateTitle(EventRecord record)
+    {
+        try
+        {
+            return record is EventLogRecord logRecord && logRecord.GetPropertyValues(UpdateTitleSelector) is [string title, ..]
+                ? title.Trim()
+                : string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
