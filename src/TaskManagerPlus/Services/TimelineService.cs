@@ -128,7 +128,7 @@ public static class TimelineService
     #region 940 - Windows Updates lane
 
     /// <summary>#940: Win32_QuickFixEngineering (install date + KB id, currently-installed
-    /// hotfixes only) plus Microsoft-Windows-WindowsUpdateClient/Operational event 19 (install
+    /// hotfixes only) plus WindowsUpdateClient event 19 in the System log (install
     /// succeeded) / 20 (install failed) - the event log carries *failed* installs the QFE
     /// inventory never lists (a failed update was never actually applied, so it can't show up in
     /// "currently installed hotfixes"), which is exactly why both sources are read rather than
@@ -170,10 +170,11 @@ public static class TimelineService
             // WMI class unavailable - degrade to whatever the event log below still finds.
         }
 
+        // Install results (19/20) are in the System log, not WindowsUpdateClient/Operational.
         var succeeded = TroubleshootService.ReadProviderEvents(
-            "Microsoft-Windows-WindowsUpdateClient/Operational", null, new[] { 19 }, DefaultLookbackDays, maxEvents: 100);
+            "System", "Microsoft-Windows-WindowsUpdateClient", new[] { 19 }, DefaultLookbackDays, maxEvents: 100);
         var failed = TroubleshootService.ReadProviderEvents(
-            "Microsoft-Windows-WindowsUpdateClient/Operational", null, new[] { 20 }, DefaultLookbackDays, maxEvents: 100);
+            "System", "Microsoft-Windows-WindowsUpdateClient", new[] { 20 }, DefaultLookbackDays, maxEvents: 100);
 
         events.AddRange(succeeded.Select(e => new TimelineEvent
         {
@@ -181,7 +182,7 @@ public static class TimelineService
             Timestamp = e.TimeCreated,
             Title = ExtractUpdateTitle(e.Message) ?? "Windows Update installed",
             Detail = TroubleshootService.Truncate(e.Message, 200),
-            Source = "Microsoft-Windows-WindowsUpdateClient/Operational (event 19)",
+            Source = "System log, WindowsUpdateClient (event 19)",
             IsFailure = false,
         }));
         events.AddRange(failed.Select(e => new TimelineEvent
@@ -190,7 +191,7 @@ public static class TimelineService
             Timestamp = e.TimeCreated,
             Title = "FAILED: " + (ExtractUpdateTitle(e.Message) ?? "Windows Update"),
             Detail = TroubleshootService.Truncate(e.Message, 200),
-            Source = "Microsoft-Windows-WindowsUpdateClient/Operational (event 20)",
+            Source = "System log, WindowsUpdateClient (event 20)",
             IsFailure = true,
         }));
 

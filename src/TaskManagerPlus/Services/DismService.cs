@@ -130,6 +130,7 @@ public static class DismService
                 : (output.Contains("No component store corruption", StringComparison.OrdinalIgnoreCase) ||
                    output.Contains("did not find any component store corruption", StringComparison.OrdinalIgnoreCase)) ? false
                 : null,
+            CannotBeRepaired = output.Contains("cannot be repaired", StringComparison.OrdinalIgnoreCase),
             Summary = ExtractLastNonEmptyLine(output),
             RawOutput = output,
             DurationSeconds = sw.Elapsed.TotalSeconds,

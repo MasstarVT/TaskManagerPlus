@@ -176,12 +176,14 @@ public sealed class EventTimelineService
     private const string DriverPnpClause = "(Provider[@Name='Microsoft-Windows-UserPnp'] and (EventID=20001 or EventID=20003)) or (Provider[@Name='Microsoft-Windows-Kernel-PnP'] and EventID=219)";
     private const string NewServiceClause = "Provider[@Name='Service Control Manager'] and EventID=7045";
     private const string SetupLogClause = "EventID=1 or EventID=2 or EventID=4";
-    private const string WindowsUpdateChannel = "Microsoft-Windows-WindowsUpdateClient/Operational";
+    // WindowsUpdateClient's install results (19/20) are written to the System log; its Operational
+    // channel holds none of them (checked on a current build).
+    private const string WindowsUpdateChannel = "System";
     private const string WindowsUpdateClause = "Provider[@Name='Microsoft-Windows-WindowsUpdateClient'] and EventID=19";
 
     /// <summary>#139: searches the 7 days (default) before <paramref name="crashTimeLocal"/> for
     /// driver installs (UserPnp 20001/20003) and load failures (Kernel-PnP 219), update installs (Setup log 1/2/4,
-    /// WindowsUpdateClient/Operational 19), and new services (SCM 7045) - "changes shortly before
+    /// WindowsUpdateClient 19 in the System log), and new services (SCM 7045) - "changes shortly before
     /// this crash," explicitly framed as correlation, never causation (see StabilityView.xaml's
     /// card copy). Each channel is read independently and degrades to nothing on its own if that
     /// channel doesn't exist/isn't enabled on this machine (WindowsUpdateClient/Operational in
