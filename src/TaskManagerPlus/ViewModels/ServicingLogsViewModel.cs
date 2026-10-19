@@ -231,14 +231,9 @@ public sealed class ServicingLogsViewModel : ObservableObject, IDisposable
     {
         string? path = WuLogResult?.LogFilePath;
         if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            WuLogStatusText = $"Couldn't open the log: {ex.Message}";
-        }
+        // System32 Notepad, not the .log association (HKCU-overridable, and this process is elevated).
+        if (!SafeLaunchService.OpenInNotepad(path))
+            WuLogStatusText = $"Couldn't open the log in Notepad. It's at: {path}";
     }
 
     // ==================== #180: combined update failure history ====================
@@ -408,7 +403,7 @@ public sealed class ServicingLogsViewModel : ObservableObject, IDisposable
         RefreshLogHealthCommand = new AsyncRelayCommand(RefreshLogHealthAsync, () => !IsLogHealthLoading);
         RevealCbsFolderCommand = new RelayCommand(_ =>
         {
-            if (LogHealth?.Exists == true) EtwTraceService.RevealInExplorer(LogHealth.FolderPath);
+            if (LogHealth?.Exists == true) SafeLaunchService.RevealInExplorer(LogHealth.FolderPath);
         }, _ => LogHealth?.Exists == true);
     }
 

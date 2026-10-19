@@ -31,6 +31,13 @@ public sealed class WindowsHealthViewModel : ObservableObject
     private bool _isLoading;
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
 
+    /// <summary>True once a refresh has succeeded (and stays true after a later failed one, which
+    /// RefreshErrorText reports). Until then the pending-reboot pill and the update-history list
+    /// show "checking"/unknown instead of their empty defaults, which read as "no reboot pending"
+    /// and "no history".</summary>
+    private bool _hasLoaded;
+    public bool HasLoaded { get => _hasLoaded; private set => SetProperty(ref _hasLoaded, value); }
+
     /// <summary>Set when RefreshAsync fails outright - mirrors StabilityViewModel.RefreshErrorText's
     /// "...failed: {message}" convention rather than letting the exception propagate uncaught out
     /// of an async void command handler.</summary>
@@ -572,6 +579,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
             var policy = await Task.Run(WindowsUpdatePolicyService.ReadPolicySnapshot);
 
             Apply(wuEvents, setupEvents, rebootIndicators, policy);
+            HasLoaded = true;
             RefreshErrorText = null;
         }
         catch (Exception ex)

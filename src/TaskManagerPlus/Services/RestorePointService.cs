@@ -178,18 +178,7 @@ public static class RestorePointService
     /// full rollback has to run outside this app's own process (the machine reboots partway
     /// through), so rstrui.exe's interactive wizard is the only way to do it at all, scripted or
     /// not; this app only ever opens it, never drives it.</summary>
-    public static bool LaunchRstrui()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo("rstrui.exe") { UseShellExecute = true });
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public static bool LaunchRstrui() => SafeLaunchService.StartSystemTool("rstrui.exe");
 
     private static string DescribeRestorePointType(uint type) => type switch
     {
@@ -298,6 +287,13 @@ public static class RestorePointService
         output.Contains("disabled on this drive", StringComparison.OrdinalIgnoreCase) ||
         output.Contains("0x81045303", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>PowerShell treats U+2018-U+201B as single quotes too, so a typographic apostrophe
+    /// (common in service display names) would otherwise end the '...' string. Doubling each quote
+    /// character is PowerShell's own escape for all five.</summary>
+    private static string EscapePowerShellSingleQuoted(string s) =>
+        s.Replace("'", "''").Replace("‘", "‘‘").Replace("’", "’’")
+         .Replace("‚", "‚‚").Replace("‛", "‛‛");
+
     public static async Task<(bool Success, string Message, bool SystemProtectionLikelyDisabled)> CreateRestorePointAsync(string description)
     {
         try
@@ -307,7 +303,7 @@ public static class RestorePointService
             // failure below rather than special-cased, since the message it returns already says
             // so plainly. That throttle is a WARNING, not an error (no point is created, yet the
             // cmdlet returns normally), so -WarningAction Stop turns it into a caught failure.
-            string safeDescription = description.Replace("'", "''");
+            string safeDescription = EscapePowerShellSingleQuoted(description);
             string psCommand =
                 $"$ErrorActionPreference='Stop'; try {{ Checkpoint-Computer -Description '{safeDescription}' -RestorePointType MODIFY_SETTINGS -WarningAction Stop; Write-Output 'RESTORE_POINT_OK' }} catch {{ Write-Output $_.Exception.Message }}";
 
@@ -354,13 +350,7 @@ public static class RestorePointService
     /// when CreateRestorePointAsync reports System Protection is disabled.</summary>
     public static void OpenSystemProtectionSettings()
     {
-        try
-        {
-            Process.Start(new ProcessStartInfo("SystemPropertiesProtection.exe") { UseShellExecute = true });
-        }
-        catch
-        {
-            // Best-effort - if even this can't launch, there's nothing more this app can do here.
-        }
+        // Best-effort - if even this can't launch, there's nothing more this app can do here.
+        SafeLaunchService.StartSystemTool("SystemPropertiesProtection.exe");
     }
 }

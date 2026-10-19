@@ -48,7 +48,7 @@
                                         <Style TargetType="Border">
                                             <Setter Property="Background" Value="{DynamicResource AccentMutedBrush}" />
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding UpgradeReadiness.ReadyForNextFeatureUpdate}" Value="False">
+                                                <DataTrigger Binding="{Binding UpgradeReadiness.IsBlocked}" Value="True">
                                                     <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
                                                 </DataTrigger>
                                             </Style.Triggers>
@@ -60,7 +60,12 @@
                                                 <Setter Property="Text" Value="Ready for next feature update" />
                                                 <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding UpgradeReadiness.ReadyForNextFeatureUpdate}" Value="False">
+                                                    <!-- No blocker, but a check couldn't be read: not a pass. -->
+                                                    <DataTrigger Binding="{Binding UpgradeReadiness.HasUnknownChecks}" Value="True">
+                                                        <Setter Property="Text" Value="Couldn't fully check" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding UpgradeReadiness.IsBlocked}" Value="True">
                                                         <Setter Property="Text" Value="Blocked" />
                                                         <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                                     </DataTrigger>
@@ -234,7 +239,7 @@
                                         <Style TargetType="Border">
                                             <Setter Property="Visibility" Value="Collapsed" />
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding UpgradeReadiness.ReadyForNextFeatureUpdate}" Value="False">
+                                                <DataTrigger Binding="{Binding UpgradeReadiness.IsBlocked}" Value="True">
                                                     <Setter Property="Visibility" Value="Visible" />
                                                 </DataTrigger>
                                             </Style.Triggers>
@@ -248,6 +253,14 @@
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                 </Border>
+                                <!-- Checks that couldn't be read - why the badge says "Couldn't fully check". -->
+                                <ItemsControl ItemsSource="{Binding UpgradeReadiness.UnknownItems}" Margin="0,6,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,3" Text="{Binding Mode=OneWay}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                                 <!-- Advisories (e.g. Secure Boot off on UEFI) - worth fixing, not blockers. -->
                                 <ItemsControl ItemsSource="{Binding UpgradeReadiness.AdvisoryItems}" Margin="0,6,0,0">
                                     <ItemsControl.ItemTemplate>
@@ -283,12 +296,24 @@
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
+                                    <!-- "No reboot pending" only after the indicators were actually read. -->
                                     <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
-                                                <Setter Property="Text" Value="No reboot pending" />
-                                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                <Setter Property="Text" Value="Unknown" />
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                                 <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsLoading}" Value="True">
+                                                        <Setter Property="Text" Value="Checking…" />
+                                                    </DataTrigger>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                            <Condition Binding="{Binding IsRebootPending}" Value="False" />
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Text" Value="No reboot pending" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                    </MultiDataTrigger>
                                                     <DataTrigger Binding="{Binding IsRebootPending}" Value="True">
                                                         <Setter Property="Text" Value="Reboot pending" />
                                                         <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
@@ -393,13 +418,36 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding UpdateEvents.Count}" Value="0">
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding UpdateEvents.Count}" Value="0" />
+                                                    <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
+                            <TextBlock Text="Reading the Windows Update client log…" Margin="0,8,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding HasLoaded}" Value="False" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <!-- The tab-level refresh error, repeated here: this list comes from that refresh. -->
+                            <TextBlock Text="{Binding RefreshErrorText}" Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,8,0,0"
+                                       Visibility="{Binding RefreshErrorText, Converter={StaticResource StringToVisibilityConverter}}" />
                             <!-- #771: a failed KB's row above shows its ErrorCode/Cause-fix from the WU
                                  client log; ServicingCorrelationText (row tooltip already shows the full
                                  WU-client message - this line adds the Setup-channel's own package/error
@@ -1192,6 +1240,8 @@
                                     </TextBlock>
                                 </Button>
                             </Grid>
+                            <!-- Summary is DISM's last line ("The operation completed successfully." even
+                                 when it found corruption), so the colour also follows IsRepairable. -->
                             <StackPanel Margin="0,0,0,14" Visibility="{Binding CheckHealthResult, Converter={StaticResource NullToVisibilityConverter}}">
                                 <Border CornerRadius="6" Padding="10,6">
                                     <Border.Style>
@@ -1201,21 +1251,42 @@
                                                 <DataTrigger Binding="{Binding CheckHealthResult.Success}" Value="False">
                                                     <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
                                                 </DataTrigger>
+                                                <DataTrigger Binding="{Binding CheckHealthResult.IsRepairable}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
-                                    <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding CheckHealthResult.Summary}">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding CheckHealthResult.Success}" Value="False">
-                                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
+                                    <StackPanel>
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                                   Text="Component store corruption detected (repairable) - run RestoreHealth below.">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding CheckHealthResult.IsRepairable}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding CheckHealthResult.Summary}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding CheckHealthResult.Success}" Value="False">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding CheckHealthResult.IsRepairable}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
                                 </Border>
                             </StackPanel>
 
@@ -1257,21 +1328,42 @@
                                                 <DataTrigger Binding="{Binding ScanHealthResult.Success}" Value="False">
                                                     <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
                                                 </DataTrigger>
+                                                <DataTrigger Binding="{Binding ScanHealthResult.IsRepairable}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
-                                    <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding ScanHealthResult.Summary}">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding ScanHealthResult.Success}" Value="False">
-                                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
+                                    <StackPanel>
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                                   Text="Component store corruption detected (repairable) - run RestoreHealth below.">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ScanHealthResult.IsRepairable}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Text="{Binding ScanHealthResult.Summary}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ScanHealthResult.Success}" Value="False">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding ScanHealthResult.IsRepairable}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
                                 </Border>
                                 <StackPanel Margin="0,6,0,0" Visibility="{Binding ScanHealthResult.DismLogTail, Converter={StaticResource NullToVisibilityConverter}}">
                                     <TextBlock Text="DISM.LOG TAIL (failure)" Style="{StaticResource SpecLabel}" Foreground="{DynamicResource DangerBrush}" />
@@ -1434,6 +1526,10 @@
                                                 <DataTrigger Binding="{Binding SfcScanResult.FoundViolations}" Value="True">
                                                     <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
                                                 </DataTrigger>
+                                                <!-- A run that failed/was cancelled must not read as a clean scan. -->
+                                                <DataTrigger Binding="{Binding SfcScanResult.Success}" Value="False">
+                                                    <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
@@ -1444,6 +1540,9 @@
                                                     <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding SfcScanResult.FoundViolations}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding SfcScanResult.Success}" Value="False">
                                                             <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
@@ -1467,14 +1566,22 @@
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
-                                        <TextBlock Text="(none)" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}">
+                                        <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="(none)" />
                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding SfcScanResult.RepairedFiles.Count}" Value="0">
                                                             <Setter Property="Visibility" Value="Visible" />
                                                         </DataTrigger>
+                                                        <MultiDataTrigger>
+                                                            <MultiDataTrigger.Conditions>
+                                                                <Condition Binding="{Binding SfcScanResult.Success}" Value="False" />
+                                                                <Condition Binding="{Binding SfcScanResult.FoundViolations}" Value="False" />
+                                                            </MultiDataTrigger.Conditions>
+                                                            <Setter Property="Text" Value="(not available - the scan didn't finish)" />
+                                                        </MultiDataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
                                             </TextBlock.Style>
@@ -1490,14 +1597,22 @@
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
-                                        <TextBlock Text="(none)" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}">
+                                        <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="(none)" />
                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding SfcScanResult.UnrepairableEntries.Count}" Value="0">
                                                             <Setter Property="Visibility" Value="Visible" />
                                                         </DataTrigger>
+                                                        <MultiDataTrigger>
+                                                            <MultiDataTrigger.Conditions>
+                                                                <Condition Binding="{Binding SfcScanResult.Success}" Value="False" />
+                                                                <Condition Binding="{Binding SfcScanResult.FoundViolations}" Value="False" />
+                                                            </MultiDataTrigger.Conditions>
+                                                            <Setter Property="Text" Value="(not available - the scan didn't finish)" />
+                                                        </MultiDataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
                                             </TextBlock.Style>

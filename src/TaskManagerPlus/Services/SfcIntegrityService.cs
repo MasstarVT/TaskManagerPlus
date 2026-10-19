@@ -189,8 +189,8 @@ public static class SfcIntegrityService
     /// a trivial read" cost CLAUDE.md's on-demand convention exists to avoid repeating. Adaptive
     /// [SR]-line regex parse (not a documented, versioned CBS.log schema), same "degrade gracefully,
     /// don't assume an unverified contract" tradeoff BootPerformanceService's event-field extraction
-    /// already takes. The extracted [SR] subset (not the whole log) is written under
-    /// AppPaths.SettingsDirectory per this item's spec, rather than left in the 100 MB log.
+    /// already takes. The extracted [SR] subset (not the whole log) is written under the
+    /// admin-only AdminDataPaths "IntegrityScans" area, rather than left in the 100 MB log.
     /// </summary>
     private static (List<string> Repaired, List<string> Unrepairable, string? ExtractPath) ExtractCbsDelta(long startOffset)
     {
@@ -204,6 +204,9 @@ public static class SfcIntegrityService
             {
                 using var stream = new FileStream(CbsLogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 long length = stream.Length;
+                // Shorter than when sfc started: CBS.log rolled over to a CbsPersist archive during
+                // the scan, so this run's [SR] lines start at the top of the new file.
+                if (length < startOffset) startOffset = 0;
                 long readStart = Math.Max(startOffset, length - MaxCbsReadBytes);
                 stream.Seek(readStart, SeekOrigin.Begin);
                 using var reader = new StreamReader(stream);
@@ -240,10 +243,14 @@ public static class SfcIntegrityService
         {
             try
             {
-                string dir = AppPaths.GetPath("IntegrityScans");
-                Directory.CreateDirectory(dir);
-                extractPath = Path.Combine(dir, $"cbs-extract-{DateTime.Now:yyyyMMdd-HHmmss}.log");
-                File.WriteAllLines(extractPath, srLines);
+                // Admin-only data folder, not the user-writable settings folder: an elevated write
+                // to a predictable name there could be redirected by a junction.
+                string? dir = AdminDataPaths.TryGetArea("IntegrityScans", out _);
+                if (dir is not null)
+                {
+                    extractPath = Path.Combine(dir, $"cbs-extract-{DateTime.Now:yyyyMMdd-HHmmss}.log");
+                    File.WriteAllLines(extractPath, srLines);
+                }
             }
             catch
             {

@@ -69,18 +69,7 @@ public static class SystemRepairService
     /// and runs entirely outside Windows, before any OS loads), never drives it programmatically.
     /// Results are read back afterwards via EventLogService.ReadMemoryDiagnosticsResults, not
     /// returned here.</summary>
-    public static bool LaunchMemoryDiagnostic()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo("mdsched.exe") { UseShellExecute = true });
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public static bool LaunchMemoryDiagnostic() => SafeLaunchService.StartSystemTool("mdsched.exe");
 
     /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>; this wrapper keeps the
     /// repair flow's soft-start degradation (a tool that can't start reports failure text, never

@@ -267,19 +267,10 @@ public static class SystemRestoreService
         }
     }
 
-    /// <summary>#790: launches the built-in System Restore wizard - same UseShellExecute=true GUI
-    /// launch pattern already used elsewhere in this app (wpa.exe/notepad.exe/explorer.exe).</summary>
-    public static void LaunchRstrui()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo("rstrui.exe") { UseShellExecute = true });
-        }
-        catch
-        {
-            // Best-effort - if rstrui.exe can't be launched (unusual), there's nothing more to do here.
-        }
-    }
+    /// <summary>#790: launches the built-in System Restore wizard from System32 (no file
+    /// association lookup - see SafeLaunchService). Best-effort: if rstrui.exe can't be launched
+    /// (unusual), there's nothing more to do here.</summary>
+    public static void LaunchRstrui() => SafeLaunchService.StartSystemTool("rstrui.exe");
 
     /// <summary>#790: SystemRestorePointCreationFrequency (minutes) - the documented policy value
     /// that throttles Windows' own *automatic* restore-point creation to once per this many minutes

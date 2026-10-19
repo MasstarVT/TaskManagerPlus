@@ -729,6 +729,23 @@ public sealed class StorageViewModel : ObservableObject
     private int _failureWatchTickCounter;
     private bool _failureWatchRunning;
 
+    // The startup disk inventory behind DriveHealthVerdicts: false until it lands (or after it
+    // failed, with the reason in DriveInventoryError), so an empty list isn't read as "no disks".
+    private bool _isDriveInventoryLoaded;
+    public bool IsDriveInventoryLoaded { get => _isDriveInventoryLoaded; private set => SetProperty(ref _isDriveInventoryLoaded, value); }
+
+    private string? _driveInventoryError;
+    public string? DriveInventoryError { get => _driveInventoryError; private set => SetProperty(ref _driveInventoryError, value); }
+
+    // True once the shared sensor poll has run at least once - until then an empty
+    // DriveTemperatures means "not sampled yet", not "no drive sensors".
+    private bool _hasTemperatureSample;
+    public bool HasTemperatureSample { get => _hasTemperatureSample; private set => SetProperty(ref _hasTemperatureSample, value); }
+
+    // The per-volume facts card's MSFT_Volume read: false while loading or after it failed.
+    private bool _volumeFilesystemFactsLoadedOk;
+    public bool VolumeFilesystemFactsLoadedOk { get => _volumeFilesystemFactsLoadedOk; private set => SetProperty(ref _volumeFilesystemFactsLoadedOk, value); }
+
     // ---- #325/#326/#327: SMART history journal, trend chart, wear-rate projection ---------
     public ObservableCollection<SmartHistoryChange> SmartHistoryChanges { get; } = new();
 
@@ -1465,6 +1482,10 @@ public sealed class StorageViewModel : ObservableObject
             Filter = o => o is SensorReading r && r.HardwareType == HardwareType.Storage,
         };
         DriveTemperatures = view;
+        // Every sensor poll rebuilds Temperatures (Clear, then Add), so the first change event
+        // marks "sampled" even on a machine with no sensors at all.
+        HasTemperatureSample = energyThermals.Temperatures.Count > 0;
+        energyThermals.Temperatures.CollectionChanged += (_, _) => HasTemperatureSample = true;
 
         // #352: hidden X axis for the free-space history chart - a separate instance from
         // Performance.HiddenXAxes (used elsewhere in this file for the fixed-length CPU/RAM/Disk
@@ -1644,56 +1665,78 @@ public sealed class StorageViewModel : ObservableObject
 
         _ = Task.Run(() =>
         {
-            var pools = StorageSpacesService.List();
-            var fixedDrives = DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed && d.IsReady).ToList();
-            var fixedDriveLetters = fixedDrives.Select(d => d.Name.TrimEnd('\\')).ToList(); // "C:" - colon kept, see FragmentationRow's remarks
-            var disks = SystemSpecsService.ListDisksForSmart();
-
-            // #328: cheap base facts (predicted failure, driver health) for every disk, computed
-            // once at startup - refined per-disk once that disk's SMART/NVMe data is actually read
-            // (see ApplySmartRawResult/ApplyNvmeHealth below).
-            var failureFlags = SystemSpecsService.ReadDiskFailureFlags().ToDictionary(f => f.Index);
-            var poolsForVerdict = pools;
-
-            // The media-type lookup is a four-level WMI associator walk per drive - done here on
-            // the worker thread, not inside the dispatcher callback below.
-            var hddByLetter = fixedDriveLetters.ToDictionary(
-                letter => letter,
-                letter => DiskFragmentationService.GetMediaType(letter.TrimEnd(':')) == "HDD");
-
-            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+            // Fire-and-forget: without this catch a failure here was unobserved and the verdict card
+            // said "No disks detected." for the rest of the session.
+            try
             {
-                foreach (var p in pools) StoragePools.Add(p);
-                // #86, widened by #353/#354: a row per fixed volume, not just HDDs - see
-                // FragmentationRow's remarks.
-                foreach (var letter in fixedDriveLetters)
-                    FragmentationRows.Add(new FragmentationRow { DriveLetter = letter, IsHdd = hddByLetter[letter] });
-                foreach (var (index, model) in disks) SmartDiskOptions.Add(new SmartDiskOption { Index = index, Model = model });
-                foreach (var d in fixedDrives) ThroughputDriveOptions.Add(d.Name.TrimEnd('\\'));
-                SelectedThroughputDrive = ThroughputDriveOptions.FirstOrDefault();
+                var pools = StorageSpacesService.List();
+                var fixedDrives = DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed && d.IsReady).ToList();
+                var fixedDriveLetters = fixedDrives.Select(d => d.Name.TrimEnd('\\')).ToList(); // "C:" - colon kept, see FragmentationRow's remarks
+                var disks = SystemSpecsService.ListDisksForSmart();
 
-                // #340/#341: same fixed-drive set as the throughput picker above, but bare (no
-                // trailing colon) - unlike ThroughputDriveOptions above, this matches
-                // VolumeFilesystemRow.DriveLetter's bare-letter convention (from MSFT_Volume's
-                // single-char DriveLetter property), since ChkdskService's process args append
-                // their own colon.
-                foreach (var d in fixedDrives) ChkdskVolumeOptions.Add(d.Name.TrimEnd('\\', ':'));
-                SelectedChkdskVolume = ChkdskVolumeOptions.FirstOrDefault();
+                // #328: cheap base facts (predicted failure, driver health) for every disk, computed
+                // once at startup - refined per-disk once that disk's SMART/NVMe data is actually read
+                // (see ApplySmartRawResult/ApplyNvmeHealth below). Grouped, not ToDictionary: a
+                // repeated Win32_DiskDrive index must not throw away the whole inventory.
+                var failureFlags = SystemSpecsService.ReadDiskFailureFlags()
+                    .GroupBy(f => f.Index)
+                    .ToDictionary(g => g.Key, g => g.First());
+                var poolsForVerdict = pools;
 
-                // #347/#349: same bare-letter fixed-drive set - reused rather than duplicated.
-                SelectedUsnHotSpotDrive = ChkdskVolumeOptions.FirstOrDefault();
-                SelectedNtfsActivityDrive = ChkdskVolumeOptions.FirstOrDefault();
+                // The media-type lookup is a four-level WMI associator walk per drive - done here on
+                // the worker thread, not inside the dispatcher callback below.
+                var hddByLetter = fixedDriveLetters.ToDictionary(
+                    letter => letter,
+                    letter => DiskFragmentationService.GetMediaType(letter.TrimEnd(':')) == "HDD");
 
-                foreach (var (index, model) in disks)
+                System.Windows.Application.Current?.Dispatcher.Invoke(() =>
                 {
-                    failureFlags.TryGetValue(index, out var flag);
-                    var verdict = new DriveHealthVerdict { Index = index, Model = model };
-                    ApplyBaseVerdictFacts(verdict, flag, poolsForVerdict);
-                    DriveHealthVerdicts.Add(verdict);
-                    if (flag is not null) _lastPredictFailure[index] = IsDriveFailing(flag);
-                }
-                _failureWatchSeeded = true;
-            });
+                    foreach (var p in pools) StoragePools.Add(p);
+                    // #86, widened by #353/#354: a row per fixed volume, not just HDDs - see
+                    // FragmentationRow's remarks.
+                    foreach (var letter in fixedDriveLetters)
+                        FragmentationRows.Add(new FragmentationRow { DriveLetter = letter, IsHdd = hddByLetter[letter] });
+                    foreach (var (index, model) in disks) SmartDiskOptions.Add(new SmartDiskOption { Index = index, Model = model });
+                    foreach (var d in fixedDrives) ThroughputDriveOptions.Add(d.Name.TrimEnd('\\'));
+                    SelectedThroughputDrive = ThroughputDriveOptions.FirstOrDefault();
+
+                    // #340/#341: same fixed-drive set as the throughput picker above, but bare (no
+                    // trailing colon) - unlike ThroughputDriveOptions above, this matches
+                    // VolumeFilesystemRow.DriveLetter's bare-letter convention (from MSFT_Volume's
+                    // single-char DriveLetter property), since ChkdskService's process args append
+                    // their own colon.
+                    foreach (var d in fixedDrives) ChkdskVolumeOptions.Add(d.Name.TrimEnd('\\', ':'));
+                    SelectedChkdskVolume = ChkdskVolumeOptions.FirstOrDefault();
+
+                    // #347/#349: same bare-letter fixed-drive set - reused rather than duplicated.
+                    SelectedUsnHotSpotDrive = ChkdskVolumeOptions.FirstOrDefault();
+                    SelectedNtfsActivityDrive = ChkdskVolumeOptions.FirstOrDefault();
+
+                    foreach (var (index, model) in disks)
+                    {
+                        failureFlags.TryGetValue(index, out var flag);
+                        var verdict = new DriveHealthVerdict { Index = index, Model = model };
+                        ApplyBaseVerdictFacts(verdict, flag, poolsForVerdict);
+                        DriveHealthVerdicts.Add(verdict);
+                        if (flag is not null)
+                        {
+                            bool failing = IsDriveFailing(flag);
+                            _lastPredictFailure[index] = failing;
+                            // Already failing at launch: no toast (that's for a change seen while the
+                            // app is open), but a standing alert so it still reaches the Summary tab.
+                            if (failing) AddSeededFailureAlert(index, model, flag);
+                        }
+                    }
+                    _failureWatchSeeded = true;
+                    DriveInventoryError = null;
+                    IsDriveInventoryLoaded = true;
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+                    DriveInventoryError = $"Couldn't read the disk inventory: {ex.Message}");
+            }
         });
 
         // Round 15, #345: the per-volume filesystem facts card - its own async pass (not folded
@@ -1784,7 +1827,31 @@ public sealed class StorageViewModel : ObservableObject
     // The one "is this disk failing" predicate - shared by the startup seed and the live watch so
     // the seed never records "fine" for a disk the watch then sees as failing.
     private static bool IsDriveFailing(DiskFailureFlag flag) =>
-        flag.PredictFailure == true || string.Equals(flag.DriverHealthStatus, "Unhealthy", StringComparison.OrdinalIgnoreCase);
+        flag.PredictFailure == true || IsDriverUnhealthy(flag);
+
+    private static bool IsDriverUnhealthy(DiskFailureFlag? flag) =>
+        string.Equals(flag?.DriverHealthStatus, "Unhealthy", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Worded by what actually tripped the watch - a SMART prediction, or Windows'
+    /// MSFT_PhysicalDisk health status (the only signal on most NVMe disks).</summary>
+    private static string DriveFailureMessage(string model, DiskFailureFlag flag, bool isNew)
+    {
+        string state = flag.PredictFailure == true
+            ? (isNew ? "now shows a SMART failure prediction" : "reports a SMART failure prediction")
+            : (isNew ? "is now reported Unhealthy by Windows (disk health status)" : "is reported Unhealthy by Windows (disk health status)");
+        return $"{model} {state} - back up its data soon.";
+    }
+
+    /// <summary>A disk already failing on the first read: standing alert only, no toast (the toast
+    /// is for a change seen while the app is open). Both first reads - the startup seed and an
+    /// early watch result - can land, so an existing alert for the disk is kept.</summary>
+    private void AddSeededFailureAlert(int index, string model, DiskFailureFlag flag)
+    {
+        if (_driveFailureAlertByIndex.ContainsKey(index)) return;
+        var alert = new HealthIssue { Message = DriveFailureMessage(model, flag, isNew: false), IsCritical = true };
+        _driveFailureAlertByIndex[index] = alert;
+        DriveFailureAlerts.Add(alert);
+    }
 
     /// <summary>#324: on a false->true transition, fires a tray toast and adds a persistent
     /// Summary-tab HealthIssue; on a true->false transition (recovered, or the drive was replaced),
@@ -1805,10 +1872,14 @@ public sealed class StorageViewModel : ObservableObject
 
             string model = SmartDiskOptions.FirstOrDefault(d => d.Index == flag.Index)?.Model ?? $"Disk {flag.Index}";
 
-            if (nowFailing && !wasFailing && !seeding)
+            if (nowFailing && seeding)
             {
-                string message = $"{model} now shows a SMART failure prediction - back up its data soon.";
-                ToastService.Show("Drive failure predicted", message, isCritical: true);
+                AddSeededFailureAlert(flag.Index, model, flag);
+            }
+            else if (nowFailing && !wasFailing)
+            {
+                string message = DriveFailureMessage(model, flag, isNew: true);
+                ToastService.Show(flag.PredictFailure == true ? "Drive failure predicted" : "Drive reported unhealthy", message, isCritical: true);
                 if (_driveFailureAlertByIndex.Remove(flag.Index, out var stale)) DriveFailureAlerts.Remove(stale);
                 var alert = new HealthIssue { Message = message, IsCritical = true };
                 _driveFailureAlertByIndex[flag.Index] = alert;
@@ -2680,7 +2751,7 @@ public sealed class StorageViewModel : ObservableObject
         NvmeSelfTestTriggerStatusText = message;
     }
 
-    /// <summary>#323: invokes MSFT_StorageReliabilityCounter.ResetStatistics() then immediately
+    /// <summary>#323: invokes MSFT_StorageReliabilityCounter.Reset() (after a Yes/No confirm) then immediately
     /// re-reads the three latency tiles so they reflect the reset rather than showing stale
     /// pre-reset maxima until the next full "Read SMART details" click.</summary>
     private async Task ResetReliabilityCountersAsync()
@@ -2688,10 +2759,24 @@ public sealed class StorageViewModel : ObservableObject
         var disk = SelectedSmartDisk;
         if (disk is null) return;
 
+        // Irreversible, and it clears the error totals/latency maxima that are this disk's
+        // failure evidence - so it's confirmed first, naming the disk.
+        var confirm = System.Windows.MessageBox.Show(
+            $"Reset the Windows reliability counters for Disk {disk.Index} ({disk.Model})?\n\n" +
+            "This clears the disk's read/write error totals and latency maxima kept by Windows. " +
+            "They can't be restored afterwards - read and copy the SMART details first if you want to keep them.",
+            "Reset reliability counters",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning,
+            System.Windows.MessageBoxResult.No);
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
         ReliabilityResetStatusText = "Resetting...";
         try
         {
-            string message = await Task.Run(() => SystemSpecsService.ResetReliabilityCounters(disk.Index));
+            var (success, message) = await Task.Run(() => SystemSpecsService.ResetReliabilityCounters(disk.Index));
+            JournalOneShotRun($"Disk {disk.Index} ({disk.Model})", "Reset the disk's Windows reliability counters",
+                $"MSFT_StorageReliabilityCounter.Reset() on disk {disk.Index}", success);
             ReliabilityResetStatusText = message;
             var (readLatency, writeLatency, flushLatency) = await Task.Run(() => SystemSpecsService.ReadReliabilityLatencies(disk.Index));
             ApplyReliabilityLatencies(readLatency, writeLatency, flushLatency);
@@ -2783,6 +2868,7 @@ public sealed class StorageViewModel : ObservableObject
     private sealed class VerdictFacts
     {
         public bool? PredictFailure;
+        public bool DriverUnhealthy;
         public int CriticalAttributeCount;
         public int PendingSectors;
         public int NvmeCriticalWarningCount;
@@ -2804,6 +2890,7 @@ public sealed class StorageViewModel : ObservableObject
     {
         var facts = FactsFor(verdict.Index);
         facts.PredictFailure = flag?.PredictFailure;
+        facts.DriverUnhealthy = IsDriverUnhealthy(flag);
         RecomputeVerdict(verdict, facts, pools);
     }
 
@@ -2811,12 +2898,14 @@ public sealed class StorageViewModel : ObservableObject
     {
         var facts = FactsFor(verdict.Index);
         facts.PredictFailure = flag.PredictFailure;
+        facts.DriverUnhealthy = IsDriverUnhealthy(flag);
         RecomputeVerdict(verdict, facts, StoragePools.ToList());
     }
 
     /// <summary>Deliberately three-state and reason-listing rather than a made-up numeric score -
-    /// see DriveHealthVerdict's remarks. "Replace" fires only on the two unambiguous signals
-    /// (predicted failure, confirmed NVMe media errors); everything else is "Watch".</summary>
+    /// see DriveHealthVerdict's remarks. "Replace" fires only on the unambiguous signals
+    /// (predicted failure, Windows' own "Unhealthy" health status, confirmed NVMe media errors);
+    /// everything else is "Watch".</summary>
     private static void RecomputeVerdict(DriveHealthVerdict verdict, VerdictFacts facts, List<StorageSpaceInfo> pools)
     {
         verdict.Reasons.Clear();
@@ -2826,6 +2915,11 @@ public sealed class StorageViewModel : ObservableObject
         if (facts.PredictFailure == true)
         {
             verdict.Reasons.Add("SMART failure prediction flag is set");
+            replace = true;
+        }
+        if (facts.DriverUnhealthy)
+        {
+            verdict.Reasons.Add("Windows reports this disk's health status as Unhealthy");
             replace = true;
         }
         if (facts.NvmeMediaErrors)
@@ -3322,12 +3416,15 @@ public sealed class StorageViewModel : ObservableObject
     {
         if (IsLoadingVolumeFilesystemFacts) return;
         IsLoadingVolumeFilesystemFacts = true;
+        VolumeFilesystemFactsLoadedOk = false;
         try
         {
-            var facts = await Task.Run(() => NtfsFilesystemService.ListVolumes());
+            var listErrors = new List<string>();
+            var facts = await Task.Run(() => NtfsFilesystemService.ListVolumes(listErrors));
             VolumeFilesystemRows.Clear();
             var rows = facts.Select(f => new VolumeFilesystemRow(f)).ToList();
             foreach (var row in rows) VolumeFilesystemRows.Add(row);
+            VolumeFilesystemFactsLoadedOk = listErrors.Count == 0;
 
             var tasks = rows.Select(LoadRowNtfsDetailsAsync).ToArray();
             await Task.WhenAll(tasks);
@@ -3336,6 +3433,7 @@ public sealed class StorageViewModel : ObservableObject
         {
             // Card-level failure (e.g. the MSFT_Volume query itself threw) - individual row
             // failures are already caught and shown per-row in LoadRowNtfsDetailsAsync below.
+            // VolumeFilesystemFactsLoadedOk stays false if the list itself wasn't read.
         }
         finally
         {
@@ -3408,6 +3506,8 @@ public sealed class StorageViewModel : ObservableObject
         try
         {
             var (success, message) = await NtfsFilesystemService.SetRepairStateAsync(row.DriveLetter, enableNext);
+            JournalOneShotRun($"{row.DriveLetter}:", enableNext ? "Enabled NTFS self-healing" : "Disabled NTFS self-healing",
+                $"fsutil repair set {row.DriveLetter}: {(enableNext ? 1 : 0)}", success);
             row.SelfHealingActionStatusText = message;
             if (success)
             {
@@ -3739,6 +3839,9 @@ public sealed class StorageViewModel : ObservableObject
         try
         {
             var (success, message) = await UsnJournalService.CreateOrResizeJournalAsync(row.DriveLetter, maxSizeBytes, allocationDeltaBytes);
+            JournalOneShotRun($"{row.DriveLetter}:", "Created/resized the USN journal",
+                $"fsutil usn createjournal {row.DriveLetter}:" +
+                (maxSizeBytes is { } m ? $" m={m}" : string.Empty) + (allocationDeltaBytes is { } a ? $" a={a}" : string.Empty), success);
             row.UsnJournalActionStatusText = message;
             if (success) row.UsnJournalStatus = await UsnJournalService.QueryStatusAsync(row.DriveLetter);
         }
@@ -3769,6 +3872,7 @@ public sealed class StorageViewModel : ObservableObject
         try
         {
             var (success, message) = await UsnJournalService.DeleteJournalAsync(row.DriveLetter);
+            JournalOneShotRun($"{row.DriveLetter}:", "Deleted the USN journal", $"fsutil usn deletejournal /D {row.DriveLetter}:", success);
             row.UsnJournalActionStatusText = message;
             if (success) row.UsnJournalStatus = await UsnJournalService.QueryStatusAsync(row.DriveLetter);
         }
@@ -3935,6 +4039,7 @@ public sealed class StorageViewModel : ObservableObject
         try
         {
             var (success, message) = await NtfsFilesystemService.SetBehaviorAsync(row.Setting.Key, value);
+            JournalOneShotRun("NTFS (system-wide)", $"{action}d NTFS setting '{row.Setting.Label}'", $"fsutil behavior set {row.Setting.Key} {value}", success);
             row.ActionStatusText = message;
             if (success) await RefreshNtfsBehaviorSettingsAsync();
         }
@@ -4332,7 +4437,8 @@ public sealed class StorageViewModel : ObservableObject
         HibernationActionStatusText = "Working...";
         try
         {
-            var (_, message) = await ReclaimableSpaceService.DisableHibernationAsync();
+            var (success, message) = await ReclaimableSpaceService.DisableHibernationAsync();
+            JournalOneShotRun("Hibernation", "Disabled hibernation (and Fast Startup)", "powercfg /hibernate off", success);
             HibernationActionStatusText = message;
             HibernationInfo = await ReclaimableSpaceService.ReadHibernationInfoAsync();
         }
@@ -4352,7 +4458,8 @@ public sealed class StorageViewModel : ObservableObject
         HibernationActionStatusText = "Working...";
         try
         {
-            var (_, message) = await ReclaimableSpaceService.EnableHibernationAsync();
+            var (success, message) = await ReclaimableSpaceService.EnableHibernationAsync();
+            JournalOneShotRun("Hibernation", "Enabled hibernation", "powercfg /hibernate on", success);
             HibernationActionStatusText = message;
             HibernationInfo = await ReclaimableSpaceService.ReadHibernationInfoAsync();
         }
@@ -4378,7 +4485,8 @@ public sealed class StorageViewModel : ObservableObject
         HibernationActionStatusText = "Working (this also turns hibernation on if it was off)...";
         try
         {
-            var (_, message) = await ReclaimableSpaceService.SetHibernateFileSizeAsync(percent);
+            var (success, message) = await ReclaimableSpaceService.SetHibernateFileSizeAsync(percent);
+            JournalOneShotRun("Hibernation", $"Set the hibernation file size to {percent}% of RAM", $"powercfg /hibernate /size {percent}", success);
             HibernationActionStatusText = message;
             HibernationInfo = await ReclaimableSpaceService.ReadHibernationInfoAsync();
         }
@@ -4672,11 +4780,12 @@ public sealed class StorageViewModel : ObservableObject
             var storageErrors = new List<string>();
             var providerErrors = new List<string>();
             var restorePointErrors = new List<string>();
+            var eventErrors = new List<string>();
             var writers = await VssService.ReadWritersAsync(writerErrors);
             var shadows = await VssService.ReadShadowCopiesAsync(shadowErrors);
             var shadowStorage = await VssService.ReadShadowStorageAsync(storageErrors);
             var providers = await VssService.ReadProvidersAsync(providerErrors);
-            var events = await Task.Run(VssService.ReadRelatedEvents);
+            var events = await Task.Run(() => VssService.ReadRelatedEvents(eventErrors));
             var restorePoints = await Task.Run(() => VssService.ReadRestorePoints(restorePointErrors));
             var systemProtection = await Task.Run(() => VssService.ReadSystemProtectionStatus(shadowStorage, storageErrors.Count == 0));
 
@@ -4701,7 +4810,7 @@ public sealed class StorageViewModel : ObservableObject
             SystemProtectionStatuses.Clear();
             foreach (var s in systemProtection) SystemProtectionStatuses.Add(s);
 
-            VssEventsKnown = true;
+            VssEventsKnown = eventErrors.Count == 0;
             VssWritersKnown = writerErrors.Count == 0;
             VssShadowCopiesKnown = shadowErrors.Count == 0;
             VssShadowStorageKnown = storageErrors.Count == 0;
@@ -4709,7 +4818,7 @@ public sealed class StorageViewModel : ObservableObject
             RestorePointsKnown = restorePointErrors.Count == 0;
 
             int unhealthyWriters = writers.Count(w => !w.IsHealthy);
-            var readErrors = writerErrors.Concat(shadowErrors).Concat(storageErrors).Concat(providerErrors).Concat(restorePointErrors).ToList();
+            var readErrors = writerErrors.Concat(shadowErrors).Concat(storageErrors).Concat(providerErrors).Concat(restorePointErrors).Concat(eventErrors).ToList();
             VssStatusText = $"{writers.Count} writer(s) ({unhealthyWriters} not healthy) · {shadows.Count} shadow copy(ies) · " +
                 $"{providers.Count} provider(s) · {restorePoints.Count} restore point(s)." +
                 (readErrors.Count > 0 ? $" Couldn't read (shown as unknown, not none): {string.Join("; ", readErrors)}" : string.Empty);
@@ -4767,14 +4876,36 @@ public sealed class StorageViewModel : ObservableObject
         try
         {
             var (success, message) = await VssService.ResizeShadowStorageAsync(forVolume, onVolume, maxSizeArg);
+            JournalOneShotRun(forVolume, "Resized shadow copy storage (a shrink can delete older shadow copies)",
+                $"vssadmin resize shadowstorage /for={forVolume} /on={onVolume} /maxsize={maxSizeArg}", success);
             row.ResizeStatusText = message;
             if (success)
             {
-                var refreshErrors = new List<string>();
-                var refreshed = await VssService.ReadShadowStorageAsync(refreshErrors);
+                // A shrink below current usage makes Windows delete older shadow copies, so the
+                // copy list and the per-drive protection state (derived from shadow storage) are
+                // re-read too, not just the storage rows.
+                var storageErrors = new List<string>();
+                var shadowErrors = new List<string>();
+                var refreshed = await VssService.ReadShadowStorageAsync(storageErrors);
+                var shadows = await VssService.ReadShadowCopiesAsync(shadowErrors);
+                var systemProtection = await Task.Run(() => VssService.ReadSystemProtectionStatus(refreshed, storageErrors.Count == 0));
+
                 VssShadowStorage.Clear();
                 foreach (var s in refreshed) VssShadowStorage.Add(s);
-                VssShadowStorageKnown = refreshErrors.Count == 0;
+                VssShadowStorageKnown = storageErrors.Count == 0;
+
+                VssShadowCopies.Clear();
+                foreach (var s in shadows) VssShadowCopies.Add(s);
+                VssShadowCopiesKnown = shadowErrors.Count == 0;
+
+                SystemProtectionStatuses.Clear();
+                foreach (var s in systemProtection) SystemProtectionStatuses.Add(s);
+
+                // The rows were replaced - carry the result onto the new row for this volume.
+                var newRow = VssShadowStorage.FirstOrDefault(s =>
+                    string.Equals(s.Volume, row.Volume, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(s.StorageVolume, row.StorageVolume, StringComparison.OrdinalIgnoreCase));
+                if (newRow is not null) newRow.ResizeStatusText = message;
             }
         }
         catch (Exception ex)
@@ -4798,6 +4929,7 @@ public sealed class StorageViewModel : ObservableObject
         try
         {
             int before = RestorePoints.Count;
+            bool beforeKnown = RestorePointsKnown;
             var (success, message) = await VssService.CreateRestorePointAsync(NewRestorePointDescription);
 
             var refreshErrors = new List<string>();
@@ -4806,10 +4938,15 @@ public sealed class StorageViewModel : ObservableObject
             foreach (var r in refreshed) RestorePoints.Add(r);
             RestorePointsKnown = refreshErrors.Count == 0;
 
-            CreateRestorePointStatusText = success && refreshed.Count <= before
-                ? message + " No new restore point appeared in the list - Windows only allows one restore point per 24 hours by default " +
-                    "(the SystemRestorePointCreationFrequency policy), so this is the most likely reason if one was already created recently."
-                : message;
+            // The throttle explanation only follows from a count comparison when both lists were
+            // actually read; a failed re-read is reported as that, not blamed on throttling.
+            if (success && refreshErrors.Count > 0)
+                CreateRestorePointStatusText = $"{message} The restore-point list couldn't be re-read: {string.Join("; ", refreshErrors)}";
+            else if (success && beforeKnown && refreshed.Count <= before)
+                CreateRestorePointStatusText = message + " No new restore point appeared in the list - Windows only allows one restore point per 24 hours by default " +
+                    "(the SystemRestorePointCreationFrequency policy), so this is the most likely reason if one was already created recently.";
+            else
+                CreateRestorePointStatusText = message;
         }
         catch (Exception ex)
         {

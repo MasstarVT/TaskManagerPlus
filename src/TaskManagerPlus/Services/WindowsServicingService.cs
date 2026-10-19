@@ -196,12 +196,16 @@ public static class WindowsServicingService
                 : $"Found SetupDiag.exe but won't run it elevated: {rejection}. Put Microsoft's SetupDiag.exe in an admin-only folder such as {Path.GetDirectoryName(SetupDiagCandidates()[0])} and try again.");
         }
 
+        // The elevated SetupDiag writes its results file, which is then read back - so it goes in a
+        // fresh admin-only folder, never a predictable path under the user's %TEMP% that a junction
+        // could redirect. No such folder, no run.
+        var outputDir = AdminDataPaths.CreatePrivateTempDirectory("SetupDiag", out string? dirError);
+        if (outputDir is null)
+            return (false, null, $"Won't run SetupDiag: {dirError}");
+
         try
         {
-            string outputDir = Path.Combine(Path.GetTempPath(), "TaskManagerPlus-SetupDiag");
-            Directory.CreateDirectory(outputDir);
-            string resultsPath = Path.Combine(outputDir, "SetupDiagResults.log");
-            try { File.Delete(resultsPath); } catch { /* best-effort */ }
+            string resultsPath = Path.Combine(outputDir.FullName, "SetupDiagResults.log");
 
             var (output, exitCode) = await RunCapturedAsync(exePath, $"/Output:\"{resultsPath}\" /Format:Text", 120000);
 
@@ -221,6 +225,10 @@ public static class WindowsServicingService
         catch (Exception ex)
         {
             return (false, null, ex.Message);
+        }
+        finally
+        {
+            AdminDataPaths.TryDelete(outputDir);
         }
     }
 

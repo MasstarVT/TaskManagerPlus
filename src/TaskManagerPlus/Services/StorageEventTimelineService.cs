@@ -1,6 +1,7 @@
 using System.Diagnostics.Eventing.Reader;
 using System.Management;
 using System.Text.RegularExpressions;
+using Microsoft.Win32;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -56,8 +57,9 @@ public static class StorageEventTimelineService
         ReadByProviderEventIds(events, "stornvme", new[] { 129 }, diskModels);
         ReadByProviderEventIds(events, "iaStorAC", new[] { 129 }, diskModels);
 
-        // Kernel-PnP surprise-removal / driver-load-failure signals (#374).
-        ReadByProviderEventIds(events, "Microsoft-Windows-Kernel-PnP", new[] { 219, 225 }, diskModels);
+        // Kernel-PnP surprise-removal / driver-load-failure signals (#374) - these fire for every
+        // device on the system, so only storage devices' records are kept.
+        ReadKernelPnpStorageEvents(events, diskModels);
 
         // volmgr/partmgr - no fixed set of "the" interesting IDs the way the others above have, so
         // filtered to Warning/Error level only (Level 2/3) to avoid flooding the timeline with the
@@ -155,6 +157,112 @@ public static class StorageEventTimelineService
         }
     }
 
+    private const string KernelPnpProvider = "Microsoft-Windows-Kernel-PnP";
+    private const int MaxKernelPnpScanned = 1000;
+
+    // Device instance IDs from these enumerators are storage devices outright; anything else
+    // (PCI\ for an NVMe/AHCI controller, ...) is checked by its device class.
+    private static readonly string[] StorageEnumeratorPrefixes = { @"SCSI\", @"IDE\", @"NVME\", @"STORAGE\", @"USBSTOR\", @"SD\", @"SBP2\", @"RAID\" };
+
+    private static readonly HashSet<string> StorageClassGuids = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "{4d36e967-e325-11ce-bfc1-08002be10318}", // DiskDrive
+        "{4d36e97b-e325-11ce-bfc1-08002be10318}", // SCSIAdapter (storport miniports: stornvme, storahci, RAID)
+        "{4d36e96a-e325-11ce-bfc1-08002be10318}", // HDC (IDE/ATA/AHCI controllers)
+        "{71a27cdd-812a-11d0-bec7-08002be2092f}", // Volume
+    };
+
+    /// <summary>Kernel-PnP 219 (driver failed to load) and 225 (removal vetoed) are logged for
+    /// every kind of device - on a typical PC almost all of them are WUDFRd/display/software
+    /// devices. The device instance ID is a named field (219: "DriverName", which despite the name
+    /// holds the instance ID; 225: "DeviceInstance"), so a record is kept only when that device is
+    /// a storage one. Only kept records count toward MaxPerQuery, so non-storage noise can't
+    /// crowd out real rows; MaxKernelPnpScanned bounds the walk.</summary>
+    private static void ReadKernelPnpStorageEvents(List<StorageTimelineEvent> into, Dictionary<int, string> diskModels)
+    {
+        var selector = new EventLogPropertySelector(new[]
+        {
+            "Event/EventData/Data[@Name='DriverName']",
+            "Event/EventData/Data[@Name='DeviceInstance']",
+        });
+        var classCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (int id in new[] { 219, 225 })
+        {
+            try
+            {
+                long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+                var query = new EventLogQuery("System", PathType.LogName,
+                    $"*[System[Provider[@Name='{KernelPnpProvider}'] and EventID={id} and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+                { ReverseDirection = true };
+
+                using var reader = new EventLogReader(query);
+                int kept = 0, scanned = 0;
+                while (kept < MaxPerQuery && scanned < MaxKernelPnpScanned && reader.ReadEvent() is { } record)
+                {
+                    using (record)
+                    {
+                        scanned++;
+                        string? instance = null;
+                        try
+                        {
+                            if (record is EventLogRecord logRecord)
+                            {
+                                var values = logRecord.GetPropertyValues(selector);
+                                instance = (id == 219 ? values[0] : values[1]) as string;
+                            }
+                        }
+                        catch { /* field missing on this build - treated as unknown below */ }
+                        instance = string.IsNullOrWhiteSpace(instance) ? null : instance.Trim();
+
+                        // An unreadable instance is kept (with its message) rather than dropped unseen.
+                        if (instance is not null && !IsStorageDevice(instance, classCache)) continue;
+                        kept++;
+
+                        string message;
+                        try { message = record.FormatDescription() ?? string.Empty; }
+                        catch { message = string.Empty; }
+
+                        string device = ExtractDeviceHint(message, diskModels);
+                        into.Add(new StorageTimelineEvent
+                        {
+                            TimeCreated = record.TimeCreated ?? DateTime.MinValue,
+                            Provider = KernelPnpProvider,
+                            EventId = id,
+                            DeviceText = device == "Unknown device" && instance is not null ? instance : device,
+                            Category = CategoryFor(KernelPnpProvider, id),
+                            Message = Truncate(message, 280),
+                        });
+                    }
+                }
+            }
+            catch
+            {
+                // Log/provider unavailable - contribute nothing for this ID, same as the other reads.
+            }
+        }
+    }
+
+    private static bool IsStorageDevice(string instanceId, Dictionary<string, bool> cache)
+    {
+        if (cache.TryGetValue(instanceId, out bool known)) return known;
+        bool isStorage = StorageEnumeratorPrefixes.Any(p => instanceId.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+        if (!isStorage)
+        {
+            try
+            {
+                using var key = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Enum\{instanceId}");
+                isStorage = key?.GetValue("ClassGUID") is string classGuid && StorageClassGuids.Contains(classGuid.Trim());
+            }
+            catch
+            {
+                // Unreadable key (removed device, denied) - not provably storage.
+            }
+        }
+        cache[instanceId] = isStorage;
+        return isStorage;
+    }
+
     private static void ReadByProviderLevel(List<StorageTimelineEvent> into, string providerName, Dictionary<int, string> diskModels)
     {
         try
@@ -200,8 +308,8 @@ public static class StorageEventTimelineService
         (DiskProvider, 51) => "Paging error",
         (DiskProvider, 157) => "Surprise removal",
         ("storahci", 129) or ("stornvme", 129) or ("iaStorAC", 129) => "Controller reset",
-        ("Microsoft-Windows-Kernel-PnP", 219) => "Driver load failure",
-        ("Microsoft-Windows-Kernel-PnP", 225) => "Device migration/removal",
+        (KernelPnpProvider, 219) => "Driver load failure",
+        (KernelPnpProvider, 225) => "Device migration/removal",
         _ => "Event",
     };
 

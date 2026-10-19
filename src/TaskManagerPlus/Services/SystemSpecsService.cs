@@ -930,7 +930,7 @@ public sealed class SystemSpecsService
     /// driver's own counter-reset method (Storage Management API; the class has no
     /// "ResetStatistics" method), not a registry/file hack. Returns a short status message either way rather than throwing, matching every other
     /// on-demand action's try/catch-to-status-text convention.</summary>
-    public static string ResetReliabilityCounters(int diskIndex)
+    public static (bool Success, string Message) ResetReliabilityCounters(int diskIndex)
     {
         try
         {
@@ -942,14 +942,14 @@ public sealed class SystemSpecsService
                 using var result = mo.InvokeMethod("Reset", null, null);
                 int returnValue = result?["ReturnValue"] is null ? 0 : Convert.ToInt32(result["ReturnValue"]);
                 return returnValue == 0
-                    ? "Reliability counters reset."
-                    : $"Reset returned code {returnValue}.";
+                    ? (true, "Reliability counters reset.")
+                    : (false, $"Reset returned code {returnValue}.");
             }
-            return "No MSFT_StorageReliabilityCounter instance found for this disk.";
+            return (false, "No MSFT_StorageReliabilityCounter instance found for this disk.");
         }
         catch (Exception ex)
         {
-            return $"Failed: {ex.Message}";
+            return (false, $"Failed: {ex.Message}");
         }
     }
 
@@ -1229,7 +1229,7 @@ public sealed class SystemSpecsService
                 // TRIM is only a meaningful question for an SSD volume - same "hidden for the
                 // media type it doesn't apply to" pattern HDD fragmentation already uses in
                 // reverse.
-                bool? trimEnabled = mediaType == "SSD" ? await VolumeDiagnosticsService.ReadTrimStatusAsync(driveLetter) : null;
+                bool? trimEnabled = mediaType == "SSD" ? await VolumeDiagnosticsService.ReadTrimStatusAsync(drive.DriveFormat) : null;
 
                 volumes.Add(new VolumeInfo
                 {

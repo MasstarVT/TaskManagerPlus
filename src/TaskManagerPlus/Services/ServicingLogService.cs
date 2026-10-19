@@ -156,19 +156,29 @@ public static class ServicingLogService
             return summary;
         }
 
-        string? tempExpanded = null;
+        // The elevated expand.exe writes the decompressed copies, which are then read back - so
+        // into a fresh admin-only folder, never %TEMP%. Without one the archives aren't checked,
+        // and the result says so rather than reporting "no [SR] activity" for them.
+        var expandDir = AdminDataPaths.CreatePrivateTempDirectory("CbsPersist", out string? dirError);
+        if (expandDir is null)
+        {
+            summary.Found = false;
+            summary.ErrorMessage = $"No [SR] (System File Checker) activity found in CBS.log, and the CbsPersist_*.log archives couldn't be checked: {dirError}";
+            return summary;
+        }
+
         try
         {
-            int checkedCount = 0;
+            int checkedCount = 0, expandedCount = 0;
             foreach (var archive in archives.Take(10))
             {
                 ct.ThrowIfCancellationRequested();
                 checkedCount++;
                 progress?.Invoke($"No [SR] activity in the live log - checking archive {checkedCount}/{Math.Min(archives.Count, 10)}: {Path.GetFileName(archive)}...");
 
-                string? expandedPath = await ExpandCbsPersistArchiveAsync(archive, ct);
+                string? expandedPath = await ExpandCbsPersistArchiveAsync(archive, expandDir.FullName, ct);
                 if (expandedPath is null) continue;
-                tempExpanded = expandedPath;
+                expandedCount++;
 
                 var stats = await Task.Run(() => ScanForSfcStats(expandedPath, ct), ct);
                 if (stats.HasSrActivity)
@@ -178,16 +188,17 @@ public static class ServicingLogService
                 }
 
                 try { File.Delete(expandedPath); } catch { /* best-effort cleanup */ }
-                tempExpanded = null;
             }
 
             summary.Found = false;
-            summary.ErrorMessage = $"No [SR] activity found in CBS.log or in the {Math.Min(archives.Count, 10)} most recent CbsPersist_*.log archive(s) checked.";
+            summary.ErrorMessage = expandedCount == checkedCount
+                ? $"No [SR] activity found in CBS.log or in the {checkedCount} most recent CbsPersist_*.log archive(s) checked."
+                : $"No [SR] activity found in CBS.log or in {expandedCount} of the {checkedCount} most recent CbsPersist_*.log archive(s); the other {checkedCount - expandedCount} couldn't be expanded.";
             return summary;
         }
         finally
         {
-            if (tempExpanded is not null) { try { File.Delete(tempExpanded); } catch { } }
+            AdminDataPaths.TryDelete(expandDir);
         }
     }
 
@@ -291,13 +302,11 @@ public static class ServicingLogService
     /// CAB decoder, per #176's own instructions. Returns null (never throws) on any failure -
     /// missing expand.exe, a corrupt archive, access denied - so the caller's archive-scanning loop
     /// just moves on to the next one.</summary>
-    private static async Task<string?> ExpandCbsPersistArchiveAsync(string archivePath, CancellationToken ct)
+    private static async Task<string?> ExpandCbsPersistArchiveAsync(string archivePath, string destDir, CancellationToken ct)
     {
         try
         {
-            string tempDir = Path.Combine(Path.GetTempPath(), "TaskManagerPlus-CbsPersist");
-            Directory.CreateDirectory(tempDir);
-            string destPath = Path.Combine(tempDir, $"{Path.GetFileNameWithoutExtension(archivePath)}-{Guid.NewGuid():N}.log");
+            string destPath = Path.Combine(destDir, $"{Path.GetFileNameWithoutExtension(archivePath)}-{Guid.NewGuid():N}.log");
 
             await RunCapturedAsync("expand.exe", $"\"{archivePath}\" \"{destPath}\"", 30000, ct);
             // expand.exe's own exit code carries the same "don't fully trust it" caveat every other
@@ -494,12 +503,22 @@ public static class ServicingLogService
     {
         var sw = Stopwatch.StartNew();
         var result = new WindowsUpdateLogResult();
-        string outPath = AppPaths.GetPath("WindowsUpdate.log");
+
+        // The elevated Get-WindowsUpdateLog writes this file (and it's deleted first), so it lives
+        // in the admin-only data folder rather than the user-writable settings folder, where a
+        // junction could aim that write/delete anywhere. It stays there for "Open log" afterwards.
+        string? logsDir = AdminDataPaths.TryGetArea("Logs", out string? dirError);
+        if (logsDir is null)
+        {
+            result.Success = false;
+            result.ErrorMessage = $"Won't run Get-WindowsUpdateLog: {dirError}";
+            result.Duration = sw.Elapsed;
+            return result;
+        }
+        string outPath = Path.Combine(logsDir, "WindowsUpdate.log");
 
         try
         {
-            try { Directory.CreateDirectory(AppPaths.SettingsDirectory); } catch { /* Get-WindowsUpdateLog itself will surface any real problem */ }
-
             // A WindowsUpdate.log left by an earlier run must not pass for this run's output - remove
             // it first, and if that fails only accept a file written after this run started.
             DateTime startedUtc = DateTime.UtcNow;

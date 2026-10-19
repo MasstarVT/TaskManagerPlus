@@ -351,9 +351,14 @@ public sealed class SystemSpecsViewModel : ObservableObject
             // history below - see DisplayChangeHistory's own remarks.
             var pnpEvents = await Task.Run(() => _eventLog.ReadMonitorPnpEvents());
             Apply(specs);
-            // (null, null) covers both "no boot sessions found" and an unreadable source.
-            LongestUptimeThisMonthText = uptimeMonth is { } m ? FormatUptime(m) : "Unknown (no boot sessions could be read)";
-            LongestUptimeThisYearText = uptimeYear is { } y ? FormatUptime(y) : "Unknown (no boot sessions could be read)";
+            // A session this year but none this month means the read worked and the current
+            // session simply began last month. (null, null) still covers both "none found" and an
+            // unreadable source - ComputeLongestUptimeRecords doesn't say which.
+            LongestUptimeThisMonthText = uptimeMonth is { } m ? FormatUptime(m)
+                : uptimeYear is not null ? "No boot session started this month yet"
+                : "Unknown (no boot session found, or the System log couldn't be read)";
+            LongestUptimeThisYearText = uptimeYear is { } y ? FormatUptime(y)
+                : "Unknown (no boot session found, or the System log couldn't be read)";
             ApplyDisplayChangeHistory(pnpEvents);
             RefreshErrorText = null;
             HasLoaded = true;

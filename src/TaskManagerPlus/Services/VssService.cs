@@ -36,41 +36,19 @@ public static class VssService
     // Kill()-on-timeout, the same pattern VolumeDiagnosticsService.ReadShadowCopyUsageByVolumeAsync
     // and ReclaimableSpaceService.RunProcessAsync already use.
     // ================================================================================
-    private static async Task<string> RunVssAdminAsync(string arguments, int timeoutMs = 15000)
+    // The exit code is kept: on a non-English Windows the "Error:" prefix is translated, so it
+    // (with the parse result) is what tells a failed read apart from a real "none".
+    private static async Task<(string Output, int? ExitCode)> RunVssAdminAsync(string arguments, int timeoutMs = 15000)
     {
         try
         {
-            var psi = new ProcessStartInfo("vssadmin.exe", arguments)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return string.Empty;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-
-            using var cts = new CancellationTokenSource(timeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-                return string.Empty;
-            }
-
-            return (await outputTask) + (await errorTask);
+            return await ToolRunner.RunCapturedAsync("vssadmin.exe", arguments, timeoutMs, timeoutOutput: string.Empty);
         }
         catch
         {
             // vssadmin.exe missing/unavailable, or a launch failure - degrade to "nothing read"
             // like every other shell-out in this app.
-            return string.Empty;
+            return (string.Empty, null);
         }
     }
 
@@ -94,22 +72,30 @@ public static class VssService
 
     private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
 
-    /// <summary>A vssadmin read that parsed nothing is only a real "none" when vssadmin answered
-    /// without an "Error:" line (e.g. "No items found that satisfy the query.") - no output at all
-    /// (timeout/launch failure) or an error line (access denied, service unavailable) is recorded
-    /// in <paramref name="errors"/> so the caller can show Unknown instead of an empty list.</summary>
-    private static void NoteReadFailure(ICollection<string>? errors, string command, string output, int parsedCount)
+    private const string NoItemsLine = "No items found that satisfy the query.";
+
+    /// <summary>A vssadmin read that parsed nothing is only a real "none" when vssadmin said so
+    /// ("No items found that satisfy the query.") - no output at all (timeout/launch failure), an
+    /// error line (access denied, service unavailable), or output nothing here recognizes (a
+    /// translated Windows, an unexpected format) is recorded in <paramref name="errors"/> so the
+    /// caller can show Unknown instead of an empty list.</summary>
+    private static void NoteReadFailure(ICollection<string>? errors, string command, string output, int? exitCode, int parsedCount)
     {
         if (errors is null || parsedCount > 0) return;
-        if (output.Length == 0)
+        if (exitCode is null || output.Length == 0)
         {
-            errors.Add($"vssadmin {command}: no output (timed out or couldn't start)");
+            errors.Add(exitCode is null
+                ? $"vssadmin {command}: no output (timed out or couldn't start)"
+                : $"vssadmin {command}: no output (exit code {exitCode})");
             return;
         }
+        if (output.Contains(NoItemsLine, StringComparison.OrdinalIgnoreCase)) return;
         var errorLine = output.Split('\n')
             .Select(l => l.Trim())
             .FirstOrDefault(l => l.StartsWith("Error:", StringComparison.OrdinalIgnoreCase));
-        if (errorLine is not null) errors.Add($"vssadmin {command}: {Truncate(errorLine, 200)}");
+        errors.Add(errorLine is not null
+            ? $"vssadmin {command}: {Truncate(errorLine, 200)}"
+            : $"vssadmin {command}: output not recognized (exit code {exitCode})");
     }
 
     // ================================================================================
@@ -129,8 +115,8 @@ public static class VssService
     public static async Task<List<VssWriterInfo>> ReadWritersAsync(ICollection<string>? errors = null)
     {
         var result = new List<VssWriterInfo>();
-        string output = await RunVssAdminAsync("list writers");
-        if (output.Length == 0) { NoteReadFailure(errors, "list writers", output, 0); return result; }
+        var (output, exitCode) = await RunVssAdminAsync("list writers");
+        if (output.Length == 0) { NoteReadFailure(errors, "list writers", output, exitCode, 0); return result; }
 
         VssWriterInfo? current = null;
         foreach (var rawLine in output.Split('\n'))
@@ -168,7 +154,7 @@ public static class VssService
         }
         if (current is not null) result.Add(current);
 
-        NoteReadFailure(errors, "list writers", output, result.Count);
+        NoteReadFailure(errors, "list writers", output, exitCode, result.Count);
         return result;
     }
 
@@ -199,18 +185,22 @@ public static class VssService
     // catches the common "volume X:" phrasing DevicePathResolver's device-path regex can't.
     private static readonly Regex DriveLetterInMessageRegex = new(@"\bvolume\s+([A-Za-z]):", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    public static List<VssRelatedEventInfo> ReadRelatedEvents()
+    public static List<VssRelatedEventInfo> ReadRelatedEvents() => ReadRelatedEvents(null);
+
+    /// <summary>Same read; a source whose query failed is recorded in <paramref name="errors"/>
+    /// so the caller can tell "couldn't read" apart from "never fired".</summary>
+    public static List<VssRelatedEventInfo> ReadRelatedEvents(ICollection<string>? errors)
     {
         var deviceToLetter = DevicePathResolver.BuildDeviceToLetterMap();
         var events = new List<VssRelatedEventInfo>();
 
         foreach (var (logName, provider, eventId) in EventSources)
-            ReadOneEventSource(events, logName, provider, eventId, deviceToLetter);
+            ReadOneEventSource(events, logName, provider, eventId, deviceToLetter, errors);
 
         return events.OrderByDescending(e => e.TimeCreated).Take(MaxEventsTotal).ToList();
     }
 
-    private static void ReadOneEventSource(List<VssRelatedEventInfo> into, string logName, string providerName, int eventId, Dictionary<string, string> deviceToLetter)
+    private static void ReadOneEventSource(List<VssRelatedEventInfo> into, string logName, string providerName, int eventId, Dictionary<string, string> deviceToLetter, ICollection<string>? errors)
     {
         try
         {
@@ -241,10 +231,11 @@ public static class VssService
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Provider/log unavailable, or (the common case) this event has simply never fired -
-            // contribute nothing for this source.
+            // A provider that never logged this event returns no records rather than throwing, so
+            // a throw here is a real read failure (access denied, log service unavailable).
+            errors?.Add($"{logName} log, {providerName} {eventId}: {ex.Message}");
         }
     }
 
@@ -281,8 +272,8 @@ public static class VssService
     public static async Task<List<VssShadowCopyInfo>> ReadShadowCopiesAsync(ICollection<string>? errors = null)
     {
         var result = new List<VssShadowCopyInfo>();
-        string output = await RunVssAdminAsync("list shadows");
-        if (output.Length == 0) { NoteReadFailure(errors, "list shadows", output, 0); return result; }
+        var (output, exitCode) = await RunVssAdminAsync("list shadows");
+        if (output.Length == 0) { NoteReadFailure(errors, "list shadows", output, exitCode, 0); return result; }
 
         string? currentSetId = null;
         DateTime? currentCreationTime = null;
@@ -335,7 +326,7 @@ public static class VssService
         }
         if (current is not null) result.Add(current);
 
-        NoteReadFailure(errors, "list shadows", output, result.Count);
+        NoteReadFailure(errors, "list shadows", output, exitCode, result.Count);
         // Grouped by volume (per this item's brief), most-recent-first within each volume.
         return result
             .OrderBy(s => s.Volume, StringComparer.OrdinalIgnoreCase)
@@ -367,8 +358,8 @@ public static class VssService
     public static async Task<List<VssShadowStorageInfo>> ReadShadowStorageAsync(ICollection<string>? errors = null)
     {
         var result = new List<VssShadowStorageInfo>();
-        string output = await RunVssAdminAsync("list shadowstorage");
-        if (output.Length == 0) { NoteReadFailure(errors, "list shadowstorage", output, 0); return result; }
+        var (output, exitCode) = await RunVssAdminAsync("list shadowstorage");
+        if (output.Length == 0) { NoteReadFailure(errors, "list shadowstorage", output, exitCode, 0); return result; }
 
         VssShadowStorageInfo? current = null;
         foreach (var rawLine in output.Split('\n'))
@@ -415,7 +406,7 @@ public static class VssService
         }
         if (current is not null) result.Add(current);
 
-        NoteReadFailure(errors, "list shadowstorage", output, result.Count);
+        NoteReadFailure(errors, "list shadowstorage", output, exitCode, result.Count);
         return result;
     }
 
@@ -526,13 +517,17 @@ public static class VssService
         // only the first. `description` here is free user text (StorageView's restore-point
         // TextBox) and, via SecurityViewModel, interpolated firewall-rule/OEM target names, any of
         // which may legitimately contain a double quote:
-        //   1. '' escapes a quote inside PowerShell's single-quoted -Description string;
+        //   1. '' escapes a quote inside PowerShell's single-quoted -Description string (and the
+        //      same doubling for U+2018-U+201B, which PowerShell also treats as single quotes);
         //   2. \" escapes one inside the outer double-quoted -Command argument, which Windows'
         //      own command-line parser splits before PowerShell ever sees it.
         // Missing (2) let a description containing a double quote terminate -Command early, so the
         // restore point silently failed to be created - which matters more than a cosmetic glitch,
         // because callers create these as the rollback point *before* a destructive change.
-        string safeDescription = trimmed.Replace("'", "''").Replace("\"", "\\\"");
+        string safeDescription = trimmed.Replace("'", "''")
+            .Replace("‘", "‘‘").Replace("’", "’’")
+            .Replace("‚", "‚‚").Replace("‛", "‛‛")
+            .Replace("\"", "\\\"");
 
         var psi = new ProcessStartInfo("powershell.exe",
             $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"Checkpoint-Computer -Description '{safeDescription}' -RestorePointType MODIFY_SETTINGS\"")
@@ -687,8 +682,8 @@ public static class VssService
     public static async Task<List<VssProviderInfo>> ReadProvidersAsync(ICollection<string>? errors = null)
     {
         var result = new List<VssProviderInfo>();
-        string output = await RunVssAdminAsync("list providers");
-        if (output.Length == 0) { NoteReadFailure(errors, "list providers", output, 0); return result; }
+        var (output, exitCode) = await RunVssAdminAsync("list providers");
+        if (output.Length == 0) { NoteReadFailure(errors, "list providers", output, exitCode, 0); return result; }
 
         VssProviderInfo? current = null;
         foreach (var rawLine in output.Split('\n'))
@@ -715,7 +710,7 @@ public static class VssService
         }
         if (current is not null) result.Add(current);
 
-        NoteReadFailure(errors, "list providers", output, result.Count);
+        NoteReadFailure(errors, "list providers", output, exitCode, result.Count);
         return result;
     }
 }

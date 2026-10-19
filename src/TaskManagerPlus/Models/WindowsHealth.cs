@@ -255,7 +255,7 @@ public sealed class WimImageInfo
 
 /// <summary>#786: one `sfc /scannow` run, with the CBS.log [SR]-line subset extracted rather than
 /// just the one-line verdict - see SfcIntegrityService.RunScanAsync. ExtractedLogPath is where that
-/// subset was written under AppPaths.SettingsDirectory (null if extraction itself failed - the
+/// subset was written in the admin-only AdminDataPaths "IntegrityScans" area (null if extraction itself failed - the
 /// verdict/lists here still stand on their own since they're parsed before the write).</summary>
 public sealed class SfcScanResult
 {
@@ -624,5 +624,28 @@ public sealed class UpgradeReadinessSnapshot
     /// <summary>Worth fixing but not an upgrade blocker (e.g. Secure Boot off on a UEFI PC -
     /// Windows 11 needs Secure Boot capability, not Secure Boot turned on).</summary>
     public List<string> AdvisoryItems { get; init; } = new();
-    public bool ReadyForNextFeatureUpdate => BlockingItems.Count == 0;
+
+    /// <summary>Checks that couldn't be read at all - derived from the fields above (so a copy of
+    /// this snapshot carries them too). A blocker check that didn't run is not a pass. The ESP
+    /// free-space check is button-driven, so an unmeasured ESP isn't counted here.</summary>
+    public List<string> UnknownItems
+    {
+        get
+        {
+            var items = new List<string>();
+            if (TpmReady is null && !BlockingItems.Any(b => b.Contains("TPM", StringComparison.Ordinal)))
+                items.Add("TPM status couldn't be read.");
+            if (string.Equals(SystemDiskPartitionStyle, "Unknown", StringComparison.OrdinalIgnoreCase))
+                items.Add("The system disk's partition style (GPT/MBR) couldn't be read.");
+            if (SystemDriveFreeBytes is null)
+                items.Add("Free space on the system drive couldn't be read.");
+            return items;
+        }
+    }
+
+    public bool IsBlocked => BlockingItems.Count > 0;
+    /// <summary>No blocker found, but at least one check couldn't be read - "couldn't fully check",
+    /// not "ready".</summary>
+    public bool HasUnknownChecks => !IsBlocked && UnknownItems.Count > 0;
+    public bool ReadyForNextFeatureUpdate => !IsBlocked && UnknownItems.Count == 0;
 }

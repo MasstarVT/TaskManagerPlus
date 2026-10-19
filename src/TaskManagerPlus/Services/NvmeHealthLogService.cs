@@ -255,8 +255,16 @@ public static class NvmeHealthLogService
             0x05 => "Commands Aborted due to Power Loss Notification",
             0x06 => "Internal Error",
             0x07 => "Command Abort Requested",
-            0x0A => "Invalid Namespace or Format",
-            0x81 => "Conflicting Attributes",
+            0x08 => "Command Aborted due to SQ Deletion",
+            0x09 => "Command Aborted due to Failed Fused Command",
+            0x0A => "Command Aborted due to Missing Fused Command",
+            0x0B => "Invalid Namespace or Format",
+            0x0C => "Command Sequence Error",
+            // 0x80-0xBF are the NVM command set's generic statuses ("Conflicting Attributes" is a
+            // Command Specific status, SCT 1, not this table).
+            0x80 => "LBA Out of Range",
+            0x81 => "Capacity Exceeded",
+            0x82 => "Namespace Not Ready",
             _ => $"SC 0x{sc:X2}",
         } : $"SC 0x{sc:X2}";
 

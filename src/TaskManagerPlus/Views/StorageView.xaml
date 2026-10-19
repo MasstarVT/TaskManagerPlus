@@ -100,18 +100,41 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+                            <!-- "No disks" only once the inventory has actually been read. -->
                             <TextBlock Text="No disks detected.">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding DriveHealthVerdicts.Count}" Value="0">
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding DriveHealthVerdicts.Count}" Value="0" />
+                                                    <Condition Binding="{Binding IsDriveInventoryLoaded}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
+                            <TextBlock Text="Reading the disk inventory…">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding IsDriveInventoryLoaded}" Value="False" />
+                                                    <Condition Binding="{Binding DriveInventoryError}" Value="{x:Null}" />
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock Text="{Binding DriveInventoryError}" Foreground="{DynamicResource DangerBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap"
+                                       Visibility="{Binding DriveInventoryError, Converter={StaticResource StringToVisibilityConverter}}" />
                         </StackPanel>
                     </Border>
                     <!-- Bottleneck diagnostics: queue length (requests waiting, not just active) and
@@ -268,14 +291,19 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                    <!-- Only after the first sensor poll - before it, an empty list means "not read yet". -->
                     <TextBlock Text="No drive temperature sensors detected.">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                 <Setter Property="Visibility" Value="Collapsed" />
                                 <Style.Triggers>
-                                    <DataTrigger Binding="{Binding DriveTemperatures.Count}" Value="0">
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding DriveTemperatures.Count}" Value="0" />
+                                            <Condition Binding="{Binding HasTemperatureSample}" Value="True" />
+                                        </MultiDataTrigger.Conditions>
                                         <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
+                                    </MultiDataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </TextBlock.Style>
@@ -1280,9 +1308,30 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding VolumeFilesystemRows.Count}" Value="0">
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding VolumeFilesystemRows.Count}" Value="0" />
+                                                    <Condition Binding="{Binding IsLoadingVolumeFilesystemFacts}" Value="False" />
+                                                    <Condition Binding="{Binding VolumeFilesystemFactsLoadedOk}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock Text="Couldn't read the volume list (MSFT_Volume) - shown as unknown, not as no volumes.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding IsLoadingVolumeFilesystemFacts}" Value="False" />
+                                                    <Condition Binding="{Binding VolumeFilesystemFactsLoadedOk}" Value="False" />
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -1729,10 +1778,35 @@
                                                 <Run Text="{Binding Path, Mode=OneWay}" FontWeight="SemiBold" />
                                                 <Run Text=" · " /><Run Text="{Binding MediaType, Mode=OneWay}" />
                                             </TextBlock>
-                                            <TextBlock Style="{StaticResource SubStat}" Margin="0,2,0,0" TextWrapping="Wrap">
+                                            <!-- A system-managed file reports 0/0 for Initial/Maximum (WMI's own
+                                                 convention for "Windows picks the size") - those aren't sizes, so
+                                                 only the peak is shown for it. -->
+                                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsSystemManaged}" Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
                                                 <Run Text="Initial " /><Run Text="{Binding InitialSizeMb, StringFormat={}{0:N0} MB, Mode=OneWay}" />
                                                 <Run Text=" · Maximum " /><Run Text="{Binding MaximumSizeMb, StringFormat={}{0:N0} MB, Mode=OneWay}" />
                                                 <Run Text=" · Peak usage " /><Run Text="{Binding PeakUsageMb, StringFormat={}{0:N0} MB, Mode=OneWay}" />
+                                            </TextBlock>
+                                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsSystemManaged}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                                <Run Text="Peak usage " /><Run Text="{Binding PeakUsageMb, StringFormat={}{0:N0} MB, Mode=OneWay}" />
                                             </TextBlock>
                                             <TextBlock Text="System-managed size." Margin="0,2,0,0">
                                                 <TextBlock.Style>

@@ -106,18 +106,27 @@ public static class VolumeDiagnosticsService
     }
 
     /// <summary>TRIM (delete notify) status (#44), via `fsutil behavior query
-    /// DisableDeleteNotify &lt;drive&gt;` - the documented, known-tool way to read this (the same
+    /// DisableDeleteNotify NTFS|ReFS` - the documented, known-tool way to read this (the same
     /// "shell out to a known Windows tool rather than raw interop" tradeoff defrag.exe/schtasks.exe/
-    /// sc.exe already take elsewhere in this app). fsutil prints "DisableDeleteNotify = 0" (TRIM
-    /// enabled) or "= 1" (disabled) either as a single system-wide line or one line per volume type
-    /// (NTFS/ReFS) when a drive letter is supplied - this looks for the first "= 0" or "= 1" it
-    /// finds. Only meaningful for SSD volumes; callers should skip this for HDDs, mirroring how
-    /// HDD fragmentation is hidden for SSDs.</summary>
-    public static async Task<bool?> ReadTrimStatusAsync(string driveLetter)
+    /// sc.exe already take elsewhere in this app). The setting is per file system, not per volume:
+    /// the option takes "NTFS" or "ReFS" (a drive letter only gets the usage text back), and fsutil
+    /// prints "NTFS DisableDeleteNotify = 0" (TRIM enabled) or "= 1" (disabled). Null for any other
+    /// file system, or output that doesn't carry that line ("is not currently set", a failure).
+    /// Only meaningful for SSD volumes; callers should skip this for HDDs, mirroring how HDD
+    /// fragmentation is hidden for SSDs.</summary>
+    public static async Task<bool?> ReadTrimStatusAsync(string fileSystem)
     {
+        string? fs = fileSystem.Trim().ToUpperInvariant() switch
+        {
+            "NTFS" => "NTFS",
+            "REFS" => "ReFS",
+            _ => null,
+        };
+        if (fs is null) return null;
+
         try
         {
-            var psi = new ProcessStartInfo("fsutil.exe", $"behavior query DisableDeleteNotify {driveLetter}")
+            var psi = new ProcessStartInfo("fsutil.exe", $"behavior query DisableDeleteNotify {fs}")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -150,7 +159,7 @@ public static class VolumeDiagnosticsService
 
             string output = (await outputTask) + (await errorTask);
 
-            var match = Regex.Match(output, @"=\s*([01])");
+            var match = Regex.Match(output, @"DisableDeleteNotify\s*=\s*([01])\b", RegexOptions.IgnoreCase);
             if (!match.Success) return null;
             return match.Groups[1].Value == "0"; // 0 = delete notify (TRIM) enabled
         }

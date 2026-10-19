@@ -16,7 +16,17 @@ public partial class WindowsHealthView : UserControl
     private void ViewUpdateServicesInServices_Click(object sender, RoutedEventArgs e)
     {
         if (Window.GetWindow(this) is not MainWindow window) return;
-        if (window.DataContext is MainViewModel mainViewModel) mainViewModel.Services.FilterText = "wuauserv";
+        if (window.DataContext is MainViewModel mainViewModel)
+        {
+            // Filter to the flagged service when there's exactly one (any of the update-stack
+            // services, not always wuauserv); several can't share one text filter, so clear it.
+            var flagged = mainViewModel.WindowsHealth.UpdateServiceStackHealth.Where(s => s.IsFlagged).ToList();
+            var services = mainViewModel.Services;
+            // The jump lands in the services grid, so neither sub-view may be hiding it.
+            services.ShowDrivers = false;
+            services.ShowSvcHostGroups = false;
+            services.FilterText = flagged.Count == 1 ? flagged[0].ServiceName : string.Empty;
+        }
         window.SelectTabByName("Services");
     }
 

@@ -31,8 +31,10 @@ public static class NtfsFilesystemService
     /// "NTFS", DedupMode 4 == "Not available", both matched the FileSystem/DedupMode text below).
     /// Skips volumes with no assigned drive letter (unlettered system/recovery partitions) - this
     /// card is about the fixed, user-visible volumes fsutil/chkdsk/chkntfs act on by letter anyway.
+    /// A failed query is recorded in <paramref name="errors"/>, so the caller can tell "couldn't
+    /// read" apart from "no lettered volumes".
     /// </summary>
-    public static List<VolumeFilesystemFacts> ListVolumes()
+    public static List<VolumeFilesystemFacts> ListVolumes(ICollection<string>? errors = null)
     {
         var result = new List<VolumeFilesystemFacts>();
         try
@@ -82,7 +84,11 @@ public static class NtfsFilesystemService
                 catch { /* skip this one volume, keep the rest */ }
             }
         }
-        catch { /* namespace/class unavailable - empty list, same tier as StorageSpacesService.List */ }
+        catch (Exception ex)
+        {
+            // Namespace/class unavailable - empty list, same tier as StorageSpacesService.List.
+            errors?.Add($"MSFT_Volume query: {ex.Message}");
+        }
         return result.OrderBy(v => v.DriveLetter, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
@@ -383,14 +389,40 @@ public static class NtfsFilesystemService
     // Round 16, #350: NTFS geometry facts.
     // ================================================================================
 
-    // Confirmed field set/wording against Microsoft's own fsutil-fsinfo-ntfsinfo reference examples
-    // - "Label : value" per line, values either decimal (the Bytes Per ... sector/cluster facts) or
-    // 0x-prefixed hex (everything MFT-related). Parsed generically rather than a strict per-field
+    // "Label : value" per line. Values are 0x-prefixed hex (MFT LCNs), a plain decimal, a decimal
+    // with a display suffix ("4096  (4 KB)" for Bytes Per Cluster on current builds - see
+    // fsutil.exe.mui's "%23!d!  (%38%39)"), or a display-rounded size ("1.25 GB" for Mft Valid Data
+    // Length, "%26%27"; older builds printed hex). Parsed generically rather than a strict per-field
     // match so an older/newer build that reorders or adds lines (e.g. the Max Device/Volume Trim
     // lines some newer builds include) degrades gracefully instead of failing the whole read.
     private static readonly Regex NtfsInfoLineRegex = new(
-        @"^(?<key>[A-Za-z$][A-Za-z0-9 $]*?)\s*:\s*(?<val>0[xX][0-9A-Fa-f]+|-?\d+)\s*$",
+        @"^(?<key>[A-Za-z$][A-Za-z0-9 $]*?)\s*:\s*(?<val>0[xX][0-9A-Fa-f]+|-?\d+(?:[.,]\d+)?(?:\s*[A-Za-z]{1,5}\b)?)\s*(?:\(.*\))?\s*$",
         RegexOptions.Multiline | RegexOptions.Compiled);
+
+    // A "<number> <unit>" size as fsutil displays it (StrFormatByteSize style: at most four
+    // digits before the separator, so a comma here is a decimal comma, never grouping).
+    private static readonly Regex DisplaySizeRegex = new(@"^(\d{1,4})(?:[.,](\d+))?\s*([A-Za-z]+)$", RegexOptions.Compiled);
+
+    /// <summary>"1.25 GB" -> bytes (approximate - fsutil rounds it for display). Null for a unit
+    /// this doesn't recognize (e.g. a translated one) rather than a guessed figure.</summary>
+    private static ulong? ParseDisplaySize(string raw)
+    {
+        var m = DisplaySizeRegex.Match(raw.Trim());
+        if (!m.Success) return null;
+        double multiplier = m.Groups[3].Value.ToUpperInvariant() switch
+        {
+            "BYTES" or "BYTE" or "B" => 1,
+            "KB" => 1024d,
+            "MB" => 1024d * 1024,
+            "GB" => 1024d * 1024 * 1024,
+            "TB" => 1024d * 1024 * 1024 * 1024,
+            _ => 0,
+        };
+        if (multiplier == 0) return null;
+        string number = m.Groups[2].Success ? $"{m.Groups[1].Value}.{m.Groups[2].Value}" : m.Groups[1].Value;
+        if (!double.TryParse(number, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out double value)) return null;
+        return (ulong)Math.Round(value * multiplier);
+    }
 
     /// <summary>`fsutil fsinfo ntfsinfo &lt;vol&gt;` - NTFS-only (the command itself is NTFS-
     /// specific); callers gate this on VolumeFilesystemFacts.IsNtfs the same way they already gate
@@ -421,6 +453,10 @@ public static class NtfsFilesystemService
                 else if (ulong.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out ulong dec))
                 {
                     return dec;
+                }
+                else if (ParseDisplaySize(raw) is { } size)
+                {
+                    return size;
                 }
             }
             return null;
