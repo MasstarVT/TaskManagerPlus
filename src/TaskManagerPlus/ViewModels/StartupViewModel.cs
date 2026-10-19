@@ -873,6 +873,7 @@ public sealed class StartupViewModel : ObservableObject
         if (confirm != MessageBoxResult.Yes) return;
 
         var (success, error) = await Task.Run(FastStartupService.TriggerFullRestart);
+        JournalOneShotRun("PC restart", "Full restart (no Fast Startup)", "shutdown /g /f /t 0", success);
         if (!success) StatusMessage = $"Couldn't start a full restart: {error}";
         // No success message - a successful call tears this process down along with everything else.
     }
@@ -894,6 +895,7 @@ public sealed class StartupViewModel : ObservableObject
         if (confirm != MessageBoxResult.Yes) return;
 
         var (success, error) = await FastStartupService.SetHibernateEnabledAsync(false);
+        JournalOneShotRun("Hibernation", "Turned off hibernation", "powercfg /hibernate off", success);
         StatusMessage = success ? "Hibernation turned off." : $"Couldn't turn off hibernation: {error}";
         if (success) LoadFastStartupAndHibernation();
     }
@@ -908,6 +910,7 @@ public sealed class StartupViewModel : ObservableObject
         if (confirm != MessageBoxResult.Yes) return;
 
         var (success, error) = await FastStartupService.SetHibernateEnabledAsync(true);
+        JournalOneShotRun("Hibernation", "Turned on hibernation", "powercfg /hibernate on", success);
         StatusMessage = success ? "Hibernation turned on." : $"Couldn't turn on hibernation: {error}";
         if (success) LoadFastStartupAndHibernation();
     }
@@ -921,6 +924,7 @@ public sealed class StartupViewModel : ObservableObject
         if (confirm != MessageBoxResult.Yes) return;
 
         var (success, error) = await FastStartupService.SetHiberFileTypeReducedAsync();
+        JournalOneShotRun("Hibernation", "Set hiberfile type to reduced", "powercfg /hibernate /type reduced", success);
         StatusMessage = success ? "Hiberfile type set to reduced." : $"Couldn't change the hiberfile type: {error}";
         if (success) LoadFastStartupAndHibernation();
     }
@@ -941,6 +945,7 @@ public sealed class StartupViewModel : ObservableObject
         if (confirm != MessageBoxResult.Yes) return;
 
         var (success, error) = await FastStartupService.SetHiberFileSizeAsync(percent);
+        JournalOneShotRun("Hibernation", $"Set hiberfile size to {percent}% of RAM", $"powercfg /hibernate /size {percent}", success);
         StatusMessage = success ? $"Hiberfile size set to {percent}% of RAM." : $"Couldn't set the hiberfile size: {error}";
         if (success) LoadFastStartupAndHibernation();
     }
@@ -1138,6 +1143,24 @@ public sealed class StartupViewModel : ObservableObject
         });
     }
 
+    /// <summary>Records a tool run that changed boot/power/recovery/log configuration in the
+    /// change journal, like every other system-mutating action - not undoable from the journal
+    /// (the inverse is the matching action on this tab).</summary>
+    private static void JournalOneShotRun(string target, string action, string command, bool success)
+    {
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.OneShotToolRun,
+            Target = target,
+            ActionDescription = action,
+            AfterValue = command,
+            TriggeredBy = "Startup tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "One-shot tool run - reverse it from the Startup tab.",
+        });
+    }
+
     /// <summary>#739: `reagentc /enable` - confirmed first.</summary>
     private async Task EnableWinReAsync()
     {
@@ -1147,6 +1170,7 @@ public sealed class StartupViewModel : ObservableObject
         if (confirm != MessageBoxResult.Yes) return;
 
         var (success, error) = await SystemPartitionService.EnableWinReAsync();
+        JournalOneShotRun("Windows RE", "Enabled Windows RE", "reagentc /enable", success);
         if (success)
         {
             StatusMessage = "Windows RE enabled.";
@@ -1184,6 +1208,7 @@ public sealed class StartupViewModel : ObservableObject
 
         await BackupBeforeMutationAsync();
         var (success, error) = await BcdInspectorService.ClearBootModeFlagAsync(flag);
+        JournalOneShotRun("BCD store", $"Cleared boot-mode flag {flag.OptionName}", flag.ClearCommandText, success);
         StatusMessage = success
             ? $"Cleared {flag.OptionName}. Takes effect on the next boot."
             : $"Couldn't clear {flag.OptionName}: {error}";
@@ -1204,6 +1229,8 @@ public sealed class StartupViewModel : ObservableObject
 
         await BackupBeforeMutationAsync();
         var (success, error) = await BcdInspectorService.RestoreBootStatusPolicyDefaultsAsync(id);
+        JournalOneShotRun("BCD store", "Restored boot status policy defaults",
+            $"bcdedit /deletevalue {id} bootstatuspolicy; bcdedit /set {id} recoveryenabled yes", success);
         StatusMessage = success ? "Boot status policy restored to Windows defaults." : $"Couldn't restore boot status policy: {error}";
         if (success) LoadBcdInspector();
     }
@@ -1224,6 +1251,7 @@ public sealed class StartupViewModel : ObservableObject
 
         await BackupBeforeMutationAsync();
         var (success, error) = await BcdInspectorService.SetTimeoutAsync(seconds);
+        JournalOneShotRun("BCD store", $"Set boot menu timeout to {seconds}s", $"bcdedit /timeout {seconds}", success);
         StatusMessage = success ? $"Boot menu timeout set to {seconds}s." : $"Couldn't set boot timeout: {error}";
         if (success) LoadBcdInspector();
     }
@@ -1241,6 +1269,7 @@ public sealed class StartupViewModel : ObservableObject
 
         await BackupBeforeMutationAsync();
         var (success, error) = await BcdInspectorService.SetDefaultEntryAsync(entry.Identifier);
+        JournalOneShotRun("BCD store", $"Set default boot entry to \"{entry.Description}\"", $"bcdedit /default {entry.Identifier}", success);
         StatusMessage = success ? $"Default boot entry set to \"{entry.Description}\"." : $"Couldn't set default entry: {error}";
         if (success) LoadBcdInspector();
     }
@@ -1270,9 +1299,13 @@ public sealed class StartupViewModel : ObservableObject
         var (success, path, error) = await BcdInspectorService.ExportBackupAsync();
         if (success)
         {
-            StatusMessage = $"BCD exported to {path}. To restore: bcdedit /import \"{path}\"";
+            var backups = await Task.Run(BcdInspectorService.ListBackups);
             BcdBackups.Clear();
-            foreach (var b in BcdInspectorService.ListBackups()) BcdBackups.Add(b);
+            foreach (var b in backups) BcdBackups.Add(b);
+            bool verified = backups.Any(b => b.IsVerified && string.Equals(b.FilePath, path, StringComparison.OrdinalIgnoreCase));
+            StatusMessage = verified
+                ? $"BCD exported to {path}. To restore: bcdedit /import \"{path}\""
+                : $"BCD exported to {path}, but it couldn't be signed, so no import command is offered for it.";
         }
         else
         {
@@ -1349,6 +1382,7 @@ public sealed class StartupViewModel : ObservableObject
     private async Task ArmBootLogCaptureAsync()
     {
         var (success, error) = await BootLogCaptureService.ArmAsync();
+        JournalOneShotRun("Boot logging", "Turned on boot logging (ntbtlog.txt)", "bcdedit /set {current} bootlog yes", success);
         if (success)
         {
             IsBootLogCaptureArmed = true;
@@ -1364,6 +1398,7 @@ public sealed class StartupViewModel : ObservableObject
     private async Task DisarmBootLogCaptureAsync()
     {
         var (success, error) = await BootLogCaptureService.DisarmAsync();
+        JournalOneShotRun("Boot logging", "Turned off boot logging", "bcdedit /set {current} bootlog no", success);
         IsBootLogCaptureArmed = !success;
         if (success) NtbtlogResult = null;
         StatusMessage = success ? "Boot logging turned off." : $"Couldn't turn off boot logging: {error}";
@@ -1372,6 +1407,8 @@ public sealed class StartupViewModel : ObservableObject
     private async Task ArmBootEtwTraceAsync()
     {
         var (success, error) = await BootEtwTraceService.ArmAsync();
+        if (BootEtwTraceService.IsAvailable)
+            JournalOneShotRun("Boot ETW trace", "Armed a boot trace", "wpr -boottrace -addboot GeneralProfile -filemode", success);
         if (success)
         {
             IsBootEtwTraceArmed = true;
@@ -1387,6 +1424,9 @@ public sealed class StartupViewModel : ObservableObject
     private async Task DisarmBootEtwTraceAsync()
     {
         var (success, error) = await BootEtwTraceService.DisarmAsync();
+        // Without wpr only the app's own pending-state file is cleared - nothing on the system ran.
+        if (BootEtwTraceService.IsAvailable)
+            JournalOneShotRun("Boot ETW trace", "Canceled the armed boot trace", "wpr -boottrace -cancelboot", success);
         IsBootEtwTraceArmed = !success;
         StatusMessage = success ? "Boot ETW trace canceled." : $"Couldn't cancel the boot ETW trace: {error}";
     }
@@ -1408,6 +1448,8 @@ public sealed class StartupViewModel : ObservableObject
     private async Task EnableDiagnosticsChannelAsync()
     {
         var (success, error) = await BootPerformanceService.EnableDiagnosticsChannelAsync();
+        JournalOneShotRun("Event log channel", "Enabled the Diagnostics-Performance log",
+            "wevtutil sl \"Microsoft-Windows-Diagnostics-Performance/Operational\" /e:true", success);
         StatusMessage = success
             ? "Diagnostics channel enabled. Boot-time data will be available after the next boot."
             : $"Couldn't enable the diagnostics channel: {error}";
@@ -1478,6 +1520,8 @@ public sealed class StartupViewModel : ObservableObject
         if (confirm != MessageBoxResult.Yes) return;
 
         var (success, error) = await EventLogService.EnableTaskSchedulerOperationalLogAsync();
+        JournalOneShotRun("Event log channel", "Enabled the Task Scheduler operational log",
+            "wevtutil sl \"Microsoft-Windows-TaskScheduler/Operational\" /e:true", success);
         IsTaskSchedulerLogEnabled = EventLogService.IsTaskSchedulerOperationalLogEnabled();
         EnableTaskFailureLogCommand.RaiseCanExecuteChanged();
 

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using TaskManagerPlus.Common;
 using TaskManagerPlus.Models;
@@ -39,7 +40,14 @@ public static class BcdInspectorService
     // indented to align under the value column, with no name of its own.
     private static readonly Regex ContinuationRegex = new(@"^\s+(\S.*)$", RegexOptions.Compiled);
 
-    private static string BackupDirectory => Path.Combine(AppPaths.SettingsDirectory, "BcdBackups");
+    // BCD exports live in the admin-only "Backups" area, each with a signed SHA-256 sidecar - see
+    // ExportBackupAsync. Earlier versions wrote them under the user's own settings folder, which
+    // any unelevated process running as the user can rewrite; those are still listed, never trusted.
+    private const string BackupArea = "Backups";
+    private const string BackupMacDomain = "bcd-backup";
+    private const string BackupMacSuffix = ".mac";
+    private static readonly Regex BackupNameRegex = new(@"^bcd-backup-\d{8}-\d{6}$", RegexOptions.Compiled);
+    private static string LegacyBackupDirectory => Path.Combine(AppPaths.SettingsDirectory, "BcdBackups");
 
     #region #724: read + parse
 
@@ -482,46 +490,109 @@ public static class BcdInspectorService
     #region #731: BCD backup and export
 
     /// <summary>#731: every backup this app has exported, newest first - a plain directory
-    /// listing under AppPaths.SettingsDirectory\BcdBackups rather than a separate JSON index,
-    /// since the backup files themselves are the source of truth here.</summary>
+    /// listing rather than a separate JSON index, since the backup files themselves are the source
+    /// of truth here. Only a file in the verified admin-only area whose signed hash still matches
+    /// is marked verified (and so offered an import command). Never creates the area.</summary>
     public static List<BcdBackupEntry> ListBackups()
     {
         var result = new List<BcdBackupEntry>();
-        try
+
+        string areaPath = Path.Combine(AdminDataPaths.RootPath, BackupArea);
+        if (Directory.Exists(areaPath))
         {
-            if (!Directory.Exists(BackupDirectory)) return result;
-            foreach (var file in Directory.GetFiles(BackupDirectory, "bcd-backup-*"))
+            // Exists already, so this only re-checks owner/DACL/not-a-junction.
+            string? area = AdminDataPaths.TryGetArea(BackupArea, out string? areaError);
+            foreach (var file in EnumerateBackupFiles(area ?? areaPath))
             {
-                try
-                {
-                    result.Add(new BcdBackupEntry { FilePath = file, CreatedUtc = File.GetCreationTimeUtc(file) });
-                }
-                catch
-                {
-                    // One unreadable entry (deleted mid-listing, permissions) - skip it.
-                }
+                bool verified = area is not null && VerifyBackup(file);
+                AddEntry(result, file, verified, verified ? null
+                    : area is null ? $"Can't verify the backup folder ({areaError}) - no import command shown."
+                    : "Can't verify this app wrote this backup, or it changed since - no import command shown.");
             }
         }
-        catch
-        {
-            // Directory listing failed entirely - empty list, same degrade-to-nothing pattern as
-            // every other on-demand read in this app.
-        }
+
+        foreach (var file in EnumerateBackupFiles(LegacyBackupDirectory))
+            AddEntry(result, file, false,
+                $"Made by an older version in {LegacyBackupDirectory}, a folder other programs running as you can change - " +
+                "this app can't vouch for it, so no import command is shown. Restore it by hand only if you're sure it's untouched.");
+
         return result.OrderByDescending(b => b.CreatedUtc).ToList();
     }
 
-    /// <summary>#731: `bcdedit /export` to a fresh timestamped file under BackupDirectory. Always
-    /// called before any BCD-modifying action this app offers (see StartupViewModel's
-    /// BackupThenRunAsync) - restore is never automated by this app; only the matching
-    /// `bcdedit /import` command is ever shown, for the user to run themselves.</summary>
+    private static IEnumerable<string> EnumerateBackupFiles(string directory)
+    {
+        try
+        {
+            if (!Directory.Exists(directory)) return Array.Empty<string>();
+            // The exact name ExportBackupAsync writes - not its .mac sidecar or any hive log file.
+            return Directory.GetFiles(directory, "bcd-backup-*")
+                .Where(f => BackupNameRegex.IsMatch(Path.GetFileName(f)))
+                .ToList();
+        }
+        catch
+        {
+            // Directory listing failed entirely - nothing from this folder, same degrade-to-nothing
+            // pattern as every other on-demand read in this app.
+            return Array.Empty<string>();
+        }
+    }
+
+    private static void AddEntry(List<BcdBackupEntry> result, string file, bool verified, string? note)
+    {
+        try
+        {
+            result.Add(new BcdBackupEntry { FilePath = file, CreatedUtc = File.GetCreationTimeUtc(file), IsVerified = verified, VerificationNote = note });
+        }
+        catch
+        {
+            // One unreadable entry (deleted mid-listing, permissions) - skip it.
+        }
+    }
+
+    private static string HashFile(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
+
+    private static bool VerifyBackup(string path)
+    {
+        try
+        {
+            string macPath = path + BackupMacSuffix;
+            if (!File.Exists(macPath)) return false;
+            return JournalIntegrityService.Verify(BackupMacDomain, File.ReadAllText(macPath).Trim(), Path.GetFileName(path), HashFile(path));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>#731: `bcdedit /export` to a fresh timestamped file in the admin-only "Backups"
+    /// area (refused, never redirected to a user-writable folder, when that area can't be
+    /// established), then a sidecar with a MAC over the file's SHA-256 so ListBackups can tell this
+    /// app's own export from a swapped one. Always called before any BCD-modifying action this app
+    /// offers (see StartupViewModel's BackupBeforeMutationAsync) - restore is never automated by
+    /// this app; only the matching `bcdedit /import` command is ever shown, for the user to run
+    /// themselves.</summary>
     public static async Task<(bool Success, string? Path, string? Error)> ExportBackupAsync()
     {
         try
         {
-            Directory.CreateDirectory(BackupDirectory);
-            string path = Path.Combine(BackupDirectory, $"bcd-backup-{DateTime.Now:yyyyMMdd-HHmmss}");
+            string? area = AdminDataPaths.TryGetArea(BackupArea, out string? areaError);
+            if (area is null) return (false, null, $"Couldn't prepare the admin-only backup folder ({areaError}).");
+
+            string path = Path.Combine(area, $"bcd-backup-{DateTime.Now:yyyyMMdd-HHmmss}");
             var (output, exitCode) = await RunCapturedAsync("bcdedit.exe", $"/export \"{path}\"");
-            return exitCode == 0 ? (true, path, null) : (false, null, string.IsNullOrWhiteSpace(output) ? "bcdedit /export failed." : output.Trim());
+            if (exitCode != 0)
+                return (false, null, string.IsNullOrWhiteSpace(output) ? "bcdedit /export failed." : output.Trim());
+
+            string macPath = path + BackupMacSuffix;
+            string? mac = await Task.Run(() => JournalIntegrityService.Sign(BackupMacDomain, Path.GetFileName(path), HashFile(path)));
+            if (mac is not null) File.WriteAllText(macPath, mac);
+            else if (File.Exists(macPath)) File.Delete(macPath); // never leave a stale MAC beside a new export
+            return (true, path, null);
         }
         catch (Exception ex)
         {

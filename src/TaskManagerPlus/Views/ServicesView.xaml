@@ -91,8 +91,11 @@
 
         <!-- Round 7 #13/#16, #749-754: start-duration history, config-drift baseline actions,
              SCM failure history (#749/#750/#751), and registry inventory audit (#752/#753/#754).
-             #192/#193: a crash-loop/start-timeout scan alongside them - same SCM-event-mining shape. -->
-        <WrapPanel Grid.Row="1" Margin="0,0,0,12">
+             #192/#193: a crash-loop/start-timeout scan alongside them - same SCM-event-mining shape.
+             The pipe-timeout note sits on its own line under the buttons: sharing the row, it was
+             drawn over them and took their clicks at narrower widths. -->
+        <StackPanel Grid.Row="1" Margin="0,0,0,12">
+        <WrapPanel>
             <Button Content="Load start-time history" Margin="0,0,8,4" Command="{Binding LoadStartDurationsCommand}"
                     ToolTip="Mine the System event log's Service Control Manager entries for approximate per-service start durations, plus SCM 7009 start-timeouts (#193)" />
             <Button Content="Scan for crash loops" Margin="0,0,8,4" Command="{Binding ScanCrashLoopsCommand}"
@@ -131,9 +134,10 @@
                     ToolTip="Samples the selected service's sc queryex CHECKPOINT twice, ~3s apart, to tell a stuck START_PENDING/STOP_PENDING service from one still making progress" />
             <TextBlock Text="{Binding StartDurationStatus}" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,4" />
         </WrapPanel>
-        <TextBlock Grid.Row="1" Text="{Binding ServicesPipeTimeoutText}" VerticalAlignment="Bottom" HorizontalAlignment="Right"
+        <TextBlock Text="{Binding ServicesPipeTimeoutText}" HorizontalAlignment="Right" Margin="0,4,0,0"
                     FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" MaxWidth="420"
                     Visibility="{Binding ServicesPipeTimeoutText, Converter={StaticResource NullToVisibilityConverter}}" />
+        </StackPanel>
 
         <!-- #192: crash-loop summary card - only the services the scan actually flagged, each with
              its `sc qfailure` recovery settings shown alongside. Collapsed until a scan has run /

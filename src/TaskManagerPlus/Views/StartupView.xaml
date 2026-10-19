@@ -960,8 +960,16 @@
                                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                                     <StackPanel>
                                                         <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="{Binding CreatedLocal, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                        <!-- Only a verified backup gets an import command; any other file could be a crafted store. -->
                                                         <TextBlock FontSize="{StaticResource FontBody}" FontFamily="Consolas" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
-                                                                   Text="{Binding ImportCommandText}" Margin="0,2,0,0" />
+                                                                   Text="{Binding ImportCommandText, Mode=OneWay}" Margin="0,2,0,0"
+                                                                   Visibility="{Binding ImportCommandText, Converter={StaticResource NullToVisibilityConverter}}" />
+                                                        <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap"
+                                                                   Text="{Binding VerificationNote, Mode=OneWay}" Margin="0,2,0,0"
+                                                                   Visibility="{Binding VerificationNote, Converter={StaticResource NullToVisibilityConverter}}" />
+                                                        <TextBlock FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
+                                                                   Text="{Binding FilePath, Mode=OneWay}" Margin="0,2,0,0"
+                                                                   Visibility="{Binding VerificationNote, Converter={StaticResource NullToVisibilityConverter}}" />
                                                     </StackPanel>
                                                 </Border>
                                             </DataTemplate>

@@ -181,16 +181,25 @@ public sealed class FirmwareBootOrderInfo
     public string? SuggestedFixCommand { get; init; }
 }
 
-/// <summary>#731: one BCD export sitting under AppPaths.SettingsDirectory\BcdBackups - restore is
-/// never automated (see BcdInspectorService.ExportBackupAsync's remarks), only the matching
-/// `bcdedit /import` command is shown, in plain text, for the user to run themselves.</summary>
+/// <summary>#731: one BCD export - restore is never automated (see
+/// BcdInspectorService.ExportBackupAsync's remarks), only the matching `bcdedit /import` command
+/// is shown, in plain text, for the user to run themselves. That command is offered only for a
+/// verified backup: anything else could be a crafted store (testsigning, a different winload)
+/// that the user would import elevated believing it was this app's own copy.</summary>
 public sealed class BcdBackupEntry
 {
     public string FilePath { get; init; } = string.Empty;
     public DateTime CreatedUtc { get; init; }
 
+    /// <summary>True only for a backup in the admin-only backup folder whose signed hash (written
+    /// at export) still matches the file.</summary>
+    public bool IsVerified { get; init; }
+
+    /// <summary>Why an unverified backup gets no import command; null when verified.</summary>
+    public string? VerificationNote { get; init; }
+
     /// <summary>Display copy of <see cref="CreatedUtc"/> in local time.</summary>
     [JsonIgnore] public DateTime CreatedLocal => CreatedUtc.ToLocalTime();
 
-    public string ImportCommandText => $"bcdedit /import \"{FilePath}\"";
+    public string? ImportCommandText => IsVerified ? $"bcdedit /import \"{FilePath}\"" : null;
 }

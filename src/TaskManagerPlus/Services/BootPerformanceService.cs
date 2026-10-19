@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -49,12 +50,16 @@ public static class BootPerformanceService
             var components = new List<BootTimeComponent>();
             foreach (var (label, ms) in ExtractBootTimeFields(record))
                 components.Add(new BootTimeComponent { Label = label, Milliseconds = ms });
+            var ordered = components.OrderByDescending(c => c.Milliseconds).ToList();
 
             return new BootTimeBreakdown
             {
                 BootTime = record.TimeCreated ?? DateTime.Now,
-                Components = components.OrderByDescending(c => c.Milliseconds).ToList(),
-                Type = ReadLatestBootType(),
+                Components = ordered,
+                // Classify THIS event's boot, not whatever booted/resumed most recently.
+                Type = record.TimeCreated is { } loggedAt
+                    ? ReadLatestBootType(loggedAt, ReadBootStartTimeUtc(record), ordered.Count > 0 ? ordered[0].Milliseconds : 0)
+                    : null,
             };
         }
         catch
@@ -88,6 +93,24 @@ public static class BootPerformanceService
             if (value < 100 || value > 30 * 60 * 1000) continue; // plausible boot-phase duration only
 
             yield return (SplitLabel(nameAttr), value);
+        }
+    }
+
+    /// <summary>Event 100's BootStartTime (a FILETIME, rendered in the XML as an ISO 8601 UTC
+    /// time), or null when the field is absent or doesn't parse.</summary>
+    private static DateTime? ReadBootStartTimeUtc(EventRecord record)
+    {
+        try
+        {
+            XNamespace ns = "http://schemas.microsoft.com/win/2004/08/events/event";
+            string? value = XDocument.Parse(record.ToXml()).Descendants(ns + "Data")
+                .FirstOrDefault(d => string.Equals(d.Attribute("Name")?.Value, "BootStartTime", StringComparison.OrdinalIgnoreCase))?.Value;
+            return DateTime.TryParse(value, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var utc) ? utc : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -311,27 +334,44 @@ public static class BootPerformanceService
 
     #region #705/#706/#707 - boot-type classification and derived stats
 
-    private const string KernelBootLogName = "Microsoft-Windows-Kernel-Boot/Operational";
+    // Event 27 ("The boot type was 0x...") is written to the System log by the Kernel-Boot
+    // provider - its Operational channel doesn't carry it (checked: no 27s there, System has them).
+    private const string KernelBootLogName = "System";
+    private const string KernelBootProvider = "Microsoft-Windows-Kernel-Boot";
     private const int BootTypeEventId = 27;
 
-    /// <summary>#705: reads the most recent Kernel-Boot event 27 to classify the current boot -
-    /// 0 = full/cold boot, 1 = hybrid boot (Fast Startup resume), 2 = resume from hibernate. Not
-    /// a documented, versioned schema, and the channel itself may not be enabled on every Windows
-    /// build/edition, so any failure or out-of-range value degrades to null (Unknown) rather than
-    /// a guess.</summary>
-    public static BootType? ReadLatestBootType()
+    /// <summary>#705: classifies the boot a Diagnostics-Performance event 100 describes from
+    /// Kernel-Boot event 27 - 0 = full/cold boot, 1 = hybrid boot (Fast Startup resume), 2 =
+    /// resume from hibernate. Event 100 is written after its boot finishes, so its boot's 27 is
+    /// the newest one logged at or before it; a later 27 (a resume or boot since) is skipped. A
+    /// 27 older than the boot's own start (BootStartTime minus 10 minutes of clock slack, or when
+    /// that isn't readable, the event time minus the boot duration minus an hour) belongs to an
+    /// earlier boot, so it reads as Unknown rather than lending that boot's type. Not a
+    /// documented, versioned schema, so any failure or out-of-range value degrades to null
+    /// (Unknown) rather than a guess - including an unparseable matching 27 (no fallback to an
+    /// older one).</summary>
+    public static BootType? ReadLatestBootType(DateTime bootLoggedAt, DateTime? bootStartUtc, int bootDurationMs)
     {
-        var events = ReadRecentBootTypeEventsRaw(maxEvents: 1);
-        return events.Count > 0 ? events[0].Type : null;
+        DateTime loggedUtc = bootLoggedAt.ToUniversalTime();
+        if (bootStartUtc is { } s && (s > loggedUtc || s < loggedUtc.AddDays(-1))) bootStartUtc = null;
+        DateTime lowerUtc = bootStartUtc?.AddMinutes(-10) ?? loggedUtc.AddMilliseconds(-Math.Max(0, bootDurationMs)).AddHours(-1);
+
+        foreach (var (time, type) in ReadRecentBootTypeEventsRaw(maxEvents: 200)) // newest first
+        {
+            DateTime t = time.ToUniversalTime();
+            if (t > loggedUtc) continue;
+            return t >= lowerUtc ? type : null;
+        }
+        return null;
     }
 
-    /// <summary>#734/#741: every Kernel-Boot event 27 the channel still retains, each tagged with
+    /// <summary>#734/#741: every Kernel-Boot event 27 the System log still retains, each tagged with
     /// its parsed boot type where that parsed cleanly (out-of-range/unparseable entries are
-    /// dropped here, unlike ReadLatestBootType's raw single-event read above, which reports
-    /// "Unknown" for the single latest event rather than silently falling back to an older one).
+    /// dropped here, unlike ReadLatestBootType above, which reports "Unknown" for its matching
+    /// event rather than silently falling back to an older one).
     /// Backs FastStartupService's "last full restart" reconciliation (#734) and the
     /// resume-from-hibernate failure correlation (#741) - one shared, adaptive read of the
-    /// channel rather than three separate queries.</summary>
+    /// log rather than three separate queries.</summary>
     public static List<(DateTime Time, BootType Type)> ReadRecentBootTypeEvents(int maxEvents = 200)
         => ReadRecentBootTypeEventsRaw(maxEvents)
             .Where(e => e.Type is not null)
@@ -341,7 +381,7 @@ public static class BootPerformanceService
     /// <summary>#734: the last time this machine had a genuine full/cold boot - the one clock
     /// (unlike Environment.TickCount64/Win32_OperatingSystem.LastBootUpTime) that can lag behind
     /// by days or weeks under repeated Fast Startup hybrid shutdowns. Null when no full-boot event
-    /// is found in the events the channel still retains.</summary>
+    /// is found in the events the System log still retains.</summary>
     public static DateTime? ReadLastFullBootTime()
         => ReadRecentBootTypeEvents()
             .Where(e => e.Type == BootType.Full)
@@ -355,7 +395,7 @@ public static class BootPerformanceService
         try
         {
             var query = new EventLogQuery(KernelBootLogName, PathType.LogName,
-                $"*[System[(EventID={BootTypeEventId})]]") { ReverseDirection = true };
+                $"*[System[Provider[@Name='{KernelBootProvider}'] and (EventID={BootTypeEventId})]]") { ReverseDirection = true };
             using var reader = new EventLogReader(query);
 
             int count = 0;
@@ -393,8 +433,8 @@ public static class BootPerformanceService
 
     /// <summary>#706: median boot time per boot-type bucket, e.g. "Fast Startup resume: 9s ·
     /// full restart: 71s" - the single most common reason a user's perceived boot time swings
-    /// wildly. Entries with no recorded boot type (older history, or the Kernel-Boot channel
-    /// wasn't available at record time) are excluded rather than lumped into a misleading bucket.</summary>
+    /// wildly. Entries with no recorded boot type (older history, or no matching Kernel-Boot
+    /// event 27 at record time) are excluded rather than lumped into a misleading bucket.</summary>
     public static List<BootTypeStat> ComputeBootTypeStats(List<BootHistoryEntry> history)
         => history
             .Where(h => h.Type is not null)
