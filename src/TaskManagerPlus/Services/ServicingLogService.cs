@@ -517,6 +517,18 @@ public static class ServicingLogService
         }
         string outPath = Path.Combine(logsDir, "WindowsUpdate.log");
 
+        // The cmdlet itself works in a fixed "$env:TEMP\WindowsUpdateLog" folder (WindowsUpdateLog.psm1
+        // sets $WORKDIR from TEMP at import) and creates/deletes files there - so TEMP/TMP point at a
+        // fresh admin-only folder for this run instead of the user-writable %TEMP%.
+        var workDir = AdminDataPaths.CreatePrivateTempDirectory("WindowsUpdateLog", out string? workDirError);
+        if (workDir is null)
+        {
+            result.Success = false;
+            result.ErrorMessage = $"Won't run Get-WindowsUpdateLog: {workDirError}";
+            result.Duration = sw.Elapsed;
+            return result;
+        }
+
         try
         {
             // A WindowsUpdate.log left by an earlier run must not pass for this run's output - remove
@@ -525,7 +537,8 @@ public static class ServicingLogService
             try { if (File.Exists(outPath)) File.Delete(outPath); } catch { /* falls back to the timestamp check below */ }
 
             string escapedPath = outPath.Replace("'", "''");
-            string psCommand = $"Get-WindowsUpdateLog -LogPath '{escapedPath}'";
+            string escapedWork = workDir.FullName.Replace("'", "''");
+            string psCommand = $"$env:TEMP='{escapedWork}'; $env:TMP='{escapedWork}'; Get-WindowsUpdateLog -LogPath '{escapedPath}'";
             var (output, exitCode) = await RunCapturedAsync("powershell.exe", $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{psCommand}\"", 180_000, ct);
 
             if (exitCode is null)
@@ -556,6 +569,7 @@ public static class ServicingLogService
         }
         finally
         {
+            AdminDataPaths.TryDelete(workDir);
             sw.Stop();
             result.Duration = sw.Elapsed;
         }
