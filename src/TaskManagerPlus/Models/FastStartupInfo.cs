@@ -77,7 +77,7 @@ public sealed class SleepStateInfo
 }
 
 /// <summary>#736: hibernation file inventory - HiberFileSizeBytes is the real, measured
-/// C:\hiberfil.sys size on disk (powercfg has no read-only query for the configured percentage,
+/// hiberfil.sys size on disk at the system-volume root (powercfg has no read-only query for the configured percentage,
 /// only the /hibernate /size &lt;n&gt; setter - see FastStartupService.ReadHiberFileInfo's
 /// remarks), compared against installed RAM to show the same "percentage of RAM" figure Windows'
 /// own hibernation settings describe.</summary>
