@@ -297,25 +297,57 @@ public sealed class DpcLatencyService
                 routineHex = fields.Values.FirstOrDefault(v => HexPointerRegex.IsMatch(v));
             if (string.IsNullOrEmpty(routineHex) || !TryParseHex(routineHex, out ulong addr)) continue;
 
-            double? durationUs = null;
-            foreach (var key in DurationFieldCandidates)
+            // The classic PerfInfo DPC/ISR events carry no duration field: the event is logged when
+            // the routine returns and InitialTime records when it started. tracerpt renders
+            // InitialTime as a FILETIME (100 ns ticks) on the same clock as the event's
+            // TimeCreated, so the duration is their difference - verified against a real capture
+            // (DPC median ~11 us, ISR ~0.6 us). The named-duration candidates stay as a fallback.
+            double? durationUs = TryDurationFromInitialTime(fields);
+            if (durationUs is null)
             {
-                if (fields.TryGetValue(key, out var v) && double.TryParse(v, NumberStyles.Any, CultureInfo.InvariantCulture, out var raw))
+                foreach (var key in DurationFieldCandidates)
                 {
-                    durationUs = NormalizeToMicroseconds(raw);
-                    break;
+                    if (fields.TryGetValue(key, out var v) && double.TryParse(v, NumberStyles.Any, CultureInfo.InvariantCulture, out var raw))
+                    {
+                        durationUs = NormalizeToMicroseconds(raw);
+                        break;
+                    }
                 }
             }
             if (durationUs is not (> 0 and < 1_000_000)) continue; // implausible or missing - skip rather than guess
 
             string driverName = DpcModuleMapService.ResolveDriverName(moduleMap, addr) ?? $"0x{addr:X} (unresolved)";
-            bool isTimer = fields.TryGetValue("Type", out var typeVal) && typeVal.Contains("Timer", StringComparison.OrdinalIgnoreCase);
+            // The rendered opcode is "TimerDPC" for timer DPCs (vs "DPC"/"ThreadedDPC"); there is no
+            // "Type" field on these events.
+            bool isTimer = kindHint.Contains("TimerDPC", StringComparison.OrdinalIgnoreCase);
 
             events.Add(new ParsedEvent(isDpc, driverName, durationUs.Value, isTimer));
         }
 
         return events;
     }
+
+    /// <summary>Duration in microseconds = TimeCreated - InitialTime, both as 100 ns FILETIME
+    /// ticks. TimeCreated's SystemTime carries up to 9 fractional digits plus an offset; only the
+    /// first 7 (100 ns) are meaningful, so it is parsed by hand rather than via DateTime.Parse.</summary>
+    private static double? TryDurationFromInitialTime(Dictionary<string, string> fields)
+    {
+        if (!fields.TryGetValue("InitialTime", out var initialText)
+            || !long.TryParse(initialText.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long initialTicks)
+            || !fields.TryGetValue("SystemTime", out var systemTime))
+            return null;
+
+        var m = SystemTimeRegex.Match(systemTime.Trim());
+        if (!m.Success) return null;
+        if (!DateTimeOffset.TryParseExact(m.Groups[1].Value + (m.Groups[3].Value is "Z" or "" ? "+00:00" : m.Groups[3].Value),
+                "yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture, DateTimeStyles.None, out var whole))
+            return null;
+        long fraction = long.Parse(m.Groups[2].Value.PadRight(7, '0')[..7], CultureInfo.InvariantCulture);
+        long eventTicks = whole.UtcDateTime.ToFileTimeUtc() + fraction;
+        return (eventTicks - initialTicks) / 10.0;
+    }
+
+    private static readonly Regex SystemTimeRegex = new(@"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)?$", RegexOptions.Compiled);
 
     private void IngestOne(bool isDpc, string driverName, double durationUs, bool isTimer)
     {
