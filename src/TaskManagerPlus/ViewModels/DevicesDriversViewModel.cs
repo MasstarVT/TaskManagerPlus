@@ -1855,7 +1855,9 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         }
         finally
         {
-            AdminDataPaths.TryDelete(staging);
+            // Can be gigabytes - not on the dispatcher.
+            var stagingToDelete = staging;
+            if (stagingToDelete is not null) await Task.Run(() => AdminDataPaths.TryDelete(stagingToDelete));
             IsExportingDrivers = false;
         }
     }

@@ -665,6 +665,7 @@ public static class TroubleshootService
 
     // Same pattern as WakeHistoryService's.
     private static readonly Regex WakeSourceCountRegex = new(@"Wake Source Count\s*-\s*(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex WakeHistoryCountRegex = new(@"Wake History Count\s*-\s*(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>`powercfg /lastwake` - what woke the system last (a device, a timer, or unknown).</summary>
     public static async Task<DiagnosticStepResult> CheckLastWakeAsync()
@@ -680,6 +681,10 @@ public static class TroubleshootService
             var lines = trimmed.Replace("\r\n", "\n").Split('\n').Where(l => l.Trim().Length > 0).ToList();
             if (exitCode != 0)
                 return DiagnosticStepResult.Skip($"Couldn't read the last wake source (powercfg /lastwake exited with {exitCode}).", lines);
+
+            // "Wake History Count - 0" (no sleep/wake since boot) has no source lines at all.
+            if (WakeHistoryCountRegex.Match(trimmed) is { Success: true } history && history.Groups[1].Value == "0")
+                return DiagnosticStepResult.Skip("No wake has been recorded since the last boot - nothing to attribute yet.", lines);
 
             // "Wake Source Count - 0" (the usual shape for a wake Windows couldn't attribute) names
             // no source and carries no "Unknown" either.

@@ -84,7 +84,8 @@ public static class DriverInventoryService
     /// an association class linking one Win32_PnPSignedDriver to each CIM_DataFile (.sys/.dll/.inf/...)
     /// it registered. Win32_PnPSignedDriver has no key property, so its instances carry an empty
     /// __PATH and GetRelated / ASSOCIATORS OF can't walk from one; this reads the association's own
-    /// reference pairs instead (one pass over every driver's files, well under a second) and keeps
+    /// reference pairs instead (one pass over every driver's files, typically under a second once
+    /// WMI is warm; the first query after boot can take much longer) and keeps
     /// this device's. A failed WMI read throws, so the caller reports it rather than "no files".</summary>
     public static Task<List<DriverFileInfo>> ListDriverFilesAsync(string? pnpDeviceId)
     {
