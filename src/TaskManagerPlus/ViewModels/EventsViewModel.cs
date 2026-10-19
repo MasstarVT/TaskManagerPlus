@@ -859,6 +859,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         if (channel is null || channel.IsGroup || !channel.IsAccessible) return;
 
         bool resumeFollow = false;
+        int followGeneration = 0;
         if (reset)
         {
             // A live tail of the previous query would keep inserting its rows into the new list;
@@ -867,6 +868,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             {
                 StopFollow();
                 resumeFollow = true;
+                followGeneration = _followGeneration;
             }
             Events.Clear();
             _pageBookmark = null;
@@ -907,8 +909,10 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             StatusText = Events.Count == 0 ? "No matching events found." : $"{Events.Count} event(s) loaded.";
             UpdateHiddenNoiseText();
             if (ShowBurstCollapsedView) RecomputeCollapsedBursts();
-            // Re-arm the live tail against the query just loaded.
-            if (resumeFollow) IsFollowing = true;
+            // Re-arm the live tail against the query just loaded - unless Follow was stopped or
+            // started again meanwhile (tab left, channel changed, toggle clicked), which bumps the generation.
+            if (resumeFollow && followGeneration == _followGeneration && ReferenceEquals(SelectedChannel, channel))
+                IsFollowing = true;
         }
         catch (Exception ex)
         {

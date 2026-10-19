@@ -160,6 +160,10 @@
                                 <Setter Property="FontSize" Value="{StaticResource FontTitle}" />
                                 <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
                                 <Style.Triggers>
+                                    <!-- No verdicts yet (loading/failed) is unknown, not an all-clear. -->
+                                    <DataTrigger Binding="{Binding DataContext.StorageHealthIsUnknown, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                    </DataTrigger>
                                     <DataTrigger Binding="{Binding DataContext.StorageHealthHasWatch, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
                                         <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                     </DataTrigger>

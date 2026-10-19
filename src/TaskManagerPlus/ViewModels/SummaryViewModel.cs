@@ -82,6 +82,10 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     private bool _storageHealthHasWatch;
     public bool StorageHealthHasWatch { get => _storageHealthHasWatch; private set => SetProperty(ref _storageHealthHasWatch, value); }
 
+    private bool _storageHealthIsUnknown = true;
+    /// <summary>No drive verdicts to summarize (inventory loading or failed) - shown neutral, not green.</summary>
+    public bool StorageHealthIsUnknown { get => _storageHealthIsUnknown; private set => SetProperty(ref _storageHealthIsUnknown, value); }
+
     /// <summary>#934: HealthIssues re-shaped into one row per GroupKey (a standalone finding with
     /// no GroupKey is its own singleton row) - what the Health Check card's ItemsControl actually
     /// binds to now. Rebuilt alongside HealthIssues every RefreshHealthIssues pass.</summary>
@@ -1664,9 +1668,11 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
             StorageHealthSummaryText = "Unknown (drive inventory not loaded yet, or couldn't be read)";
             StorageHealthHasReplace = false;
             StorageHealthHasWatch = false;
+            StorageHealthIsUnknown = true;
             return;
         }
 
+        StorageHealthIsUnknown = false;
         int replace = verdicts.Count(v => v.Level == DriveHealthLevel.Replace);
         int watch = verdicts.Count(v => v.Level == DriveHealthLevel.Watch);
         StorageHealthHasReplace = replace > 0;

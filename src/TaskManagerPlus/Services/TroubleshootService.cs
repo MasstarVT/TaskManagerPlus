@@ -893,7 +893,10 @@ public static class TroubleshootService
 
             var readings = sensors.Sample();
             var fans = readings.Where(r => r.Type == LibreHardwareMonitor.Hardware.SensorType.Fan && r.Value.HasValue).ToList();
-            var temps = readings.Where(r => r.Type == LibreHardwareMonitor.Hardware.SensorType.Temperature && r.Value.HasValue).ToList();
+            // LHM's Intel "Core #N Distance to TjMax" sensors are Temperature-typed but hold the
+            // headroom below TjMax (large when cool), not a temperature.
+            var temps = readings.Where(r => r.Type == LibreHardwareMonitor.Hardware.SensorType.Temperature && r.Value.HasValue
+                && !r.SensorName.Contains("Distance", StringComparison.OrdinalIgnoreCase)).ToList();
 
             if (fans.Count == 0 && temps.Count == 0)
                 return DiagnosticStepResult.Skip("No fan or temperature sensors were found to read.");

@@ -1306,8 +1306,8 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     {
         Baselines.Dispose();
         BackgroundHealth.Dispose();
-        // Delete the evidence-bundle staging and bundle-review extraction folders under %TEMP%
-        // (they can hold unscrubbed logs and dumps).
+        // Delete the evidence-bundle staging and bundle-review extraction folders (they can hold
+        // unscrubbed logs and dumps).
         EvidenceBundle.Dispose();
         BundleReview.Dispose();
         // An app exit mid-capture would otherwise leave the DiagEasy trace session recording.
