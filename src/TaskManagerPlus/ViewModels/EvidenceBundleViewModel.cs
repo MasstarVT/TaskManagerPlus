@@ -120,7 +120,7 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
 
         CollectCommand = new AsyncRelayCommand(CollectAsync, () => IsSetupStage && Items.Any(i => i.IsSelected));
         CancelScrubCommand = new RelayCommand(_ => CancelScrub(), _ => IsScrubReviewStage);
-        ConfirmScrubCommand = new AsyncRelayCommand(FinalizeAsync, () => IsScrubReviewStage);
+        ConfirmScrubCommand = new AsyncRelayCommand(FinalizeAsync, () => IsScrubReviewStage && !_isScrubPreviewRunning);
         AddCustomRedactionCommand = new RelayCommand(_ => AddCustomRedaction(), _ => IsScrubReviewStage && CustomRedactionText.Trim().Length >= 2);
         StartOverCommand = new RelayCommand(_ => ResetToSetup());
         OpenContainingFolderCommand = new RelayCommand(_ => OpenContainingFolder(), _ => IsDoneStage && !string.IsNullOrEmpty(_destinationZipPath));
@@ -176,7 +176,7 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
                 progress.Report("Looking up Wi-Fi SSID (netsh wlan show interfaces)...");
                 _cachedSsid = await ScrubRulesService.TryGetCurrentSsidAsync();
                 _scrubbableFiles = EvidenceBundleService.GetScrubbableFiles(selected, _manifest, _stagingDir);
-                RerunScrubPreview();
+                await RerunScrubPreviewAsync();
                 Stage = EvidenceBundleStage.ScrubReview;
             }
             else
@@ -210,20 +210,45 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
         });
         ScrubRulesService.Save(_scrubRuleSet);
         CustomRedactionText = string.Empty;
-        RerunScrubPreview();
+        _ = RerunScrubPreviewAsync();
     }
 
-    private void RerunScrubPreview()
+    // Bumped per preview so a slower, superseded preview (an earlier rule set) can't land last;
+    // Confirm stays disabled while one is running so it never writes a stale preview.
+    private int _scrubPreviewGeneration;
+    private bool _isScrubPreviewRunning;
+
+    private async Task RerunScrubPreviewAsync()
     {
-        var scrubber = PiiScrubber.Build(_scrubRuleSet, _cachedSsid);
-        var (byPath, summaries) = EvidenceBundleService.PreviewScrub(_scrubbableFiles, scrubber);
-        _pendingScrubbedText = byPath;
-        ScrubResults.Clear();
-        foreach (var s in summaries) ScrubResults.Add(s);
+        int generation = ++_scrubPreviewGeneration;
+        _isScrubPreviewRunning = true;
+        System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+        try
+        {
+            var scrubber = PiiScrubber.Build(_scrubRuleSet, _cachedSsid);
+            var files = _scrubbableFiles;
+            // A full read plus several regex passes per file (msinfo32's report alone is MBs) - off
+            // the dispatcher.
+            var (byPath, summaries) = await Task.Run(() => EvidenceBundleService.PreviewScrub(files, scrubber));
+            if (generation != _scrubPreviewGeneration) return;
+            _pendingScrubbedText = byPath;
+            ScrubResults.Clear();
+            foreach (var s in summaries) ScrubResults.Add(s);
+        }
+        finally
+        {
+            if (generation == _scrubPreviewGeneration)
+            {
+                _isScrubPreviewRunning = false;
+                System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+            }
+        }
     }
 
     private void CancelScrub()
     {
+        _scrubPreviewGeneration++; // drop any preview still running
+        _isScrubPreviewRunning = false;
         CleanupStaging();
         _manifest = null;
         ScrubResults.Clear();
@@ -239,12 +264,8 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
         if (_stagingDir is null || _manifest is null || _destinationZipPath is null) return;
 
         bool wasScrubbed = Stage == EvidenceBundleStage.ScrubReview;
-        if (wasScrubbed)
-        {
-            EvidenceBundleService.ApplyScrubResults(_pendingScrubbedText);
-            _manifest.WasScrubbed = true;
-            RehashScrubbedEntries();
-        }
+        var pendingScrubbedText = _pendingScrubbedText;
+        if (wasScrubbed) _manifest.WasScrubbed = true;
 
         Stage = EvidenceBundleStage.Collecting;
         ProgressLines.Add("Writing manifest.json and index.html...");
@@ -260,11 +281,17 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
         {
             await Task.Run(() =>
             {
+                // File rewrites and re-hashes - off the dispatcher like the zip itself.
+                if (wasScrubbed)
+                {
+                    EvidenceBundleService.ApplyScrubResults(pendingScrubbedText);
+                    RehashScrubbedEntries(manifest, stagingDir, pendingScrubbedText);
+                }
                 EvidenceBundleService.WriteManifest(manifest, stagingDir);
                 var theme = SummarySettingsService.Load().ReportTheme;
                 var html = EvidenceBundleService.BuildIndexHtml(manifest, findings, timeline, specs, theme);
                 File.WriteAllText(Path.Combine(stagingDir, "index.html"), html);
-                EvidenceBundleService.CreateZip(stagingDir, destinationZipPath);
+                EvidenceBundleService.CreateZip(stagingDir, destinationZipPath, manifest);
             });
 
             int successCount = manifest.Entries.Count(e => e.Success);
@@ -288,13 +315,12 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void RehashScrubbedEntries()
+    private static void RehashScrubbedEntries(EvidenceBundleManifest manifest, string stagingDir, Dictionary<string, string> scrubbedTextByPath)
     {
-        if (_manifest is null || _stagingDir is null) return;
-        var scrubbedPaths = new HashSet<string>(_pendingScrubbedText.Keys, StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in _manifest.Entries.Where(e => e.Success))
+        var scrubbedPaths = new HashSet<string>(scrubbedTextByPath.Keys, StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in manifest.Entries.Where(e => e.Success))
         {
-            string fullPath = Path.Combine(_stagingDir, entry.FileName.Replace('/', Path.DirectorySeparatorChar));
+            string fullPath = Path.Combine(stagingDir, entry.FileName.Replace('/', Path.DirectorySeparatorChar));
             if (!scrubbedPaths.Contains(fullPath) || !File.Exists(fullPath)) continue;
             entry.SizeBytes = new FileInfo(fullPath).Length;
             entry.Sha256 = EvidenceBundleService.ComputeSha256(fullPath);

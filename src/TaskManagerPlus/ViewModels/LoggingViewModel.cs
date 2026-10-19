@@ -244,6 +244,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         // error being reported below, not a second one for the app-wide dialog.
         try { _logging.Stop(); }
         catch { /* already stopped - see LoggingService.Stop */ }
+        _pendingMarker = null;
         RaiseLoggingChanged();
         System.Windows.MessageBox.Show(
             $"Logging stopped - couldn't write to {path ?? "the log file"}:\n\n{ex.Message}",
@@ -301,7 +302,11 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
 
         if (++_rollingFlushCountdown < 10) return;
         _rollingFlushCountdown = 0;
+        FlushRollingBuffer();
+    }
 
+    private void FlushRollingBuffer()
+    {
         try
         {
             var dir = Path.GetDirectoryName(RollingBufferPath)!;
@@ -317,11 +322,8 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         }
     }
 
-    private static string Escape(string value)
-    {
-        if (value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) < 0) return value;
-        return "\"" + value.Replace("\"", "\"\"") + "\"";
-    }
+    // Same escaping (including the formula-injection guard) as the manual log's own rows.
+    private static string Escape(string value) => LoggingService.Escape(value);
 
     public void ApplyAxisTheme(System.Windows.Media.Color text, System.Windows.Media.Color separator)
     {
@@ -480,7 +482,18 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     {
         if (IsLogging)
         {
-            try { _logging.Stop(); }
+            try
+            {
+                // A marker added since the last tick would otherwise never reach this file - and
+                // would leak into the next session's (or the rolling buffer's) first row instead.
+                if (_pendingMarker is not null)
+                {
+                    try { WriteRowIfLogging(); }
+                    catch { /* the stop below reports nothing more useful for one lost row */ }
+                }
+                _pendingMarker = null;
+                _logging.Stop();
+            }
             finally { RaiseLoggingChanged(); }
             return;
         }
@@ -648,6 +661,10 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _timer.Stop();
-        _logging.Dispose();
+        // Up to 9 rows since the last periodic flush would otherwise die with the process.
+        if (AutoStartRollingBufferEnabled && !IsLogging && _rollingBuffer.Count > 0)
+            FlushRollingBuffer();
+        try { _logging.Dispose(); }
+        catch { /* final flush failed on a full/removed disk - nothing left to report it to */ }
     }
 }

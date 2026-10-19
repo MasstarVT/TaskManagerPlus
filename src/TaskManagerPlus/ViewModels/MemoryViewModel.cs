@@ -22,15 +22,18 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
 {
     private readonly ProcessHistoryService _processHistory;
     private readonly ProcessesViewModel _processes;
-    private readonly ICollectionView _topMemoryView;
     private readonly DispatcherTimer _leakGrowthTimer;
 
     public PerformanceViewModel Performance { get; }
 
-    /// <summary>All processes, live-sorted by memory descending (or, when
-    /// SortTopMemoryByPrivateWorkingSet is on, by #412 private working set descending instead) -
-    /// for the "Top memory consumers" card.</summary>
-    public ICollectionView TopMemoryProcesses => _topMemoryView;
+    // Rows each "Top ... consumers" card keeps (its ScrollViewer still scrolls past the visible few).
+    private const int TopConsumersShown = 15;
+
+    /// <summary>The top processes by memory descending (or, when SortTopMemoryByPrivateWorkingSet
+    /// is on, by #412 private working set descending instead) - for the "Top memory consumers"
+    /// card. A capped list re-picked once per Performance tick (see RefreshTopConsumers), not a
+    /// live-sorted view over every process in a non-virtualizing ItemsControl.</summary>
+    public ObservableCollection<ProcessRow> TopMemoryProcesses { get; } = new();
 
     /// <summary>#412: toggles TopMemoryProcesses' sort key between total working set (the
     /// original figure - includes pages shared with other processes) and private working set
@@ -43,22 +46,21 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         set
         {
             if (SetProperty(ref _sortTopMemoryByPrivateWorkingSet, value))
-                ApplyTopMemorySort();
+                RefreshTopConsumers();
         }
     }
 
-    /// <summary>Round 8 #32: all processes, live-sorted by nonpaged-pool usage descending (paged
-    /// pool is shown alongside each row rather than as a second sort key) for the "Top
-    /// kernel-pool consumers" card - same "re-sort the already-polling collection" pattern as
+    /// <summary>Round 8 #32: the top processes by nonpaged-pool usage descending (paged pool is
+    /// shown alongside each row rather than as a second sort key) for the "Top kernel-pool
+    /// consumers" card - same "re-sort the already-polling collection" pattern as
     /// TopMemoryProcesses above, no new process sampling.</summary>
-    public ICollectionView TopPoolProcesses { get; }
+    public ObservableCollection<ProcessRow> TopPoolProcesses { get; } = new();
 
-    /// <summary>#413: all processes, live-sorted by private bytes descending - a process's
-    /// contribution to the system commit charge, which is a separate failure mode from working-
-    /// set/physical-RAM exhaustion (TopMemoryProcesses above). A process near the top of this
-    /// list but not the memory list is reserving/committing address space it isn't necessarily
-    /// keeping resident.</summary>
-    public ICollectionView TopCommitProcesses { get; }
+    /// <summary>#413: the top processes by private bytes descending - a process's contribution to
+    /// the system commit charge, which is a separate failure mode from working-set/physical-RAM
+    /// exhaustion (TopMemoryProcesses above). A process near the top of this list but not the
+    /// memory list is reserving/committing address space it isn't necessarily keeping resident.</summary>
+    public ObservableCollection<ProcessRow> TopCommitProcesses { get; } = new();
 
     /// <summary>#403: live-filtered view of the already-polling Processes collection, showing
     /// only rows currently flagged IsHandleLeakSuspect - the "Leak watch" card.</summary>
@@ -354,8 +356,7 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         LeakWatch = leakWatch;
         _processHistory = processHistory;
 
-        _topMemoryView = new CollectionViewSource { Source = processes.Processes }.View;
-        ApplyTopMemorySort();
+        RefreshTopConsumers();
 
         // #429: is the persisted peak from this same boot session, or a stale one from before the
         // machine's last reboot? Compared once here at startup; RefreshHighWaterMark keeps the
@@ -380,6 +381,7 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
             // recomputation, none of which involve any new I/O.
             if (e.PropertyName == nameof(PerformanceViewModel.ModifiedGb))
             {
+                RefreshTopConsumers();
                 RefreshReconciliation();
                 RefreshCommitProjection();
                 RefreshHighWaterMark();
@@ -388,27 +390,6 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
                 RefreshCompressionStats();
             }
         };
-
-        var poolView = new CollectionViewSource { Source = processes.Processes }.View;
-        if (poolView is ICollectionViewLiveShaping poolLiveShaping && poolLiveShaping.CanChangeLiveSorting)
-        {
-            poolLiveShaping.LiveSortingProperties.Add(nameof(ProcessRow.NonpagedPoolBytes));
-            poolLiveShaping.LiveSortingProperties.Add(nameof(ProcessRow.PagedPoolBytes));
-            poolLiveShaping.IsLiveSorting = true;
-        }
-        poolView.SortDescriptions.Add(new SortDescription(nameof(ProcessRow.NonpagedPoolBytes), ListSortDirection.Descending));
-        TopPoolProcesses = poolView;
-
-        // #413: commit-charge ranking (private bytes), independent of the working-set ranking
-        // above - see TopCommitProcesses' remarks for why these two can disagree.
-        var commitView = new CollectionViewSource { Source = processes.Processes }.View;
-        if (commitView is ICollectionViewLiveShaping commitLiveShaping && commitLiveShaping.CanChangeLiveSorting)
-        {
-            commitLiveShaping.LiveSortingProperties.Add(nameof(ProcessRow.PrivateBytes));
-            commitLiveShaping.IsLiveSorting = true;
-        }
-        commitView.SortDescriptions.Add(new SortDescription(nameof(ProcessRow.PrivateBytes), ListSortDirection.Descending));
-        TopCommitProcesses = commitView;
 
         var handleLeakView = new CollectionViewSource { Source = processes.Processes }.View;
         handleLeakView.Filter = o => o is ProcessRow r && r.IsHandleLeakSuspect;
@@ -490,18 +471,28 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         _ = RefreshPageFileConfigAsync();
     }
 
-    private void ApplyTopMemorySort()
+    /// <summary>Re-picks the three "Top ... consumers" cards' rows. The rows are the live
+    /// ProcessRow objects, so their numbers still update every Processes tick; only membership/
+    /// order follows this per-Performance-tick cadence (same approach as SummaryViewModel's Top CPU
+    /// tiles). #413's commit ranking stays independent of the working-set one.</summary>
+    private void RefreshTopConsumers()
     {
-        string property = _sortTopMemoryByPrivateWorkingSet ? nameof(ProcessRow.PrivateWorkingSetBytes) : nameof(ProcessRow.MemoryBytes);
+        var all = _processes.Processes;
+        SyncTop(TopMemoryProcesses, _sortTopMemoryByPrivateWorkingSet
+            ? all.OrderByDescending(p => p.PrivateWorkingSetBytes).Take(TopConsumersShown).ToList()
+            : all.OrderByDescending(p => p.MemoryBytes).Take(TopConsumersShown).ToList());
+        SyncTop(TopCommitProcesses, all.OrderByDescending(p => p.PrivateBytes).Take(TopConsumersShown).ToList());
+        SyncTop(TopPoolProcesses, all.OrderByDescending(p => p.NonpagedPoolBytes).Take(TopConsumersShown).ToList());
+    }
 
-        if (_topMemoryView is ICollectionViewLiveShaping liveShaping && liveShaping.CanChangeLiveSorting)
+    private static void SyncTop(ObservableCollection<ProcessRow> target, List<ProcessRow> top)
+    {
+        for (int i = 0; i < top.Count; i++)
         {
-            liveShaping.LiveSortingProperties.Clear();
-            liveShaping.LiveSortingProperties.Add(property);
-            liveShaping.IsLiveSorting = true;
+            if (i >= target.Count) target.Add(top[i]);
+            else if (!ReferenceEquals(target[i], top[i])) target[i] = top[i];
         }
-        _topMemoryView.SortDescriptions.Clear();
-        _topMemoryView.SortDescriptions.Add(new SortDescription(property, ListSortDirection.Descending));
+        while (target.Count > top.Count) target.RemoveAt(target.Count - 1);
     }
 
     /// <summary>#411: runs SharedMemoryInspectionService.Scan off the UI thread - see its remarks
@@ -816,32 +807,39 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         ReconciledRemainderPercent = Performance.RamTotalGb <= 0 ? 0 : Math.Clamp(remainder / Performance.RamTotalGb * 100.0, -100, 100);
     }
 
-    /// <summary>#428: least-squares slope/R² of Performance.CommittedHistory (in GB, over elapsed
-    /// hours at the current poll interval) extrapolated toward Performance.CommitLimitGb - same
-    /// standard regression formula as ProcessHistoryService.Regress, just over this tab's own
-    /// fixed-size history buffer instead of a per-process sample list. Leading zero entries (the
-    /// buffer's initial fill before the app has been running long enough to overwrite them all)
-    /// are excluded so early-session noise can't fake a dramatic slope.</summary>
+    // #428's own timestamped copy of the committed figure, one entry per Performance tick and the
+    // same length as Performance.CommittedHistory. Timestamped because that buffer's samples carry
+    // no times: spacing them by the *current* poll interval misplaces every sample taken before a
+    // poll-interval change.
+    private readonly List<(DateTime Utc, double Gb)> _commitSamples = new();
+
+    /// <summary>#428: least-squares slope/R² of the committed charge (in GB, over real elapsed
+    /// hours) extrapolated toward Performance.CommitLimitGb - same standard regression formula as
+    /// ProcessHistoryService.Regress, just over this tab's own fixed-size sample window instead of
+    /// a per-process sample list. Zero readings are skipped so early-session noise can't fake a
+    /// dramatic slope.</summary>
     private void RefreshCommitProjection()
     {
-        var samples = Performance.CommittedHistory
-            .Select((value, index) => (Value: value, Index: index))
-            .Where(t => t.Value > 0)
-            .ToList();
+        if (Performance.CommittedGb > 0)
+        {
+            _commitSamples.Add((DateTime.UtcNow, Performance.CommittedGb));
+            while (_commitSamples.Count > Math.Max(1, Performance.CommittedHistory.Count))
+                _commitSamples.RemoveAt(0);
+        }
 
-        if (samples.Count < 10 || Performance.CommitLimitGb <= 0)
+        if (_commitSamples.Count < 10 || Performance.CommitLimitGb <= 0)
         {
             MinutesToCommitLimitExhaustion = null;
             return;
         }
 
-        double intervalHours = Performance.PollIntervalSeconds / 3600.0;
-        double n = samples.Count;
+        var origin = _commitSamples[0].Utc;
+        double n = _commitSamples.Count;
         double sumX = 0, sumY = 0, sumXY = 0, sumXX = 0, sumYY = 0;
-        foreach (var (value, index) in samples)
+        foreach (var (utc, gb) in _commitSamples)
         {
-            double x = index * intervalHours;
-            double y = value / 1024.0 / 1024.0 / 1024.0; // bytes -> GB
+            double x = (utc - origin).TotalHours;
+            double y = gb;
             sumX += x; sumY += y; sumXY += x * y; sumXX += x * x; sumYY += y * y;
         }
 

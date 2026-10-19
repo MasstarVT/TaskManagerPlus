@@ -164,7 +164,7 @@ public sealed class LoggingService : IDisposable
         writer?.Dispose();
     }
 
-    private static string Escape(string value)
+    internal static string Escape(string value)
     {
         // #1063: neutralize spreadsheet formula injection - a field beginning with = + - or @
         // would otherwise be evaluated as a live formula when the exported .csv is opened in

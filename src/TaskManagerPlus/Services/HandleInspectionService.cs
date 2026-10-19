@@ -507,25 +507,85 @@ public static class HandleInspectionService
     /// module tables (a handle's Object, a driver's ImageBase) unless the caller has
     /// SeDebugPrivilege *enabled*. The elevated token holds it disabled, so it's enabled for just
     /// this one query and dropped again - left on, it would quietly widen every other tab's
-    /// OpenProcess access for the rest of the session. Not held (an unelevated run): the query
-    /// still runs, and callers treat a zero pointer as unknown.</summary>
+    /// OpenProcess access for the rest of the session. Only a privilege this call itself enabled is
+    /// dropped again: a token that already had it enabled (run as SYSTEM, or launched from a
+    /// debugger) keeps it. Not held (an unelevated run): the query still runs, and callers treat a
+    /// zero pointer as unknown.</summary>
     internal static T WithDebugPrivilege<T>(Func<T> query)
     {
         lock (DebugPrivilegeLock)
         {
-            bool enabled = false;
-            try { Process.EnterDebugMode(); enabled = true; }
-            catch { /* not held */ }
+            IntPtr token = IntPtr.Zero;
+            var previous = new TOKEN_PRIVILEGES();
+            bool restore = false;
+            try
+            {
+                if (OpenProcessToken(GetCurrentProcess(), TokenAdjustPrivileges | TokenQuery, out token) &&
+                    LookupPrivilegeValue(null, "SeDebugPrivilege", out LUID luid))
+                {
+                    var enable = new TOKEN_PRIVILEGES { PrivilegeCount = 1, Luid = luid, Attributes = SePrivilegeEnabled };
+                    // PreviousState lists only privileges this call actually changed - empty when it
+                    // was already enabled, so there's nothing to put back afterwards.
+                    if (AdjustTokenPrivileges(token, false, ref enable, Marshal.SizeOf<TOKEN_PRIVILEGES>(), ref previous, out _) &&
+                        Marshal.GetLastWin32Error() != ErrorNotAllAssigned)
+                    {
+                        restore = previous.PrivilegeCount > 0;
+                    }
+                }
+            }
+            catch { /* not held / token unavailable - the query still runs */ }
+
             try { return query(); }
             finally
             {
-                if (enabled)
+                if (restore)
                 {
-                    try { Process.LeaveDebugMode(); } catch { /* best-effort */ }
+                    try { AdjustTokenPrivileges(token, false, ref previous, 0, IntPtr.Zero, IntPtr.Zero); }
+                    catch { /* best-effort */ }
                 }
+                if (token != IntPtr.Zero) CloseHandle(token);
             }
         }
     }
+
+    private const uint TokenAdjustPrivileges = 0x0020;
+    private const uint TokenQuery = 0x0008;
+    private const uint SePrivilegeEnabled = 0x00000002;
+    private const int ErrorNotAllAssigned = 1300;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LUID
+    {
+        public uint LowPart;
+        public int HighPart;
+    }
+
+    // Single-entry TOKEN_PRIVILEGES (PrivilegeCount + one LUID_AND_ATTRIBUTES).
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TOKEN_PRIVILEGES
+    {
+        public uint PrivilegeCount;
+        public LUID Luid;
+        public uint Attributes;
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "LookupPrivilegeValueW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool LookupPrivilegeValue(string? systemName, string name, out LUID luid);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AdjustTokenPrivileges(IntPtr tokenHandle, [MarshalAs(UnmanagedType.Bool)] bool disableAllPrivileges,
+        ref TOKEN_PRIVILEGES newState, int bufferLength, ref TOKEN_PRIVILEGES previousState, out int returnLength);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AdjustTokenPrivileges(IntPtr tokenHandle, [MarshalAs(UnmanagedType.Bool)] bool disableAllPrivileges,
+        ref TOKEN_PRIVILEGES newState, int bufferLength, IntPtr previousState, IntPtr returnLength);
 
     // Class 64 - the extended table. The legacy SystemHandleInformation (class 16) carries 16-bit
     // UniqueProcessId/HandleValue fields, which silently truncate the >65535 pids Win10/11 assign

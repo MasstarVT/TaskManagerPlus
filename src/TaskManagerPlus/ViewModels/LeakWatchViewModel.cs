@@ -55,7 +55,11 @@ public sealed class LeakWatchViewModel : ObservableObject, IDisposable
             },
         };
 
-        foreach (var name in _settings.WatchedImageNames.Distinct(StringComparer.OrdinalIgnoreCase))
+        // Hand-edited/corrupt settings can carry a null list or blank names - skip rather than throw
+        // from this startup-path constructor.
+        foreach (var name in (_settings.WatchedImageNames ?? new List<string>())
+                     .Where(n => !string.IsNullOrWhiteSpace(n))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
             WatchedProcesses.Add(new WatchedProcessViewModel(name, HistoryLength));
 
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = SampleInterval };
@@ -156,7 +160,9 @@ public sealed class WatchedProcessViewModel : ObservableObject
     {
         ImageName = imageName;
         _historyLength = historyLength;
-        MemoryHistory = new ObservableCollection<double>(Enumerable.Repeat(0.0, historyLength));
+        // Starts empty, not zero-filled: a seeded run of zeros reads as "this process used 0 bytes
+        // for the last 20 minutes" before the first real sample lands.
+        MemoryHistory = new ObservableCollection<double>();
 
         var (glow, core) = PerformanceViewModel.LineOf(MemoryHistory, SKColors.MediumPurple);
         Series = new ISeries[] { glow, core };

@@ -581,7 +581,7 @@
             <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
                     <!-- Top memory consumers: re-presents the already-polling Processes tab's collection,
-                         live-sorted by memory instead of CPU - see MemoryViewModel. #412: the checkbox
+                         as a capped top-N by memory instead of CPU - see MemoryViewModel. #412: the checkbox
                          below swaps the sort key to private working set (resident, non-shared memory
                          only), so a shared-DLL-heavy process isn't misread as a memory hog. -->
                     <Border Style="{StaticResource CardStyle}">

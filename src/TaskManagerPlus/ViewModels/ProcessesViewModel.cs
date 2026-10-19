@@ -707,6 +707,9 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         // Anything left in latestByPid is a newly-seen process.
         foreach (var row in latestByPid.Values)
         {
+            // A reused PID: the previous holder's exit is already recorded, and leaving its pid in
+            // _exitRecorded would silently drop this new process's own exit later.
+            _exitRecorded.Remove(row.Pid);
             row.CrashCount30d = CrashHistoryCacheService.GetCrashCount(row.Name);
             Processes.Add(row);
             TrackForExit(row.Pid, row.Name);
@@ -759,6 +762,11 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
 
         dispatcher.InvokeAsync(() =>
         {
+            // Stale callback: the merge already removed this process (and the pid may now be
+            // tracked for a new process that reused it) - recording or untracking here would hit
+            // the wrong process.
+            if (!_trackedProcesses.TryGetValue(pid, out var current) || !ReferenceEquals(current, proc))
+                return;
             if (_exitRecorded.Add(pid))
                 AddRecentlyExited(pid, name, exitCode);
             UntrackProcess(pid);
@@ -1226,6 +1234,14 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             Filter = "Dump files (*.dmp)|*.dmp|All files (*.*)|*.*",
         };
         if (dlg.ShowDialog() != true) return;
+
+        // The save dialog can sit open across many poll ticks - same reused-PID re-check as
+        // EndSelected, so the dump is never of an unrelated process that inherited the PID.
+        if (!ProcessMonitorService.IsSameProcess(target.Pid, target.Name, target.StartTime))
+        {
+            StatusMessage = $"Couldn't confirm PID {target.Pid} is still \"{target.Name}\" (it may have exited, or the PID was reused) - no dump was written.";
+            return;
+        }
 
         string path = dlg.FileName;
         int pid = target.Pid;

@@ -99,8 +99,8 @@ public static class ShellExtensionService
                 try
                 {
                     using var sub = key.OpenSubKey(name);
-                    if (sub?.GetValue(null) is string clsid && clsid.Length > 0)
-                        into.Add(("Icon overlay", name, clsid));
+                    if (sub?.GetValue(null) is string clsid && clsid.Trim().Length > 0)
+                        into.Add(("Icon overlay", name, TryNormalizeClsid(clsid, out var normalized) ? normalized : clsid.Trim()));
                 }
                 catch { /* one bad subkey shouldn't stop the rest */ }
             }
@@ -113,8 +113,9 @@ public static class ShellExtensionService
 
     /// <summary>Shared reader for every "&lt;root&gt;\shellex\&lt;HandlerType&gt;" shape this
     /// service walks (#829 widens this beyond context-menu handlers to property sheet/copy hook/
-    /// drag-drop/column handlers - they're all the same "subkey name -&gt; default value is a
-    /// CLSID" registry shape Explorer itself reads).</summary>
+    /// drag-drop/column handlers - they're all the same registry shape Explorer itself reads).
+    /// A handler subkey whose *name* is a GUID is that CLSID itself, and its default value is then
+    /// just a label ("Taskband Pin") or empty; otherwise the default value carries the CLSID.</summary>
     private static void ReadHandlerClsids(List<(string Category, string Name, string Clsid)> into, string path, string category)
     {
         try
@@ -127,11 +128,13 @@ public static class ShellExtensionService
                 try
                 {
                     using var sub = key.OpenSubKey(name);
-                    var raw = sub?.GetValue(null) as string;
-                    // The default value is normally a bare "{guid}" but can carry surrounding
-                    // whitespace/casing quirks on some third-party installers - trim only.
-                    if (!string.IsNullOrWhiteSpace(raw))
-                        into.Add((category, name, raw.Trim()));
+                    // The default value can carry surrounding whitespace on some third-party
+                    // installers - trimmed before use.
+                    var raw = (sub?.GetValue(null) as string)?.Trim();
+                    if (TryNormalizeClsid(name, out var fromName))
+                        into.Add((category, string.IsNullOrEmpty(raw) ? name : raw, fromName));
+                    else if (!string.IsNullOrEmpty(raw))
+                        into.Add((category, name, TryNormalizeClsid(raw, out var fromValue) ? fromValue : raw));
                 }
                 catch { /* one bad subkey shouldn't stop the rest */ }
             }
@@ -140,6 +143,19 @@ public static class ShellExtensionService
         {
             // Key unavailable - contribute nothing from this category.
         }
+    }
+
+    /// <summary>"{XXXXXXXX-...}" in the upper-case braced form the Approved list and CLSID keys
+    /// use, from a GUID written with or without braces; false for anything that isn't a GUID.</summary>
+    private static bool TryNormalizeClsid(string text, out string clsid)
+    {
+        if (Guid.TryParse(text.Trim(), out var guid))
+        {
+            clsid = guid.ToString("B").ToUpperInvariant();
+            return true;
+        }
+        clsid = string.Empty;
+        return false;
     }
 
     private static HashSet<string> ReadApprovedList()
@@ -194,6 +210,10 @@ public static class ShellExtensionService
     public static (bool Success, string? Error) SetApproved(string clsid, string name, bool approved)
     {
         if (string.IsNullOrWhiteSpace(clsid)) return (false, "No CLSID for this entry.");
+        // Never write a label or other non-GUID text as an Approved value name.
+        if (!TryNormalizeClsid(clsid, out var normalized))
+            return (false, $"\"{clsid}\" isn't a valid CLSID, so there's nothing to approve or block.");
+        clsid = normalized;
 
         try
         {

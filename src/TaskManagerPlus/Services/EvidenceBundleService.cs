@@ -210,10 +210,40 @@ public static class EvidenceBundleService
         File.WriteAllText(Path.Combine(stagingDir, "manifest.json"), json);
     }
 
+    /// <summary>Zips the manifest's own file list from the staging folder - see the
+    /// three-argument overload. This one reads that list back from the manifest.json already
+    /// written there (WriteManifest), and throws rather than zip blind if it can't.</summary>
     public static void CreateZip(string stagingDir, string destinationZipPath)
     {
+        var manifest = JsonSerializer.Deserialize<EvidenceBundleManifest>(File.ReadAllText(Path.Combine(stagingDir, "manifest.json")))
+            ?? throw new InvalidDataException("manifest.json is empty.");
+        CreateZip(stagingDir, destinationZipPath, manifest);
+    }
+
+    /// <summary>Zips exactly the files the manifest lists as collected, plus manifest.json and
+    /// index.html - never the whole staging folder. A collector cut off by RunOneCollectorAsync's
+    /// outer timeout keeps running in the background and can still drop a file into the staging
+    /// folder after the scrub pass and the hashes were done; zipping the folder wholesale would ship
+    /// that unscrubbed, unhashed file (or hit it mid-write).</summary>
+    public static void CreateZip(string stagingDir, string destinationZipPath, EvidenceBundleManifest manifest)
+    {
+        var names = (manifest.Entries ?? new List<EvidenceBundleManifestEntry>())
+            .Where(e => e is not null && e.Success && !string.IsNullOrEmpty(e.FileName))
+            .Select(e => e.FileName.Replace('\\', '/'))
+            .Append("manifest.json")
+            .Append("index.html")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        string root = Path.GetFullPath(stagingDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (File.Exists(destinationZipPath)) File.Delete(destinationZipPath);
-        ZipFile.CreateFromDirectory(stagingDir, destinationZipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+        using var zip = ZipFile.Open(destinationZipPath, ZipArchiveMode.Create);
+        foreach (var name in names)
+        {
+            string full = Path.GetFullPath(Path.Combine(stagingDir, name.Replace('/', Path.DirectorySeparatorChar)));
+            if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !File.Exists(full)) continue;
+            zip.CreateEntryFromFile(full, name, CompressionLevel.Optimal);
+        }
     }
 
     // ============================== per-collector dispatch ==============================

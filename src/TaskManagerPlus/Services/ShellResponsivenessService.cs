@@ -60,10 +60,13 @@ public static class ShellResponsivenessService
     {
         try
         {
-            int count = ShellExtensionService.List().Count;
-            return count == 0
-                ? "No registered context-menu/icon-overlay shell extensions found."
-                : $"{count} third-party context-menu/icon-overlay handler(s) registered — a common cause of shell lag.";
+            // List() covers every handler category, Windows' own included - so the third-party
+            // figure is the ones not signed by Microsoft (an unknown signer counts as not).
+            var extensions = ShellExtensionService.List();
+            int nonMicrosoft = extensions.Count(e => !(e.Publisher ?? string.Empty).StartsWith("Microsoft", StringComparison.OrdinalIgnoreCase));
+            return extensions.Count == 0
+                ? "No registered shell extension handlers found."
+                : $"{extensions.Count} shell extension handler(s) registered, {nonMicrosoft} not signed by Microsoft — third-party handlers are a common cause of shell lag.";
         }
         catch (Exception ex)
         {

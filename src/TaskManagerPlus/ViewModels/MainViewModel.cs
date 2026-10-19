@@ -138,8 +138,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (!RemoteMonitor.IsRunning) return "Not running.";
             var addresses = RemoteMonitorService.LocalIPv4Addresses();
             // #97: append the configured token to the suggested URL so the status text itself is
-            // the copy-pasteable address someone would actually open on their phone/tablet.
-            string suffix = string.IsNullOrEmpty(_remoteMonitorSettings.Token) ? string.Empty : $"?token={_remoteMonitorSettings.Token}";
+            // the copy-pasteable address someone would actually open on their phone/tablet. Escaped:
+            // the listener URL-decodes QueryString, so a raw '&', '#', '+' or space would not match.
+            string suffix = string.IsNullOrEmpty(_remoteMonitorSettings.Token) ? string.Empty : $"?token={Uri.EscapeDataString(_remoteMonitorSettings.Token)}";
             return addresses.Count == 0
                 ? $"Running on port {RemoteMonitor.Port}, but no LAN address was found."
                 : $"Open one of these from another device: {string.Join(", ", addresses.Select(a => $"http://{a}:{RemoteMonitor.Port}/{suffix}"))}";
@@ -230,9 +231,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public RelayCommand AddCurrentMachineCommand { get; }
 
-    /// <summary>suggestions.md #1000: the discoverable "Keyboard shortcuts" sheet - a plain,
-    /// non-owned Window construction directly from the ViewModel, the same pattern
-    /// ToggleMiniDashboard already establishes for MiniDashboardWindow below.</summary>
+    /// <summary>suggestions.md #1000: the discoverable "Keyboard shortcuts" sheet - a Window
+    /// constructed directly from the ViewModel (the pattern ToggleMiniDashboard uses for
+    /// MiniDashboardWindow below), owned by the main window once it has loaded so it closes with
+    /// it; one instance at a time.</summary>
     public RelayCommand OpenKeyboardShortcutsCommand { get; }
 
     private bool _isSettingsOpen;
@@ -456,10 +458,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OpenUpdateUrlCommand = new RelayCommand(_ => ExternalLinkService.TryOpen(UpdateUrl));
         _ = CheckForUpdateAsync();
 
-        // suggestions.md #997: one plain synchronous file-tracker comparison at startup - cheap
-        // (a directory listing plus a couple of small JSON reads), same cost class as
-        // UiPreferencesService.Load() above, not worth a Task.Run.
-        UnattendedScanBannerText = UnattendedScanService.CheckAndMarkSeen();
+        // suggestions.md #997: one file-tracker comparison at startup - a directory listing plus
+        // a JSON read per scan folder since the last launch (a week away means seven), so it runs
+        // off the UI thread rather than delaying the first window.
+        _ = LoadUnattendedScanBannerAsync();
         DismissUnattendedScanBannerCommand = new RelayCommand(_ => UnattendedScanBannerText = null);
         // Creating/deleting a SYSTEM scheduled task is a persistent system change - gated by
         // read-only mode like every other mutating command.
@@ -704,6 +706,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         UpdateAvailableText = $"A newer version is available: {tag}";
         if (!string.IsNullOrWhiteSpace(url)) UpdateUrl = url!;
+    }
+
+    /// <summary>#997: CheckAndMarkSeen never throws (null on any failure); the result lands back
+    /// on the UI thread via the constructor's dispatcher context.</summary>
+    private async Task LoadUnattendedScanBannerAsync()
+    {
+        string? text;
+        try { text = await Task.Run(UnattendedScanService.CheckAndMarkSeen); }
+        catch { text = null; }
+        UnattendedScanBannerText = text;
     }
 
     private void ToggleMiniDashboard()

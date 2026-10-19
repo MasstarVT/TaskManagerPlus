@@ -170,14 +170,14 @@ public static class UnattendedScanService
 
             var newScanDirs = allScanDirs.Where(x => x.Time > tracker.LastSeenUtc).ToList();
 
-            // Recompute the full rule-id set across EVERY scan folder present (not just the new
-            // ones) - what "already known" means for the NEXT check, regardless of whether this
-            // pass has anything new to report.
-            var allKnownRuleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // Only the new folders are read: everything older was already folded into the
+            // tracker's KnownRuleIds on an earlier launch, and a nightly scan adds a folder a day,
+            // so re-parsing all of them would grow the startup cost without bound.
             var previouslyKnown = new HashSet<string>(tracker.KnownRuleIds, StringComparer.OrdinalIgnoreCase);
+            var allKnownRuleIds = new HashSet<string>(previouslyKnown, StringComparer.OrdinalIgnoreCase);
             var newRuleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var (dir, _) in allScanDirs)
+            foreach (var (dir, _) in newScanDirs)
             {
                 foreach (var ruleId in ReadRuleIds(dir))
                 {
@@ -210,7 +210,7 @@ public static class UnattendedScanService
         catch { /* one malformed scan file shouldn't break the rest of the comparison */ }
 
         foreach (var f in findings ?? new List<HealthIssue>())
-            if (f.RuleId is { Length: > 0 } id)
+            if (f?.RuleId is { } id && !string.IsNullOrWhiteSpace(id))
                 yield return id;
     }
 
@@ -224,7 +224,15 @@ public static class UnattendedScanService
             if (File.Exists(TrackerPath))
             {
                 var loaded = JsonSerializer.Deserialize<Tracker>(File.ReadAllText(TrackerPath));
-                if (loaded is not null) return loaded;
+                if (loaded is not null)
+                {
+                    // Valid JSON can still carry an explicit null list or null/blank ids.
+                    loaded.KnownRuleIds = (loaded.KnownRuleIds ?? new List<string>())
+                        .Where(id => !string.IsNullOrWhiteSpace(id))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    return loaded;
+                }
             }
         }
         catch { /* corrupt/missing tracker - fall back to defaults, same as every other settings file in this app */ }

@@ -452,6 +452,13 @@ public sealed class SchedulerService
     private const int StuckSustainedSamplesRequired = 3;
     private const int MaxStuckHints = 10;
 
+    // Wr* reasons a perfectly healthy idle thread parks in: a message loop (WrUserRequest), a
+    // thread-pool/IOCP worker (WrQueue), an ALPC server listening (WrLpcReceive), Sleep
+    // (WrDelayExecution), a suspended thread, and condition-variable/WaitOnAddress waits
+    // (WrAlertByThreadId - also how idle pool workers park, so it can't be told apart from a
+    // user-mode lock wait here). An all-idle process is idle, not stuck.
+    private static readonly HashSet<int> IdleWaitReasons = new() { 11, 12, 13, 15, 16, 37 };
+
     /// <summary>#272: flags a process where *every* thread has been in a Wr* (wait-type) state for
     /// several consecutive sweeps with zero context-switch delta each time - what a deadlocked or
     /// fully-blocked process looks like from the outside, sampled over a few ticks of the same sweep
@@ -472,8 +479,11 @@ public sealed class SchedulerService
             var threads = group.ToList();
             seenPids.Add(pid);
 
+            // Every thread in a Wr* wait, and at least one of them a blocking one (lock, reply,
+            // resource) rather than an idle park - see IdleWaitReasons.
             bool allWaitingOnWr = threads.Count > 0 && threads.All(t =>
-                t.ThreadState == ThreadStateWaiting && WaitReasonName(t.WaitReason).StartsWith("Wr", StringComparison.Ordinal));
+                t.ThreadState == ThreadStateWaiting && WaitReasonName(t.WaitReason).StartsWith("Wr", StringComparison.Ordinal))
+                && threads.Any(t => !IdleWaitReasons.Contains(t.WaitReason));
 
             bool allZeroCsDelta = allWaitingOnWr && threads.All(t =>
             {
@@ -494,7 +504,7 @@ public sealed class SchedulerService
                     Pid = pid,
                     ProcessName = NameOrPid(group.Key.ProcessName, pid),
                     ConsecutiveSamples = streak,
-                    HintText = $"Every thread in this process has been waiting (Wr*) with no context-switch activity for {streak} consecutive samples - looks deadlocked or fully blocked from the outside. Quick flag, not a verdict: run a wait-chain analysis (#271) to actually confirm it.",
+                    HintText = $"Every thread in this process has been waiting (Wr*, at least one on a lock or reply rather than an idle message/queue wait) with no context-switch activity for {streak} consecutive samples - looks deadlocked or fully blocked from the outside. Quick flag, not a verdict: run a wait-chain analysis to actually confirm it.",
                 });
             }
         }

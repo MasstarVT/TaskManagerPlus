@@ -765,13 +765,13 @@
                 <HierarchicalDataTemplate ItemsSource="{Binding Children}">
                     <StackPanel Orientation="Horizontal" Margin="0,2">
                         <TextBlock Text="{Binding Row.Name}" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding Row.Pid, StringFormat=  (PID {0})}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Text="{Binding Row.Pid, StringFormat='{}  (PID {0})'}" Foreground="{DynamicResource TextSecondaryBrush}" />
                         <TextBlock Foreground="{DynamicResource TextSecondaryBrush}" Margin="10,0,0,0">
                             <Run Text="{Binding Row.CpuPercent, Mode=OneWay, StringFormat={}{0:0.0}% CPU}" />
                             <Run Text=" · " />
                             <Run Text="{Binding Row.MemoryBytes, Mode=OneWay, Converter={StaticResource BytesToReadableConverter}}" />
                         </TextBlock>
-                        <TextBlock Text="{Binding Row.SpawnGroupSize, StringFormat= · group of {0}}" Foreground="{DynamicResource WarningBrush}"
+                        <TextBlock Text="{Binding Row.SpawnGroupSize, StringFormat='{} · group of {0}'}" Foreground="{DynamicResource WarningBrush}"
                                    FontSize="{StaticResource FontBody}" VerticalAlignment="Center">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
@@ -1215,6 +1215,67 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" Margin="0,0,0,2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <!-- Wait chain result (AnalyzeWaitChainCommand) - an indented list, matching Resource
+                     Monitor's own "Analyze Wait Chain" display. Collapsed until something's analysed. -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding WaitChainResults.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Wait chain" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding WaitChainResults}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" Margin="0,0,0,2" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </StackPanel>
+                </Border>
+
+                <!-- Wait Chain Traversal result (AnalyzeWaitChainDetailedCommand - context menu, or
+                     the inline "Analyze" link on a flagged row). Shown once a status or node exists. -->
+                <Border Padding="12,8" Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Margin="0,0,0,6">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding WaitChainNodes.Count}" Value="0" />
+                                        <Condition Binding="{Binding WaitChainStatusText, Converter={StaticResource StringNotEmptyConverter}}" Value="False" />
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel>
+                        <TextBlock Text="Wait chain analysis (detailed)" Style="{StaticResource SubStat}" Margin="0,0,0,6" />
+                        <TextBlock Text="{Binding WaitChainStatusText}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,4"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <ItemsControl ItemsSource="{Binding WaitChainNodes}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontSize="{StaticResource FontBody}" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,2">
+                                        <Run Text="{Binding IndentLevel, Mode=OneWay, StringFormat=\{0\}: }" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        <Run Text="{Binding Description, Mode=OneWay}" />
+                                    </TextBlock>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
