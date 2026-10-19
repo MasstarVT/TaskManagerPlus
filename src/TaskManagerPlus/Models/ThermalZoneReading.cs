@@ -14,17 +14,17 @@ public sealed class ThermalZoneReading
     /// not a friendly name; Windows doesn't expose one.</summary>
     public string ZoneName { get; init; } = string.Empty;
 
-    /// <summary>From the "Temperature" counter (raw ACPI tenths-of-Kelvin, converted to °C) -
-    /// null when this particular zone/BIOS doesn't populate it.</summary>
+    /// <summary>From the "Temperature" counter (whole Kelvin, converted to °C) - null when this
+    /// particular zone/BIOS doesn't populate it (reads 0).</summary>
     public double? TemperatureC { get; init; }
 
     /// <summary>From the "High Precision Temperature" counter, when present - finer-grained than
     /// "Temperature" on hardware that supports it.</summary>
     public double? HighPrecisionTemperatureC { get; init; }
 
-    /// <summary>From the "Throttle Percentage" counter - how much this zone is currently telling
-    /// Windows to throttle, 0-100. Null when not exposed (most systems only ever report the
-    /// passive-limit percentage below).</summary>
+    /// <summary>How much this zone is currently telling Windows to throttle, 0-100 - derived as
+    /// 100 minus "% Passive Limit" (there is no "Throttle Percentage" counter). Null when the
+    /// zone doesn't expose a passive limit.</summary>
     public double? ThrottlePercent { get; init; }
 
     /// <summary>From the "% Passive Limit" counter - the passive-cooling processor-frequency cap
