@@ -119,6 +119,7 @@ public static class UpgradeReadinessService
             SecureBootEnabled = security.SecureBootEnabled,
             SystemDiskIsMbr = firmwareDisk.IsHardBlocker,
             SystemDiskPartitionStyle = firmwareDisk.SystemDiskPartitionStyle,
+            FirmwareType = string.IsNullOrWhiteSpace(firmwareDisk.FirmwareType) ? "Unknown" : firmwareDisk.FirmwareType,
             SystemDriveFreeBytes = systemDriveFree,
             EspFound = espFound,
             EspFreeBytes = espFree,

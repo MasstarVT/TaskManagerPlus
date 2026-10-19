@@ -1616,6 +1616,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
             SecureBootEnabled = current.SecureBootEnabled,
             SystemDiskIsMbr = current.SystemDiskIsMbr,
             SystemDiskPartitionStyle = current.SystemDiskPartitionStyle,
+            FirmwareType = current.FirmwareType,
             SystemDriveFreeBytes = current.SystemDriveFreeBytes,
             EspFound = current.EspFound,
             EspFreeBytes = current.EspFreeBytes,

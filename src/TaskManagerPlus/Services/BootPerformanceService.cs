@@ -804,7 +804,7 @@ public static class BootPerformanceService
     /// has no known end and is skipped rather than guessed; the newest open session runs to now.
     /// Only covers what the System log still retains. Returns (null, null) when the log can't be
     /// read or holds no session started this year.</summary>
-    public static (TimeSpan? ThisMonth, TimeSpan? ThisYear) ComputeLongestUptimeRecords()
+    public static (TimeSpan? ThisMonth, TimeSpan? ThisYear, bool ReadOk) ComputeLongestUptimeRecords()
     {
         var now = DateTime.Now;
         var sessions = new List<(DateTime Start, TimeSpan Duration)>();
@@ -838,14 +838,14 @@ public static class BootPerformanceService
         }
         catch
         {
-            return (null, null);
+            return (null, null, false);
         }
 
         TimeSpan? thisMonth = sessions.Where(s => s.Start.Year == now.Year && s.Start.Month == now.Month)
             .Select(s => (TimeSpan?)s.Duration).OrderByDescending(d => d).FirstOrDefault();
         TimeSpan? thisYear = sessions.Where(s => s.Start.Year == now.Year)
             .Select(s => (TimeSpan?)s.Duration).OrderByDescending(d => d).FirstOrDefault();
-        return (thisMonth, thisYear);
+        return (thisMonth, thisYear, true);
     }
 
     public static List<BootHistoryEntry> LoadHistory()

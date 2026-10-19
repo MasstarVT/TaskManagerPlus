@@ -616,6 +616,9 @@ public sealed class UpgradeReadinessSnapshot
     public bool SystemDiskIsMbr { get; init; }
     /// <summary>"GPT", "MBR" or "Unknown" (MSFT_Disk unreadable) - see SystemSpecsService.ReadFirmwareDiskInfo.</summary>
     public string SystemDiskPartitionStyle { get; init; } = "Unknown";
+    /// <summary>"UEFI", "Legacy BIOS", "Legacy BIOS (assumed ...)" or "Unknown" - see
+    /// SystemSpecsService.ReadFirmwareDiskInfo.</summary>
+    public string FirmwareType { get; init; } = "Unknown";
     public long? SystemDriveFreeBytes { get; init; }
     public bool EspFound { get; init; }
     public long? EspFreeBytes { get; init; }
@@ -637,6 +640,8 @@ public sealed class UpgradeReadinessSnapshot
                 items.Add("TPM status couldn't be read.");
             if (string.Equals(SystemDiskPartitionStyle, "Unknown", StringComparison.OrdinalIgnoreCase))
                 items.Add("The system disk's partition style (GPT/MBR) couldn't be read.");
+            if (string.Equals(FirmwareType, "Unknown", StringComparison.OrdinalIgnoreCase))
+                items.Add("The firmware type (UEFI or legacy BIOS) couldn't be read.");
             if (SystemDriveFreeBytes is null)
                 items.Add("Free space on the system drive couldn't be read.");
             return items;

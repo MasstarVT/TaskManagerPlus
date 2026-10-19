@@ -346,19 +346,20 @@ public sealed class SystemSpecsViewModel : ObservableObject
             // follows for its own EventLogService.Query() call) so a Refresh click can no longer
             // visibly freeze the UI thread.
             var specs = await Task.Run(() => _service.QueryAsync());
-            var (uptimeMonth, uptimeYear) = await Task.Run(() => BootPerformanceService.ComputeLongestUptimeRecords());
+            var (uptimeMonth, uptimeYear, uptimeReadOk) = await Task.Run(() => BootPerformanceService.ComputeLongestUptimeRecords());
             // #690: fresh Kernel-PnP scan, merged with the persisted (WM_DISPLAYCHANGE-sourced)
             // history below - see DisplayChangeHistory's own remarks.
             var pnpEvents = await Task.Run(() => _eventLog.ReadMonitorPnpEvents());
             Apply(specs);
             // A session this year but none this month means the read worked and the current
-            // session simply began last month. (null, null) still covers both "none found" and an
-            // unreadable source - ComputeLongestUptimeRecords doesn't say which.
-            LongestUptimeThisMonthText = uptimeMonth is { } m ? FormatUptime(m)
+            // session simply began last month.
+            LongestUptimeThisMonthText = !uptimeReadOk ? "Unknown (the System log couldn't be read)"
+                : uptimeMonth is { } m ? FormatUptime(m)
                 : uptimeYear is not null ? "No boot session started this month yet"
-                : "Unknown (no boot session found, or the System log couldn't be read)";
-            LongestUptimeThisYearText = uptimeYear is { } y ? FormatUptime(y)
-                : "Unknown (no boot session found, or the System log couldn't be read)";
+                : "No boot session found";
+            LongestUptimeThisYearText = !uptimeReadOk ? "Unknown (the System log couldn't be read)"
+                : uptimeYear is { } y ? FormatUptime(y)
+                : "No boot session found";
             ApplyDisplayChangeHistory(pnpEvents);
             RefreshErrorText = null;
             HasLoaded = true;
