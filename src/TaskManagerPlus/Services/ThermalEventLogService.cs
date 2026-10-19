@@ -114,15 +114,17 @@ public sealed class ThermalEventLogService
                 {
                     var entry = JsonSerializer.Deserialize<ThermalEventLogEntry>(line);
                     if (entry is null) continue;
+                    // An explicit null Title/Detail is blanked rather than losing the line.
+                    string title = entry.Title ?? string.Empty;
                     events.Add(new TimelineEvent
                     {
                         Lane = TimelineLane.ThermalEvents,
                         Timestamp = entry.Timestamp,
-                        Title = entry.Title,
-                        Detail = entry.Detail,
+                        Title = title,
+                        Detail = entry.Detail ?? string.Empty,
                         Source = "thermal-events.jsonl",
-                        IsFailure = entry.Title.Contains("started", StringComparison.OrdinalIgnoreCase) ||
-                                    entry.Title.Contains("(above)", StringComparison.OrdinalIgnoreCase),
+                        IsFailure = title.Contains("started", StringComparison.OrdinalIgnoreCase) ||
+                                    title.Contains("(above)", StringComparison.OrdinalIgnoreCase),
                     });
                 }
                 catch { /* one malformed line shouldn't stop the rest of the read */ }

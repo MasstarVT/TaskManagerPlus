@@ -60,7 +60,20 @@ public static class TracerouteBaselineService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var file = JsonSerializer.Deserialize<TracerouteBaselineFile>(json);
-                if (file is not null) return file;
+                if (file is not null)
+                {
+                    // SaveBaseline calls Name.Equals on every baseline and Diff walks Hops - explicit
+                    // nulls from a hand edit are dropped or blanked. Diff's DP table is hops x hops,
+                    // so a baseline is also capped at 255 hops (the IP TTL ceiling).
+                    file.Baselines = file.Baselines?.Where(b => b is not null).ToList() ?? new List<TracerouteBaseline>();
+                    foreach (var b in file.Baselines)
+                    {
+                        b.Name ??= string.Empty;
+                        b.Host ??= string.Empty;
+                        b.Hops = b.Hops?.Where(h => h is not null).Take(255).ToList() ?? new List<TracerouteBaselineHop>();
+                    }
+                    return file;
+                }
             }
         }
         catch

@@ -28,7 +28,9 @@ public static class ThrottleHistoryService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<ThrottleEpisode>>(json);
-                if (list is not null) return list.OrderBy(e => e.Start).ToList();
+                // Null elements dropped first - one would throw inside OrderBy and the next save
+                // would then overwrite the whole history.
+                if (list is not null) return list.Where(e => e is not null).OrderBy(e => e.Start).ToList();
             }
         }
         catch

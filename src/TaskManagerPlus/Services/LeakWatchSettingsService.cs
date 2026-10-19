@@ -18,12 +18,23 @@ public static class LeakWatchSettingsService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var settings = JsonSerializer.Deserialize<LeakWatchSettings>(json);
-                if (settings is not null) return settings;
+                if (settings?.WatchedImageNames is not null)
+                {
+                    // LeakWatchViewModel's constructor builds one row per name - drop null/blank
+                    // names from a hand edit rather than throw there.
+                    var names = settings.WatchedImageNames.Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
+                    if (names.Count != settings.WatchedImageNames.Count) AppPaths.MarkUnreadable(SettingsPath);
+                    settings.WatchedImageNames = names;
+                    return settings;
+                }
+                AppPaths.MarkUnreadable(SettingsPath);
             }
         }
         catch
         {
-            // Corrupt or unreadable settings file - fall back to defaults.
+            // Corrupt or unreadable settings file - fall back to defaults, keeping a copy of the
+            // user's file for the next Save.
+            AppPaths.MarkUnreadable(SettingsPath);
         }
         return LeakWatchSettings.Defaults;
     }
@@ -32,6 +43,7 @@ public static class LeakWatchSettingsService
     {
         try
         {
+            if (!AppPaths.PreserveUnreadable(SettingsPath)) return;
             var dir = Path.GetDirectoryName(SettingsPath)!;
             Directory.CreateDirectory(dir);
             var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });

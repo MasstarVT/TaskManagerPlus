@@ -163,7 +163,11 @@ public static class AppPaths
             if (File.Exists(TechnicianModeStatePath))
             {
                 var state = JsonSerializer.Deserialize<TechnicianModeState>(File.ReadAllText(TechnicianModeStatePath));
-                if (!string.IsNullOrWhiteSpace(state?.SelectedMachine)) return state!.SelectedMachine;
+                // The name becomes a path segment under Settings\Machines\ - a rooted value, ".." or
+                // a separator would point every settings file this process writes somewhere else.
+                if (state?.SelectedMachine is { Length: > 0 } machine && machine.Trim() is not ("" or "." or "..")
+                    && SanitizeForFileSystem(machine) == machine && !Path.IsPathRooted(machine))
+                    return machine;
             }
         }
         catch { /* corrupt/unreadable state file - fall back to the flat folder, same as every
@@ -189,5 +193,42 @@ public static class AppPaths
         parts[0] = SettingsDirectory;
         Array.Copy(segments, 0, parts, 1, segments.Length);
         return Path.Combine(parts);
+    }
+
+    // ---- user-authored settings files that failed to load ----
+
+    private static readonly HashSet<string> UnreadableFiles = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Called by a user-authored settings file's Load (saved filters, watchlists, notes,
+    /// recipes, rules, thresholds, dashboard layout) when the file exists but couldn't be parsed or
+    /// its loader had to drop entries, so <see cref="PreserveUnreadable"/> keeps a copy before the
+    /// next Save replaces the user's data with the defaults Load fell back to.</summary>
+    public static void MarkUnreadable(string path)
+    {
+        lock (UnreadableFiles) UnreadableFiles.Add(path);
+    }
+
+    /// <summary>Call right before a Save overwrites <paramref name="path"/>: if Load marked it,
+    /// copies it once to "&lt;file&gt;.corrupt-&lt;yyyyMMddHHmmss&gt;.bak" beside it. Returns false
+    /// when that copy failed - the caller then skips the write rather than destroy the only copy.
+    /// Done at save time, not load time, so a damaged file that is never re-saved doesn't leave a
+    /// new .bak behind on every launch.</summary>
+    public static bool PreserveUnreadable(string path)
+    {
+        lock (UnreadableFiles)
+        {
+            if (!UnreadableFiles.Contains(path)) return true;
+            try
+            {
+                if (File.Exists(path))
+                    File.Copy(path, $"{path}.corrupt-{DateTime.Now:yyyyMMddHHmmss}.bak", overwrite: false);
+                UnreadableFiles.Remove(path);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 }

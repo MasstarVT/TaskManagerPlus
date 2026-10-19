@@ -23,7 +23,14 @@ public static class FanMaxRpmService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<FanMaxRpmEntry>>(json);
-                if (list is not null) return list;
+                // EnergyThermalsViewModel's constructor does ToDictionary(Identifier) on this - a
+                // null entry, null identifier or duplicate from a hand edit would throw there. One
+                // entry per identifier (ordinal, the dictionary's comparer), keeping the highest.
+                if (list is not null)
+                    return list.Where(e => e is not null && !string.IsNullOrEmpty(e.Identifier))
+                        .GroupBy(e => e.Identifier, StringComparer.Ordinal)
+                        .Select(g => g.MaxBy(e => e.HistoricalMaxRpm)!)
+                        .ToList();
             }
         }
         catch

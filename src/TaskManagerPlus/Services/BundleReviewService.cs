@@ -57,17 +57,31 @@ public static class BundleReviewService
                 foreach (var file in Directory.GetFiles(baselinesDir, "*.json"))
                 {
                     var b = ReadJson<PerformanceBaseline>(file);
-                    if (b is not null) baselines.Add(b);
+                    if (b is not null) baselines.Add(BaselineService.Sanitize(b));
                 }
             }
         }
         catch { /* best-effort - see class remarks */ }
 
+        // A bundle is foreign data: null array elements would throw in the sort below (after the
+        // extraction, leaking its temp folder) or reach the review grids as null rows.
+        if (manifest.Entries is null || manifest.Entries.Any(e => e is null))
+        {
+            manifest = new EvidenceBundleManifest
+            {
+                GeneratedAtUtc = manifest.GeneratedAtUtc,
+                MachineName = manifest.MachineName,
+                AppVersion = manifest.AppVersion,
+                WasScrubbed = manifest.WasScrubbed,
+                Entries = manifest.Entries?.Where(e => e is not null).ToList() ?? new List<EvidenceBundleManifestEntry>(),
+            };
+        }
+
         return new LoadedBundle
         {
             Manifest = manifest,
-            Findings = findings,
-            TimelineEvents = timeline.OrderByDescending(e => e.Timestamp).ToList(),
+            Findings = findings.Where(f => f is not null).ToList(),
+            TimelineEvents = timeline.Where(e => e is not null).OrderByDescending(e => e.Timestamp).ToList(),
             Baselines = baselines.OrderBy(b => b.CapturedAt).ToList(),
             ExtractedDirectory = extractDir,
         };

@@ -30,12 +30,24 @@ public static class StutterTriggerRulesService
                 // A deliberately-saved empty rule list (the user removed every rule) is respected
                 // as-is - only a null Rules (a genuinely malformed/older-shaped file) falls back to
                 // the factory defaults below.
-                if (settings is { Rules: not null }) return settings;
+                if (settings is { Rules: not null })
+                {
+                    // ResponsivenessViewModel evaluates every rule on its tick - a null rule would
+                    // throw there, and an integer Kind the enum doesn't define (the string-enum
+                    // converter accepts integers) could never trip.
+                    var rules = settings.Rules.Where(r => r is not null && Enum.IsDefined(r.Kind)).ToList();
+                    if (rules.Count != settings.Rules.Count) AppPaths.MarkUnreadable(SettingsPath);
+                    settings.Rules = rules;
+                    return settings;
+                }
+                AppPaths.MarkUnreadable(SettingsPath);
             }
         }
         catch
         {
-            // Corrupt/unreadable settings file - fall back to defaults.
+            // Corrupt/unreadable settings file - fall back to defaults, keeping a copy of the
+            // user's file for the next Save.
+            AppPaths.MarkUnreadable(SettingsPath);
         }
         return StutterTriggerRulesSettings.Defaults;
     }
@@ -44,6 +56,7 @@ public static class StutterTriggerRulesService
     {
         try
         {
+            if (!AppPaths.PreserveUnreadable(SettingsPath)) return;
             Directory.CreateDirectory(AppPaths.SettingsDirectory);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
         }

@@ -44,7 +44,20 @@ public static class DhcpServerBaselineService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var file = JsonSerializer.Deserialize<DhcpServerBaselineFile>(json);
-                if (file is not null) return file;
+                if (file is not null)
+                {
+                    // CheckAndUpdate/GetLastKnownDhcpSubnet read .Length on these strings - explicit
+                    // nulls from a hand edit are dropped (entries) or blanked (fields).
+                    file.Entries = file.Entries?.Where(e => e is not null).ToList() ?? new List<DhcpServerBaselineEntry>();
+                    foreach (var e in file.Entries)
+                    {
+                        e.AdapterMac ??= string.Empty;
+                        e.DhcpServer ??= string.Empty;
+                        e.LeasedIp ??= string.Empty;
+                        e.SubnetMask ??= string.Empty;
+                    }
+                    return file;
+                }
             }
         }
         catch

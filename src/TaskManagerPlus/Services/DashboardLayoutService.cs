@@ -25,13 +25,20 @@ public static class DashboardLayoutService
                 // A hand-edited file can carry null elements, "Id": null or duplicate Ids -
                 // SummaryViewModel.BuildTiles keys a dictionary on Id inside its constructor.
                 if (tiles is not null)
-                    return tiles.Where(t => t is not null && !string.IsNullOrEmpty(t.Id))
+                {
+                    var clean = tiles.Where(t => t is not null && !string.IsNullOrEmpty(t.Id))
                         .GroupBy(t => t.Id).Select(g => g.First()).ToList();
+                    if (clean.Count != tiles.Count) AppPaths.MarkUnreadable(SettingsPath);
+                    return clean;
+                }
+                AppPaths.MarkUnreadable(SettingsPath);
             }
         }
         catch
         {
-            // Corrupt or unreadable settings file - fall back to the built-in default layout.
+            // Corrupt or unreadable settings file - fall back to the built-in default layout, and
+            // keep a copy of the user's file before the next Save replaces it.
+            AppPaths.MarkUnreadable(SettingsPath);
         }
         return new List<DashboardTileConfig>();
     }
@@ -40,6 +47,7 @@ public static class DashboardLayoutService
     {
         try
         {
+            if (!AppPaths.PreserveUnreadable(SettingsPath)) return;
             var dir = Path.GetDirectoryName(SettingsPath)!;
             Directory.CreateDirectory(dir);
             var json = JsonSerializer.Serialize(tiles, new JsonSerializerOptions { WriteIndented = true });

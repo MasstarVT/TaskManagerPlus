@@ -22,20 +22,42 @@ public static class EventFilterSettingsService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var settings = JsonSerializer.Deserialize<EventFilterSettings>(json);
-                if (settings is not null) return settings;
+                if (settings?.Filters is not null) return Sanitize(settings);
+                AppPaths.MarkUnreadable(SettingsPath);
             }
         }
         catch
         {
-            // Corrupt or unreadable settings file - fall back to the built-in presets.
+            // Corrupt or unreadable settings file - fall back to the built-in presets, keeping a
+            // copy of the user's file for the next Save.
+            AppPaths.MarkUnreadable(SettingsPath);
         }
         return EventFilterSettings.Defaults;
+    }
+
+    /// <summary>EventsViewModel enumerates Filters while it is being constructed and reads
+    /// Channels.Count/XPath when one is applied - explicit nulls in a hand-edited file would throw
+    /// there, so null filters are dropped and null lists/text replaced.</summary>
+    private static EventFilterSettings Sanitize(EventFilterSettings settings)
+    {
+        var filters = settings.Filters.Where(f => f is not null).ToList();
+        if (filters.Count != settings.Filters.Count) AppPaths.MarkUnreadable(SettingsPath);
+        foreach (var f in filters)
+        {
+            f.Name ??= string.Empty;
+            f.XPath = string.IsNullOrWhiteSpace(f.XPath) ? "*" : f.XPath;
+            f.Channels = f.Channels?.Where(c => !string.IsNullOrWhiteSpace(c)).ToList() ?? new List<string>();
+            f.Columns = f.Columns?.Where(c => !string.IsNullOrWhiteSpace(c)).ToList() ?? new List<string>();
+        }
+        settings.Filters = filters;
+        return settings;
     }
 
     public static void Save(EventFilterSettings settings)
     {
         try
         {
+            if (!AppPaths.PreserveUnreadable(SettingsPath)) return;
             var dir = Path.GetDirectoryName(SettingsPath)!;
             Directory.CreateDirectory(dir);
             var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });

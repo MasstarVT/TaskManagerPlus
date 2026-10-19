@@ -27,7 +27,9 @@ public static class DisplayChangeHistoryService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<DisplayChangeEvent>>(json);
-                if (list is not null) return list.OrderByDescending(e => e.TimeCreated).ToList();
+                // Null elements dropped first - one would throw inside OrderByDescending and the
+                // next Append would then overwrite the whole history.
+                if (list is not null) return list.Where(e => e is not null).OrderByDescending(e => e.TimeCreated).ToList();
             }
         }
         catch

@@ -48,6 +48,16 @@ public static class FreeSpaceHistoryService
                 var store = JsonSerializer.Deserialize<FreeSpaceHistoryStore>(json);
                 if (store is not null)
                 {
+                    // System.Text.Json returns a case-sensitive dictionary (or null), and RecordSample
+                    // reads list.Count / list[^1].Date outside any try - rebuilt case-insensitively
+                    // with null drives/lists/points from a hand edit dropped.
+                    var byDrive = new Dictionary<string, List<FreeSpaceDailyPoint>>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var (drive, points) in store.ByDrive ?? new Dictionary<string, List<FreeSpaceDailyPoint>>())
+                    {
+                        if (string.IsNullOrWhiteSpace(drive) || points is null) continue;
+                        byDrive.TryAdd(drive, points.Where(p => p is not null).OrderBy(p => p.Date).TakeLast(MaxDaysPerDrive).ToList());
+                    }
+                    store.ByDrive = byDrive;
                     _cache = store;
                     return _cache;
                 }

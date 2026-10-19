@@ -25,7 +25,9 @@ public static class StressTestHistoryService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<StressTestHistoryEntry>>(json);
-                if (list is not null) return list.OrderByDescending(e => e.Timestamp).ToList();
+                // Null elements dropped first - one would throw inside OrderByDescending and the
+                // next save would then overwrite the whole history.
+                if (list is not null) return list.Where(e => e is not null).OrderByDescending(e => e.Timestamp).ToList();
             }
         }
         catch

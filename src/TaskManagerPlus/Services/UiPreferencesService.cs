@@ -19,7 +19,13 @@ public static class UiPreferencesService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var prefs = JsonSerializer.Deserialize<UiPreferences>(json);
-                if (prefs is not null) return prefs;
+                if (prefs is not null)
+                {
+                    // MainViewModel reads TabShortcuts.Count for Ctrl+1..9 - an explicit null (or
+                    // null names) from a hand edit falls back to the default order instead.
+                    prefs.TabShortcuts = prefs.TabShortcuts?.Where(t => !string.IsNullOrWhiteSpace(t)).ToList() ?? new List<string>();
+                    return prefs;
+                }
             }
         }
         catch

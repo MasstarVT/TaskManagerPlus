@@ -36,7 +36,20 @@ public static class StartupHistoryService
             {
                 var json = File.ReadAllText(HistoryPath);
                 var data = JsonSerializer.Deserialize<Dictionary<string, List<StartupCostSample>>>(json);
-                if (data is not null) return new Dictionary<string, List<StartupCostSample>>(data, StringComparer.OrdinalIgnoreCase);
+                if (data is not null)
+                {
+                    // Not the copy constructor: two names differing only by case throw there, and the
+                    // catch below would then let the next Save wipe every item's history. Null lists
+                    // and samples from a hand edit are dropped - RecordAndCompute reads them outside
+                    // any try.
+                    var result = new Dictionary<string, List<StartupCostSample>>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var (name, samples) in data)
+                    {
+                        if (samples is null) continue;
+                        result.TryAdd(name, samples.Where(s => s is not null).ToList());
+                    }
+                    return result;
+                }
             }
         }
         catch

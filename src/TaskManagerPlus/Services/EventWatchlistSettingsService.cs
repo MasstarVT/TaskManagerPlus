@@ -21,12 +21,28 @@ public static class EventWatchlistSettingsService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var settings = JsonSerializer.Deserialize<EventWatchlistSettings>(json);
-                if (settings is not null) return settings;
+                if (settings?.Entries is not null)
+                {
+                    // EventsViewModel adds every entry to its watchlist while it is being built;
+                    // null entries/text from a hand edit are dropped or blanked here instead.
+                    var entries = settings.Entries.Where(e => e is not null).ToList();
+                    if (entries.Count != settings.Entries.Count) AppPaths.MarkUnreadable(SettingsPath);
+                    foreach (var e in entries)
+                    {
+                        e.Channel ??= string.Empty;
+                        e.Provider ??= string.Empty;
+                    }
+                    settings.Entries = entries;
+                    return settings;
+                }
+                AppPaths.MarkUnreadable(SettingsPath);
             }
         }
         catch
         {
-            // Corrupt or unreadable settings file - fall back to an empty watchlist.
+            // Corrupt or unreadable settings file - fall back to an empty watchlist, keeping a copy
+            // of the user's file for the next Save.
+            AppPaths.MarkUnreadable(SettingsPath);
         }
         return new EventWatchlistSettings();
     }
@@ -35,6 +51,7 @@ public static class EventWatchlistSettingsService
     {
         try
         {
+            if (!AppPaths.PreserveUnreadable(SettingsPath)) return;
             var dir = Path.GetDirectoryName(SettingsPath)!;
             Directory.CreateDirectory(dir);
             var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });

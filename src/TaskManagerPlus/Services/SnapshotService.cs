@@ -123,12 +123,41 @@ public static class SnapshotService
         try
         {
             var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<SystemSnapshot>(json);
+            var snapshot = JsonSerializer.Deserialize<SystemSnapshot>(json);
+            return snapshot is null ? null : Sanitize(snapshot);
         }
         catch
         {
             return null;
         }
+    }
+
+    /// <summary>A snapshot file is user-picked and may be hand-edited: Diff builds HashSets from
+    /// every list (a null list throws) and ServicesViewModel's drift check keys ServiceConfigs by
+    /// name case-insensitively (a null name or a duplicate throws). Rebuilt with every list
+    /// non-null, blank names dropped and one config per service. Shared with BaselineService,
+    /// whose baselines embed a SystemSnapshot.</summary>
+    internal static SystemSnapshot Sanitize(SystemSnapshot? snapshot)
+    {
+        snapshot ??= new SystemSnapshot();
+        static List<string> Names(List<string>? list) =>
+            list?.Where(n => !string.IsNullOrWhiteSpace(n)).ToList() ?? new List<string>();
+
+        return new SystemSnapshot
+        {
+            CapturedAt = snapshot.CapturedAt,
+            InstalledSoftware = Names(snapshot.InstalledSoftware),
+            Services = Names(snapshot.Services),
+            StartupItems = Names(snapshot.StartupItems),
+            ServiceConfigs = (snapshot.ServiceConfigs ?? new List<ServiceConfigSnapshot>())
+                .Where(c => c is not null && !string.IsNullOrWhiteSpace(c.ServiceName))
+                .GroupBy(c => c.ServiceName, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList(),
+            IdleCpuTempC = snapshot.IdleCpuTempC,
+            DriverInventory = Names(snapshot.DriverInventory),
+            DriverStorePackages = Names(snapshot.DriverStorePackages),
+        };
     }
 
     public static SnapshotDiff Diff(SystemSnapshot baseline, SystemSnapshot current)

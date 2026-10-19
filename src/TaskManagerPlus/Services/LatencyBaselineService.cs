@@ -50,7 +50,16 @@ public static class LatencyBaselineService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var file = JsonSerializer.Deserialize<LatencyBaselineFile>(json);
-                if (file is not null) return file;
+                if (file is not null)
+                {
+                    // UpdateBaseline/GetDeviationMessage dereference Entries and each entry's
+                    // Target; the multiplier gets the same range NetworkViewModel's setter clamps to.
+                    file.Entries = file.Entries?.Where(e => e is not null && e.Target is not null).ToList() ?? new List<LatencyBaselineEntry>();
+                    file.DeviationMultiplier = double.IsFinite(file.DeviationMultiplier) && file.DeviationMultiplier > 0
+                        ? Math.Clamp(file.DeviationMultiplier, 1.5, 20.0)
+                        : new LatencyBaselineFile().DeviationMultiplier;
+                    return file;
+                }
             }
         }
         catch

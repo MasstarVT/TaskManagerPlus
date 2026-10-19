@@ -44,7 +44,19 @@ public static class GatewayFingerprintService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var file = JsonSerializer.Deserialize<GatewayFingerprintFile>(json);
-                if (file is not null) return file;
+                if (file is not null)
+                {
+                    // CheckAndUpdate calls .Equals on ProfileKey/GatewayMac - explicit nulls from a
+                    // hand edit are dropped (entries) or blanked (fields).
+                    file.Entries = file.Entries?.Where(e => e is not null).ToList() ?? new List<GatewayFingerprintEntry>();
+                    foreach (var e in file.Entries)
+                    {
+                        e.ProfileKey ??= string.Empty;
+                        e.GatewayIp ??= string.Empty;
+                        e.GatewayMac ??= string.Empty;
+                    }
+                    return file;
+                }
             }
         }
         catch

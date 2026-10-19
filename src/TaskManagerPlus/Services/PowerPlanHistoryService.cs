@@ -27,7 +27,9 @@ public static class PowerPlanHistoryService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<PowerPlanChangeEvent>>(json);
-                if (list is not null) return list.OrderByDescending(e => e.Timestamp).ToList();
+                // Null elements dropped first - one would throw inside OrderByDescending and the
+                // next Append would then overwrite the whole history.
+                if (list is not null) return list.Where(e => e is not null).OrderByDescending(e => e.Timestamp).ToList();
             }
         }
         catch

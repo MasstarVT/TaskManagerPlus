@@ -39,7 +39,8 @@ public static class PciLinkHistoryService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<Record>>(json);
-                if (list is not null) return list;
+                // RecordAndCompare reads InstanceId on every record outside any try.
+                if (list is not null) return list.Where(r => r is not null).ToList();
             }
         }
         catch

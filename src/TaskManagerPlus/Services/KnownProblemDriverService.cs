@@ -57,7 +57,12 @@ public static class KnownProblemDriverService
             {
                 string json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<KnownProblemDriverList>(json, JsonOptions);
-                if (list is not null) return list;
+                if (list is not null)
+                {
+                    // ScanAsync reads Drivers.Count and each definition's FileName outside any try.
+                    list.Drivers = list.Drivers?.Where(d => d is not null).ToList() ?? new List<KnownProblemDriverDefinition>();
+                    return list;
+                }
             }
         }
         catch
@@ -74,7 +79,10 @@ public static class KnownProblemDriverService
     public static async Task<List<KnownProblemDriverMatch>> ScanAsync()
     {
         var defs = LoadDefinitions().Drivers;
-        if (defs.Count == 0) return new List<KnownProblemDriverMatch>();
+        // An empty list here means the file was missing, unreadable or emptied - reporting "no
+        // matches" (and a clean 0 to the Health Check card) would claim a scan that never ran.
+        if (defs.Count == 0)
+            throw new InvalidOperationException("the known-problem-driver list (known-problem-drivers.json) couldn't be read or has no entries.");
 
         var modules = await KernelModuleService.ListAsync();
         var faultingModules = StabilityCrashSummaryState.HasScanned

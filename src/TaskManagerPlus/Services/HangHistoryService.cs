@@ -35,7 +35,14 @@ public static class HangHistoryService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var settings = JsonSerializer.Deserialize<HangHistorySettings>(json);
-                if (settings is not null) return settings;
+                if (settings is not null)
+                {
+                    // RecordHang runs outside any try - a null Entries, null entry or null name from
+                    // a hand edit would throw there.
+                    settings.Entries = settings.Entries?.Where(e => e is not null && !string.IsNullOrWhiteSpace(e.ExecutableName)).ToList()
+                        ?? new List<HangHistoryEntry>();
+                    return settings;
+                }
             }
         }
         catch

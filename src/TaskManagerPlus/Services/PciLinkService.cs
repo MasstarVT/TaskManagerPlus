@@ -137,7 +137,7 @@ else { Write-Output ($results | ConvertTo-Json -Compress) }
         }
 
         var mapped = raw
-            .Where(r => !string.IsNullOrEmpty(r.InstanceId))
+            .Where(r => r is not null && !string.IsNullOrEmpty(r.InstanceId))
             .Select(r => new PciLinkInfo
             {
                 InstanceId = r.InstanceId!,

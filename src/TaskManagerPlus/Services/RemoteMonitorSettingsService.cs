@@ -19,7 +19,14 @@ public static class RemoteMonitorSettingsService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var settings = JsonSerializer.Deserialize<RemoteMonitorSettings>(json);
-                if (settings is not null) return settings;
+                if (settings is not null)
+                {
+                    if (settings.Port is < 1 or > 65535) settings.Port = RemoteMonitorSettings.Defaults.Port;
+                    // Same normalization the token textbox applies - a whitespace-only token would
+                    // otherwise be required verbatim by every request.
+                    settings.Token = string.IsNullOrWhiteSpace(settings.Token) ? null : settings.Token.Trim();
+                    return settings;
+                }
             }
         }
         catch

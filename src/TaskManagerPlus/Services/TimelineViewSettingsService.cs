@@ -19,7 +19,16 @@ public static class TimelineViewSettingsService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var settings = JsonSerializer.Deserialize<TimelineViewSettings>(json);
-                if (settings is not null) return settings;
+                if (settings is not null)
+                {
+                    // Same range the CorrelationWindowHours setter clamps to - a huge value would
+                    // overflow TimeSpan.FromHours when correlations are rebuilt.
+                    settings.CorrelationWindowHours = settings.CorrelationWindowHours > 0
+                        ? Math.Clamp(settings.CorrelationWindowHours, 1, 24 * 30)
+                        : TimelineViewSettings.Defaults.CorrelationWindowHours;
+                    settings.RangePreset ??= TimelineViewSettings.Defaults.RangePreset;
+                    return settings;
+                }
             }
         }
         catch

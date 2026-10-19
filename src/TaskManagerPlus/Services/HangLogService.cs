@@ -26,7 +26,9 @@ public static class HangLogService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var entries = JsonSerializer.Deserialize<List<HangLogEntry>>(json);
-                if (entries is not null) return entries;
+                // Null elements from a hand edit would become null grid rows and make every later
+                // Save fail (its OrderByDescending throws on them).
+                if (entries is not null) return entries.Where(e => e is not null).ToList();
             }
         }
         catch

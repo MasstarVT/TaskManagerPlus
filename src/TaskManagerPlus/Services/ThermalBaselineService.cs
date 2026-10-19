@@ -29,7 +29,9 @@ public static class ThermalBaselineService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<ThermalBaselineEntry>>(json);
-                if (list is not null) return list.OrderBy(e => e.Date).ToList();
+                // Null elements dropped first - one would throw inside OrderBy and the next save
+                // would then overwrite the whole history.
+                if (list is not null) return list.Where(e => e is not null).OrderBy(e => e.Date).ToList();
             }
         }
         catch

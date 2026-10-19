@@ -36,7 +36,16 @@ public static class BootEtwTraceService
             {
                 var json = File.ReadAllText(StatePath);
                 var state = JsonSerializer.Deserialize<BootEtwTraceState>(json);
-                if (state is not null) return state;
+                if (state is not null)
+                {
+                    // The state file is user-writable, but OutputPath goes to an elevated
+                    // `wpr -boottrace -stopboot "<path>"` (and a CreateDirectory) at startup - only
+                    // an .etl under this app's own BootTraces folder is accepted. Anything else
+                    // keeps the pending trace but collects it to a fresh path there.
+                    if (state.IsArmed && !IsOwnTracePath(state.OutputPath))
+                        state.OutputPath = AppPaths.GetPath("BootTraces", $"boot-trace-{DateTime.Now:yyyyMMdd-HHmmss}.etl");
+                    return state;
+                }
             }
         }
         catch
@@ -44,6 +53,22 @@ public static class BootEtwTraceService
             // Corrupt/unreadable state file - treat as "not armed".
         }
         return new BootEtwTraceState();
+    }
+
+    private static bool IsOwnTracePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || path.Contains('"')) return false;
+        try
+        {
+            string root = Path.GetFullPath(AppPaths.GetPath("BootTraces")).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            string full = Path.GetFullPath(path);
+            return string.Equals(Path.GetDirectoryName(full) + Path.DirectorySeparatorChar, root, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(Path.GetExtension(full), ".etl", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void SaveState(BootEtwTraceState state)

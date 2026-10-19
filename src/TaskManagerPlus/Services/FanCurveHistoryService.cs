@@ -25,7 +25,10 @@ public static class FanCurveHistoryService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<FanCurveMonthlyFit>>(json);
-                if (list is not null) return list;
+                // UpsertFit/FindPriorFit compare FanIdentifier on every element - drop nulls (and
+                // impossible months) from a hand edit rather than throw there.
+                if (list is not null)
+                    return list.Where(f => f is not null && f.FanIdentifier is not null && f.Month is >= 1 and <= 12).ToList();
             }
         }
         catch

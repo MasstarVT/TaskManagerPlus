@@ -55,7 +55,8 @@ public static class NetworkTestHistoryService
             {
                 var json = File.ReadAllText(HistoryPath);
                 var entries = JsonSerializer.Deserialize<List<NetworkTestHistoryEntry>>(json);
-                if (entries is not null) return entries;
+                // Null elements from a hand edit would become null history rows.
+                if (entries is not null) return entries.Where(e => e is not null).ToList();
             }
         }
         catch

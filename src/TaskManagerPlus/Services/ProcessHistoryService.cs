@@ -541,9 +541,9 @@ public sealed class ProcessHistoryService
                 snapshotBytes = raw.Length;
             }
 
-            foreach (var record in line.Records)
+            foreach (var lineRecord in line.Records ?? new List<ProcessHistoryRecord>())
             {
-                if (string.IsNullOrEmpty(record.ImageName)) continue;
+                if (Clean(lineRecord) is not { } record) continue;
                 if (byName.TryGetValue(record.ImageName, out var existing))
                 {
                     existing.Samples.AddRange(record.Samples);
@@ -565,10 +565,23 @@ public sealed class ProcessHistoryService
     {
         var json = File.ReadAllText(LegacyStorePath);
         var records = JsonSerializer.Deserialize<List<ProcessHistoryRecord>>(json);
-        return records is null
-            ? new Dictionary<string, ProcessHistoryRecord>(StringComparer.OrdinalIgnoreCase)
-            : records
-                .Where(r => !string.IsNullOrEmpty(r.ImageName))
-                .ToDictionary(r => r.ImageName, r => r, StringComparer.OrdinalIgnoreCase);
+        // TryAdd rather than ToDictionary: two names differing only by case would otherwise throw
+        // and lose the whole legacy history.
+        var byName = new Dictionary<string, ProcessHistoryRecord>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in records ?? new List<ProcessHistoryRecord>())
+        {
+            if (Clean(raw) is { } record) byName.TryAdd(record.ImageName, record);
+        }
+        return byName;
+    }
+
+    /// <summary>A journal line written by a crashed/older build or edited by hand can carry a null
+    /// record, a null or blank name, a null Samples list or null samples - LoadAndMerge and the
+    /// sparkline readers dereference all of them outside any try. Null for a record to skip.</summary>
+    private static ProcessHistoryRecord? Clean(ProcessHistoryRecord? record)
+    {
+        if (record is null || string.IsNullOrEmpty(record.ImageName)) return null;
+        record.Samples = record.Samples?.Where(s => s is not null).ToList() ?? new List<ProcessHistorySample>();
+        return record;
     }
 }

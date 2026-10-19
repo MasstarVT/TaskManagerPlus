@@ -33,7 +33,9 @@ public static class StandbyDrainService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<StandbyDrainSession>>(json);
-                if (list is not null) return list.OrderByDescending(s => s.SleepTime).ToList();
+                // Null elements dropped first - one would throw inside OrderByDescending and the
+                // next save would then overwrite the whole history.
+                if (list is not null) return list.Where(s => s is not null).OrderByDescending(s => s.SleepTime).ToList();
             }
         }
         catch

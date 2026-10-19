@@ -19,7 +19,12 @@ public static class SummarySettingsService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var settings = JsonSerializer.Deserialize<SummarySettings>(json);
-                if (settings is not null) return settings;
+                if (settings is not null)
+                {
+                    // Enums deserialize from any integer - keep the report-theme picker on a real value.
+                    if (!Enum.IsDefined(settings.ReportTheme)) settings.ReportTheme = SummarySettings.Defaults.ReportTheme;
+                    return settings;
+                }
             }
         }
         catch

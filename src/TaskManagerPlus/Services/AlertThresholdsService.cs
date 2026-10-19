@@ -20,11 +20,14 @@ public static class AlertThresholdsService
                 var json = File.ReadAllText(SettingsPath);
                 var thresholds = JsonSerializer.Deserialize<AlertThresholds>(json);
                 if (thresholds is not null) return thresholds;
+                AppPaths.MarkUnreadable(SettingsPath);
             }
         }
         catch
         {
-            // Corrupt or unreadable settings file - fall back to defaults.
+            // Corrupt or unreadable settings file - fall back to defaults, and keep a copy of the
+            // user's file before the next Save replaces it.
+            AppPaths.MarkUnreadable(SettingsPath);
         }
         return AlertThresholds.Defaults;
     }
@@ -33,6 +36,7 @@ public static class AlertThresholdsService
     {
         try
         {
+            if (!AppPaths.PreserveUnreadable(SettingsPath)) return;
             var dir = Path.GetDirectoryName(SettingsPath)!;
             Directory.CreateDirectory(dir);
             var json = JsonSerializer.Serialize(thresholds, new JsonSerializerOptions { WriteIndented = true });

@@ -151,7 +151,9 @@ public sealed class NetworkBlackBoxRecorderService
             {
                 var json = File.ReadAllText(IndexPath);
                 var list = JsonSerializer.Deserialize<List<BlackBoxIncident>>(json);
-                if (list is not null) return list;
+                // NetworkViewModel's constructor sorts this by TriggeredAtUtc - a null element from
+                // a hand edit would throw there and take the main window down with it.
+                if (list is not null) return list.Where(i => i is not null).ToList();
             }
         }
         catch

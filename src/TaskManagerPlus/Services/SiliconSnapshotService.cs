@@ -24,7 +24,9 @@ public static class SiliconSnapshotService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<SiliconSnapshot>>(json);
-                if (list is not null) return list.OrderBy(s => s.Timestamp).ToList();
+                // A null element would throw inside OrderBy, and the catch below would then let the
+                // next Append overwrite the whole history with one snapshot.
+                if (list is not null) return list.Where(s => s is not null).OrderBy(s => s.Timestamp).ToList();
             }
         }
         catch

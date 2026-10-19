@@ -145,12 +145,46 @@ public static class BaselineService
         try
         {
             var json = File.ReadAllText(path);
-            return JsonSerializer.Deserialize<PerformanceBaseline>(json);
+            var baseline = JsonSerializer.Deserialize<PerformanceBaseline>(json);
+            return baseline is null ? null : Sanitize(baseline);
         }
         catch
         {
             return null;
         }
+    }
+
+    /// <summary>Baseline files are user-importable and hand-editable: BaselineViewModel calls
+    /// Fingerprint.MatchesHardware (which builds HashSets from its lists) and diffs Snapshot, so an
+    /// explicit null for either, or for one of their lists, would throw there. Rebuilt with those
+    /// non-null - the properties are init-only, so a property added to PerformanceBaseline must be
+    /// copied here too. Also used by BundleReviewService for a bundle's baselines.</summary>
+    internal static PerformanceBaseline Sanitize(PerformanceBaseline b)
+    {
+        var fp = b.Fingerprint ?? new HardwareFingerprint();
+        return new PerformanceBaseline
+        {
+            CapturedAt = b.CapturedAt,
+            Label = b.Label,
+            WasAutomatic = b.WasAutomatic,
+            Snapshot = SnapshotService.Sanitize(b.Snapshot),
+            Fingerprint = new HardwareFingerprint
+            {
+                CpuName = fp.CpuName ?? string.Empty,
+                RamTotalGb = fp.RamTotalGb,
+                DiskModels = fp.DiskModels?.Where(d => d is not null).ToList() ?? new List<string>(),
+                GpuNames = fp.GpuNames?.Where(g => g is not null).ToList() ?? new List<string>(),
+            },
+            WinSatCpuScore = b.WinSatCpuScore,
+            WinSatMemoryScore = b.WinSatMemoryScore,
+            WinSatDiskScore = b.WinSatDiskScore,
+            WinSatOverallScore = b.WinSatOverallScore,
+            LastBootDurationMs = b.LastBootDurationMs,
+            IdleCpuPercent = b.IdleCpuPercent,
+            IdleRamCommittedGb = b.IdleRamCommittedGb,
+            IdleDiskLatencyMs = b.IdleDiskLatencyMs,
+            WasIdleAtCapture = b.WasIdleAtCapture,
+        };
     }
 
     public static void Save(PerformanceBaseline baseline)
@@ -176,7 +210,7 @@ public static class BaselineService
                 {
                     var json = File.ReadAllText(file);
                     var baseline = JsonSerializer.Deserialize<PerformanceBaseline>(json);
-                    if (baseline is not null) results.Add(baseline);
+                    if (baseline is not null) results.Add(Sanitize(baseline));
                 }
                 catch
                 {

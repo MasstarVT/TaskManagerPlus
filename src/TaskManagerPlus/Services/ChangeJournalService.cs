@@ -65,7 +65,20 @@ public static class ChangeJournalService
                 try
                 {
                     var entry = JsonSerializer.Deserialize<ChangeJournalEntry>(line, JsonOpts);
-                    if (entry is not null) result.Add(entry);
+                    if (entry is null) continue;
+                    // Explicit nulls on a hand-edited line are blanked for the Changes list. An
+                    // entry with no Id can't be marked undone afterwards (MarkUndone matches on
+                    // Id), so it is shown as not undoable rather than offering a repeatable undo.
+                    entry.Target ??= string.Empty;
+                    entry.ActionDescription ??= string.Empty;
+                    entry.TriggeredBy ??= string.Empty;
+                    if (string.IsNullOrWhiteSpace(entry.Id))
+                    {
+                        entry.Id = string.Empty;
+                        entry.IsUndoable = false;
+                        entry.NotUndoableReason ??= "This journal entry has no id.";
+                    }
+                    result.Add(entry);
                 }
                 catch
                 {

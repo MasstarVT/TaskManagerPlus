@@ -19,7 +19,13 @@ public static class CrashAnalysisSettingsService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var settings = JsonSerializer.Deserialize<CrashAnalysisSettings>(json);
-                if (settings is not null) return settings;
+                if (settings is not null)
+                {
+                    // An explicit null/blank would build "srv*<nothing>*..." as the symbol path.
+                    if (string.IsNullOrWhiteSpace(settings.SymbolCacheFolder))
+                        settings.SymbolCacheFolder = CrashAnalysisSettings.Defaults.SymbolCacheFolder;
+                    return settings;
+                }
             }
         }
         catch

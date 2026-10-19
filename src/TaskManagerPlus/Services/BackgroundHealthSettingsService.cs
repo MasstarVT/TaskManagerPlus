@@ -20,7 +20,14 @@ public static class BackgroundHealthSettingsService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var loaded = JsonSerializer.Deserialize<BackgroundHealthSettings>(json, JsonOpts);
-                if (loaded is not null) return loaded;
+                if (loaded is not null)
+                {
+                    // Same ranges BackgroundHealthCollectorService's setters clamp to - a hand-edited
+                    // budget <= 0 would otherwise prune every rolled health segment on the next roll.
+                    loaded.IntervalSeconds = Math.Clamp(loaded.IntervalSeconds, 10, 600);
+                    loaded.BudgetMb = Math.Clamp(loaded.BudgetMb, 1, 10_000);
+                    return loaded;
+                }
             }
         }
         catch { /* corrupt/unreadable - fall back to defaults */ }

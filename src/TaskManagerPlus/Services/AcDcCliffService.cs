@@ -34,7 +34,9 @@ public static class AcDcCliffService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<AcDcSteadyStateSample>>(json);
-                if (list is not null) return list;
+                // EnergyThermalsViewModel's constructor summarizes this straight away - a null
+                // element from a hand edit would throw there.
+                if (list is not null) return list.Where(s => s is not null).ToList();
             }
         }
         catch

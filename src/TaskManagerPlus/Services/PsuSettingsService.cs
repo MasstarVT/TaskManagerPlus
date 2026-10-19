@@ -22,7 +22,12 @@ public static class PsuSettingsService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var settings = JsonSerializer.Deserialize<PsuSettings>(json);
-                if (settings is not null) return settings;
+                if (settings is not null)
+                {
+                    // Same rule the wattage textbox enforces: only a positive figure counts as set.
+                    if (settings.UserRatedWattageW is not > 0) settings.UserRatedWattageW = null;
+                    return settings;
+                }
             }
         }
         catch

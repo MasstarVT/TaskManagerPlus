@@ -19,12 +19,23 @@ public static class TimelineNotesService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var notes = JsonSerializer.Deserialize<List<TimelineNoteEntry>>(json);
-                if (notes is not null) return notes;
+                if (notes is not null)
+                {
+                    // TimelineViewModel reads Text.Length for every note - drop null notes and
+                    // blank out null text from a hand edit.
+                    var clean = notes.Where(n => n is not null).ToList();
+                    if (clean.Count != notes.Count) AppPaths.MarkUnreadable(SettingsPath);
+                    foreach (var n in clean) n.Text ??= string.Empty;
+                    return clean;
+                }
+                AppPaths.MarkUnreadable(SettingsPath);
             }
         }
         catch
         {
-            // Corrupt/unreadable file - degrade to "no notes yet".
+            // Corrupt/unreadable file - degrade to "no notes yet", keeping a copy of the user's
+            // notes for the next Save (which would otherwise write only the newest note).
+            AppPaths.MarkUnreadable(SettingsPath);
         }
         return new List<TimelineNoteEntry>();
     }
@@ -33,6 +44,7 @@ public static class TimelineNotesService
     {
         try
         {
+            if (!AppPaths.PreserveUnreadable(SettingsPath)) return;
             var dir = Path.GetDirectoryName(SettingsPath)!;
             Directory.CreateDirectory(dir);
             var json = JsonSerializer.Serialize(notes, new JsonSerializerOptions { WriteIndented = true });

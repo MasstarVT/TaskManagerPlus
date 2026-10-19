@@ -26,7 +26,15 @@ public static class VerifierEnableHistoryService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var settings = JsonSerializer.Deserialize<VerifierEnableHistory>(json);
-                if (settings is not null) return settings;
+                if (settings is not null)
+                {
+                    // Same floors SetNagAfterDays/SetNagAfterReboots apply - a 0 or negative
+                    // threshold from a hand edit would make the "Verifier still on" nag fire at once.
+                    settings.NagAfterDays = Math.Max(1, settings.NagAfterDays);
+                    settings.NagAfterReboots = Math.Max(1, settings.NagAfterReboots);
+                    settings.RebootsSinceEnabled = Math.Max(0, settings.RebootsSinceEnabled);
+                    return settings;
+                }
             }
         }
         catch

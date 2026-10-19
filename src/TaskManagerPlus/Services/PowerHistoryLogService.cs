@@ -31,7 +31,9 @@ public static class PowerHistoryLogService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<PowerTempSample>>(json);
-                if (list is not null) return list.OrderBy(s => s.Timestamp).ToList();
+                // Null elements dropped first - one would throw inside OrderBy and the next Append
+                // would then overwrite the whole history.
+                if (list is not null) return list.Where(s => s is not null).OrderBy(s => s.Timestamp).ToList();
             }
         }
         catch

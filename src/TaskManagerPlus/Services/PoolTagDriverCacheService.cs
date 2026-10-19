@@ -37,7 +37,13 @@ public static class PoolTagDriverCacheService
                 var stored = JsonSerializer.Deserialize<StoredCache>(json);
                 if (stored is not null)
                 {
-                    var map = new Dictionary<string, string>(stored.TagToDriver ?? new(), StringComparer.Ordinal);
+                    // A hand-edited "tag": null would count as already resolved yet show no driver -
+                    // dropped so the next scan resolves it again.
+                    var map = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (var (tag, driver) in stored.TagToDriver ?? new())
+                    {
+                        if (driver is not null) map[tag] = driver;
+                    }
                     if (stored.SchemaVersion < CurrentSchemaVersion)
                     {
                         foreach (var tag in map.Where(kv => kv.Value == UnknownDriver).Select(kv => kv.Key).ToList())

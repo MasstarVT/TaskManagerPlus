@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -17,6 +18,8 @@ public static class DeferredActionService
 {
     private static string FilePath => AppPaths.GetPath("deferred-actions.json");
 
+    private static readonly Regex OwnTaskName = new(@"^TaskManagerPlus-Deferred-[A-Za-z0-9._-]+\z", RegexOptions.CultureInvariant);
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -30,7 +33,11 @@ public static class DeferredActionService
             if (!File.Exists(FilePath)) return new List<DeferredAction>();
             var json = File.ReadAllText(FilePath);
             var list = JsonSerializer.Deserialize<List<DeferredAction>>(json, JsonOpts);
-            return list ?? new List<DeferredAction>();
+            // The file is user-writable but TaskName reaches an elevated `schtasks /delete /tn "..."`
+            // (Cancel) - only names of the shape RemediationReviewViewModel creates are kept, so a
+            // tampered entry can neither name someone else's task nor break out of the quotes.
+            return list?.Where(a => a is not null && OwnTaskName.IsMatch(a.TaskName ?? string.Empty)).ToList()
+                ?? new List<DeferredAction>();
         }
         catch
         {

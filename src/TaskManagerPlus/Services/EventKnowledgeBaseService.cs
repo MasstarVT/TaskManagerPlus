@@ -124,6 +124,24 @@ public sealed class EventKnowledgeBaseService
         _ => EventKbSeverity.Information,
     };
 
+    /// <summary>Reload keys every entry on Provider from inside this class's constructor (which
+    /// EventsViewModel's field initializer runs at startup) and the Explain pane enumerates
+    /// LikelyCauses - so a hand-edited override with a null entry, null Provider or null list would
+    /// throw there. Those entries are dropped and null text/lists replaced.</summary>
+    private static List<EventKbEntry> Sanitize(List<EventKbEntry>? entries)
+    {
+        var result = new List<EventKbEntry>();
+        foreach (var e in entries ?? new List<EventKbEntry>())
+        {
+            if (e is null || string.IsNullOrWhiteSpace(e.Provider)) continue;
+            e.Meaning ??= string.Empty;
+            e.NextStep ??= string.Empty;
+            e.LikelyCauses = e.LikelyCauses?.Where(c => !string.IsNullOrWhiteSpace(c)).ToList() ?? new List<string>();
+            result.Add(e);
+        }
+        return result;
+    }
+
     private static List<EventKbEntry> LoadBundled()
     {
         try
@@ -138,7 +156,7 @@ public sealed class EventKnowledgeBaseService
 
             using var reader = new StreamReader(stream);
             string json = reader.ReadToEnd();
-            return JsonSerializer.Deserialize<List<EventKbEntry>>(json, JsonOptions) ?? new List<EventKbEntry>();
+            return Sanitize(JsonSerializer.Deserialize<List<EventKbEntry>>(json, JsonOptions));
         }
         catch
         {
@@ -160,10 +178,10 @@ public sealed class EventKnowledgeBaseService
             // hand-authored file can be as simple as copy-pasting entries without the wrapper.
             var trimmed = json.TrimStart();
             if (trimmed.StartsWith('['))
-                return JsonSerializer.Deserialize<List<EventKbEntry>>(json, JsonOptions) ?? new List<EventKbEntry>();
+                return Sanitize(JsonSerializer.Deserialize<List<EventKbEntry>>(json, JsonOptions));
 
             var wrapper = JsonSerializer.Deserialize<EventKbOverridesFile>(json, JsonOptions);
-            return wrapper?.Entries ?? new List<EventKbEntry>();
+            return Sanitize(wrapper?.Entries);
         }
         catch (Exception ex)
         {

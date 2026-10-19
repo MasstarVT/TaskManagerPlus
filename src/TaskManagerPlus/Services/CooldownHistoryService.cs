@@ -27,7 +27,9 @@ public static class CooldownHistoryService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<CooldownEvent>>(json);
-                if (list is not null) return list.OrderBy(e => e.RecordedAt).ToList();
+                // Null elements dropped first - one would throw inside OrderBy and the next Append
+                // would then overwrite the whole history.
+                if (list is not null) return list.Where(e => e is not null).OrderBy(e => e.RecordedAt).ToList();
             }
         }
         catch

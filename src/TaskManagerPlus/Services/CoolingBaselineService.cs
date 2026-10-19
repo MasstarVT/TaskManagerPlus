@@ -29,7 +29,12 @@ public static class CoolingBaselineService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var list = JsonSerializer.Deserialize<List<CoolingBucketEntry>>(json);
-                if (list is not null) return list;
+                // EnergyThermalsViewModel builds new DateTime(Year, Month, 1) from these and
+                // RecordBatch divides by the combined SampleCount - a null, an impossible month or a
+                // non-positive count from a hand edit would throw/poison those, so it's dropped.
+                if (list is not null)
+                    return list.Where(e => e is not null && e.Year is >= 1 and <= 9999 && e.Month is >= 1 and <= 12 && e.SampleCount > 0)
+                        .ToList();
             }
         }
         catch

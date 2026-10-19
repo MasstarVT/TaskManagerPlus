@@ -20,7 +20,15 @@ public static class BaselineSettingsService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var settings = JsonSerializer.Deserialize<BaselineSettings>(json);
-                if (settings is not null) return settings;
+                if (settings is not null)
+                {
+                    // BaselineViewModel feeds these to TimeSpan.FromDays/AddDays on its idle timer -
+                    // an out-of-range IntervalDays or a far-future timestamp throws there.
+                    settings.IntervalDays = Math.Clamp(settings.IntervalDays, 1, 365);
+                    settings.MaxBaselinesKept = Math.Clamp(settings.MaxBaselinesKept, 1, 100);
+                    if (settings.LastAutoCaptureUtc > DateTime.UtcNow.AddDays(1)) settings.LastAutoCaptureUtc = null;
+                    return settings;
+                }
             }
         }
         catch

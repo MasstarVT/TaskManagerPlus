@@ -35,7 +35,9 @@ public static class PendingRebootActionsService
             if (!File.Exists(FilePath)) return new List<PendingRebootAction>();
             var json = File.ReadAllText(FilePath);
             var list = JsonSerializer.Deserialize<List<PendingRebootAction>>(json, JsonOpts);
-            return list ?? new List<PendingRebootAction>();
+            // LoadCurrentBoot (reached from SummaryViewModel, outside any try) reads RanAtUtc on
+            // every element - drop nulls from a hand edit.
+            return list?.Where(a => a is not null).ToList() ?? new List<PendingRebootAction>();
         }
         catch
         {

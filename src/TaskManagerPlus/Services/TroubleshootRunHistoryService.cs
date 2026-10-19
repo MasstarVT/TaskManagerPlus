@@ -102,6 +102,14 @@ public static class TroubleshootRunHistoryService
                 {
                     var record = JsonSerializer.Deserialize<TroubleshootRunRecord>(File.ReadAllText(file));
                     if (record is null) continue;
+                    // Explicit nulls in a hand-edited/partial transcript are dropped or blanked
+                    // before the record reaches the saved-runs view.
+                    record.SymptomId ??= string.Empty;
+                    record.DisplayName ??= string.Empty;
+                    record.VerdictText ??= string.Empty;
+                    record.Steps = record.Steps?.Where(s => s is not null).ToList() ?? new List<TroubleshootStepRecord>();
+                    foreach (var step in record.Steps)
+                        step.Evidence = step.Evidence?.Where(e => e is not null).ToList() ?? new List<string>();
                     record.FilePath = file;
                     results.Add(record);
                 }

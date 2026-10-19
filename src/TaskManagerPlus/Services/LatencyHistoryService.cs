@@ -100,7 +100,9 @@ public static class LatencyHistoryService
             {
                 var json = File.ReadAllText(HistoryPath);
                 var entries = JsonSerializer.Deserialize<List<LatencyHistoryEntry>>(json);
-                if (entries is not null) return entries;
+                // Aggregate (called from NetworkViewModel outside any try) reads e.Target on every
+                // element - drop nulls from a hand edit.
+                if (entries is not null) return entries.Where(e => e is not null).ToList();
             }
         }
         catch
