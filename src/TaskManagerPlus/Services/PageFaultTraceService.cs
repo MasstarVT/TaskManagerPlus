@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text.RegularExpressions;
 
 namespace TaskManagerPlus.Services;
 
@@ -56,7 +57,11 @@ public static class PageFaultTraceService
 
         // Only a session this app's own crashed run left behind is stopped first - see
         // KernelLoggerSession for how that is told apart from another tool's session.
-        await KernelLoggerSession.ReclaimLeakedSessionAsync();
+        if (!await KernelLoggerSession.ReclaimLeakedSessionAsync())
+        {
+            KernelLoggerSession.Release(KernelLoggerSession.Owner.PageFaultCapture);
+            return (false, null, KernelLoggerSession.UnconfirmedStateMessage);
+        }
 
         // Keyword names are logman's own (`logman query providers "Windows Kernel Trace"`), not
         // xperf's flag names. `create trace ... -ets` (DpcLatencyService's form) starts it at once
@@ -153,11 +158,12 @@ public static class PageFaultTraceService
 ///    features interleaving at an await can never both pass the check.
 /// 2. This app never stops a kernel session it can't show it started. A marker file holds the .etl
 ///    path of the session this app is starting/running; a marker a crash or kill left behind leads
-///    to a stop only when `logman query "NT Kernel Logger" -ets` shows the running session writing
-///    that same file. The file name is GUID/timestamp-unique and matched as a plain substring, so no
-///    (possibly localized) label is parsed. Anything else - not running ("Data Collector Set was
-///    not found."), a different output file - just drops the marker; a query that couldn't run or
-///    timed out keeps it for the next claim.
+///    to a stop only when it names a file this app creates (its own folder and naming pattern - the
+///    marker is user-writable, this process is elevated) and `logman query "NT Kernel Logger" -ets`
+///    shows the running session writing that same file. The file name is GUID/timestamp-unique and
+///    matched as a plain substring, so no (possibly localized) label is parsed. Anything else - not
+///    running ("Data Collector Set was not found."), a different output file - just drops the
+///    marker; a query that couldn't run or timed out keeps it, and nothing new is started.
 /// </summary>
 internal static class KernelLoggerSession
 {
@@ -215,40 +221,73 @@ internal static class KernelLoggerSession
         logmanOutput.Contains("already", StringComparison.OrdinalIgnoreCase)
         || logmanOutput.Contains("800700B7", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Shown by both callers when <see cref="ReclaimLeakedSessionAsync"/> returns false.</summary>
+    public const string UnconfirmedStateMessage =
+        "Couldn't confirm whether a kernel trace this app started earlier is still running (logman didn't answer) - nothing was started; try again.";
+
+    // The only two names this app gives a kernel-logger .etl (DpcLatencyService / PageFaultTraceService).
+    private static readonly Regex DpcSampleFileRegex = new(@"^sample_[0-9a-f]{32}\.etl$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex PageFaultFileRegex = new(@"^PageFaults-\d{8}-\d{6}\.etl$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     /// <summary>Call while holding the claim, before `create`: stops a kernel session an earlier
-    /// run of this app leaked, and only that - see rule 2 in the class remarks.</summary>
-    public static async Task ReclaimLeakedSessionAsync()
+    /// run of this app leaked, and only that - see rule 2 in the class remarks. False when that
+    /// couldn't be settled (logman query timed out or failed to run, or the stop failed): the marker
+    /// is then kept, and the caller must not create a session, since RecordStarting would overwrite
+    /// the only record of the leaked one.</summary>
+    public static async Task<bool> ReclaimLeakedSessionAsync()
     {
         try { if (File.Exists(LegacyMarkerPath)) File.Delete(LegacyMarkerPath); } catch { /* best-effort */ }
 
         string etlPath;
         try
         {
-            if (!File.Exists(MarkerPath)) return;
+            if (!File.Exists(MarkerPath)) return true;
             etlPath = File.ReadAllText(MarkerPath).Trim();
         }
-        catch { return; }
+        catch { return true; } // unreadable marker - nothing it could identify
 
-        string fileName = Path.GetFileName(etlPath);
-        if (!etlPath.EndsWith(".etl", StringComparison.OrdinalIgnoreCase) || fileName.Length < 12)
+        // The marker sits in a user-writable folder and this process is elevated, so it is only
+        // trusted when it names a file this app itself would have created - otherwise it could be
+        // pointed at another tool's trace to have it stopped.
+        if (!IsOwnTraceFile(etlPath))
         {
-            RecordStopped(); // not a marker this build wrote - nothing it could identify
-            return;
+            RecordStopped();
+            return true;
         }
+        string fileName = Path.GetFileName(etlPath);
 
         (string Output, int? ExitCode) query;
         try { query = await ToolRunner.RunCapturedAsync(LogmanPath, $"query \"{Name}\" -ets", 15000); }
-        catch { return; }
-        if (query.ExitCode is null) return;
+        catch { return false; }
+        if (query.ExitCode is null) return false;
 
         if (query.Output.Contains(fileName, StringComparison.OrdinalIgnoreCase))
         {
             (string Output, int? ExitCode) stop;
             try { stop = await ToolRunner.RunCapturedAsync(LogmanPath, $"stop \"{Name}\" -ets", 15000); }
-            catch { return; }
-            if (stop.ExitCode != 0) return;
+            catch { return false; }
+            if (stop.ExitCode != 0) return false;
         }
         RecordStopped();
+        return true;
+    }
+
+    private static bool IsOwnTraceFile(string etlPath)
+    {
+        try
+        {
+            string full = Path.GetFullPath(etlPath);
+            string dir = Path.GetDirectoryName(full) ?? string.Empty;
+            string name = Path.GetFileName(full);
+            static bool SameDir(string a, string b) =>
+                string.Equals(a.TrimEnd(Path.DirectorySeparatorChar), Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+            return (SameDir(dir, Path.Combine(AppPaths.SettingsDirectory, "ResponsivenessTraces")) && DpcSampleFileRegex.IsMatch(name))
+                || (SameDir(dir, AppPaths.GetPath("Traces")) && PageFaultFileRegex.IsMatch(name));
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>Synchronous, bounded stop for app shutdown - a no-op unless

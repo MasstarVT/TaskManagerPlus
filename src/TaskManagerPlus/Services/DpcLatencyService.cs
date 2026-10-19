@@ -207,8 +207,9 @@ public sealed class DpcLatencyService
         try
         {
             // Stops a session only when it is provably one this app leaked (crash/kill) - never
-            // another tool's trace.
-            await KernelLoggerSession.ReclaimLeakedSessionAsync();
+            // another tool's trace. The finally below releases the claim on this early return.
+            if (!await KernelLoggerSession.ReclaimLeakedSessionAsync())
+                return (false, KernelLoggerSession.UnconfirmedStateMessage, 0);
 
             KernelLoggerSession.RecordStarting(etl);
             var (startOk, startErr) = await RunProcessAsync(LogmanPath,

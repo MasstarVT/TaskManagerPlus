@@ -213,11 +213,15 @@ public sealed class HungWindowService : IDisposable
         int fgPidSnapshot = _foregroundPid;
         string fgNameSnapshot = _foregroundProcessName;
 
-        // #238: the foreground app's windows get a timeout just past the stall threshold - with the
-        // 250ms cap every window gets, a 500ms default threshold could never be reached. A probe
-        // that times out there has taken at least the threshold, so it counts as a stall.
+        // #238: the foreground app gets a timeout just past the stall threshold - with the 250ms cap
+        // every window gets, a 500ms default threshold could never be reached. A probe that times
+        // out there has taken at least the threshold, so it counts as a stall. Probed once per UI
+        // thread per cycle (every window on a thread shares its one message pump), so an app with
+        // many top-level windows neither waits out the long timeout per window nor logs one stall
+        // as several.
         double threshold = StallThresholdMs;
-        int foregroundTimeoutMs = (int)Math.Ceiling(threshold) + 50;
+        int foregroundTimeoutMs = Math.Max(ProbeTimeoutMs, (int)Math.Ceiling(threshold) + 50);
+        var foregroundThreadMs = new Dictionary<int, double>();
 
         foreach (var w in raw)
         {
@@ -225,12 +229,19 @@ public sealed class HungWindowService : IDisposable
             if (w.Hwnd == IntPtr.Zero || !IsWindow(w.Hwnd)) continue;
 
             bool isForegroundApp = fgPidSnapshot != 0 && w.Pid == fgPidSnapshot && !string.IsNullOrEmpty(fgNameSnapshot);
-            double ms = ProbeWindowMs(w.Hwnd, isForegroundApp ? Math.Max(ProbeTimeoutMs, foregroundTimeoutMs) : ProbeTimeoutMs);
+            double ms;
+            if (!isForegroundApp)
+            {
+                ms = ProbeWindowMs(w.Hwnd);
+            }
+            else if (!foregroundThreadMs.TryGetValue(w.ThreadId, out ms))
+            {
+                ms = ProbeWindowMs(w.Hwnd, foregroundTimeoutMs);
+                foregroundThreadMs[w.ThreadId] = ms;
+                if (ms >= threshold) RecordStall(fgNameSnapshot, ms);
+            }
             // The grid/score keep reading the same 250ms-capped round-trip as before.
             _lastResponseMs[w.Hwnd] = Math.Min(ms, ProbeTimeoutMs);
-
-            if (isForegroundApp && ms >= threshold)
-                RecordStall(fgNameSnapshot, ms);
         }
 
         // #244: resolve at most one still-hung, not-yet-resolved window's chain per cycle - capped
