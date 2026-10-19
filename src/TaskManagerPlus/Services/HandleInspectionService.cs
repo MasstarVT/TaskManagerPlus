@@ -216,26 +216,33 @@ public static class HandleInspectionService
         IntPtr sourceProcess = IntPtr.Zero;
         try
         {
-            var entries = ReadSystemHandles().Where(h => (long)h.UniqueProcessId == pid).Take(MaxHandlesToResolve * 2).ToList();
-            if (entries.Count == 0) return new List<(string, int)>();
+            // The pid's full handle count is kept separately so the "not scanned" remainder below is
+            // measured against all of its handles, not just the slice taken for resolving.
+            var all = ReadSystemHandles().Where(h => (long)h.UniqueProcessId == pid).ToList();
+            int total = all.Count;
+            if (total == 0) return new List<(string, int)>();
+            var entries = all.Take(MaxHandlesToResolve).ToList();
 
             sourceProcess = OpenProcess(ProcessDupHandle, false, pid);
             if (sourceProcess == IntPtr.Zero)
-                return new List<(string, int)> { ("(couldn't open process to inspect handles - access denied)", entries.Count) };
+                return new List<(string, int)> { ("(couldn't open process to inspect handles - access denied)", total) };
 
             var overallDeadline = DateTime.UtcNow + OverallTimeout;
             int resolved = 0;
+            bool outOfTime = false;
             foreach (var entry in entries)
             {
-                if (resolved >= MaxHandlesToResolve || DateTime.UtcNow > overallDeadline) break;
+                if (DateTime.UtcNow > overallDeadline) { outOfTime = true; break; }
                 resolved++;
 
                 string typeName = ResolveHandleType(sourceProcess, entry.HandleValue);
                 counts[typeName] = counts.TryGetValue(typeName, out var c) ? c + 1 : 1;
             }
 
-            if (entries.Count > resolved)
-                counts["(not scanned - handle count exceeds the inspection cap)"] = entries.Count - resolved;
+            if (total > resolved)
+                counts[outOfTime
+                    ? "(not scanned - the inspection ran out of time)"
+                    : "(not scanned - handle count exceeds the inspection cap)"] = total - resolved;
         }
         catch
         {

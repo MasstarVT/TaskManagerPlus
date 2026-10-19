@@ -41,6 +41,9 @@ public static class LsassHandleWatchService
         int HolderPid, string HolderProcessName, string HolderSignatureStatus,
         uint GrantedAccess, string GrantedAccessText, int HandleCount);
 
+    /// <summary>Error, when set, is the whole status line the caller shows in place of its default
+    /// "N process(es) hold a handle" text - a failure, or an incomplete scan (holders that couldn't
+    /// be opened, or a cap/timeout), with the findings that were made still returned.</summary>
     public static (List<Finding> Findings, string? Error) Scan()
     {
         int lsassPid;
@@ -68,10 +71,16 @@ public static class LsassHandleWatchService
         var deadline = DateTime.UtcNow + OverallTimeout;
         int totalInspected = 0;
         bool timedOut = false;
+        int holdersUnopened = 0, holdersTruncated = 0;
 
         try
         {
             var entries = HandleInspectionService.ReadSystemHandles();
+            // A live system always has handles - an empty table is a failed query (or one past
+            // ReadSystemHandles' size ceiling), never "nobody holds lsass".
+            if (entries.Count == 0)
+                return (new List<Finding>(), "Couldn't read the system handle table (the query failed, or the table is too large to snapshot) - no result.");
+
             var groups = entries
                 .Where(e => (long)e.UniqueProcessId != lsassPid) // a process's handles to itself aren't a "watcher"
                 .GroupBy(e => (int)e.UniqueProcessId);
@@ -84,13 +93,27 @@ public static class LsassHandleWatchService
                 IntPtr sourceProcess = IntPtr.Zero;
                 try
                 {
-                    sourceProcess = OpenProcess(ProcessDupHandle, false, holderPid);
-                    if (sourceProcess == IntPtr.Zero) continue; // access denied / already exited - best-effort, skip
+                    // SYSTEM-token processes don't grant Administrators PROCESS_DUP_HANDLE, so the
+                    // open needs SeDebugPrivilege. Enabled for the open alone - the handle keeps the
+                    // access it was opened with. Protected processes still refuse.
+                    // The error is read inside the lambda: restoring the privilege afterwards
+                    // overwrites the thread's last-error value.
+                    (sourceProcess, int openError) = HandleInspectionService.WithDebugPrivilege(() =>
+                    {
+                        IntPtr h = OpenProcess(ProcessDupHandle, false, holderPid);
+                        return (h, h == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0);
+                    });
+                    if (sourceProcess == IntPtr.Zero)
+                    {
+                        // ERROR_INVALID_PARAMETER: the holder exited since the snapshot.
+                        if (openError != ErrorInvalidParameter) holdersUnopened++;
+                        continue;
+                    }
 
                     int perProcessChecked = 0;
                     foreach (var entry in group)
                     {
-                        if (perProcessChecked++ >= MaxHandlesPerHolderProcess) break;
+                        if (perProcessChecked++ >= MaxHandlesPerHolderProcess) { holdersTruncated++; break; }
                         if (++totalInspected > MaxTotalHandlesInspected || DateTime.UtcNow > deadline) { timedOut = true; break; }
 
                         if (!TryMatchesLsass(sourceProcess, entry.HandleValue, lsassPid)) continue;
@@ -123,7 +146,17 @@ public static class LsassHandleWatchService
             .OrderByDescending(f => f.GrantedAccess)
             .ToList();
 
-        string? error = timedOut ? "Scan stopped early after timing out or hitting its handle-count cap - results may be incomplete." : null;
+        var gaps = new List<string>();
+        if (holdersUnopened > 0)
+            gaps.Add($"{holdersUnopened} process(es) couldn't be inspected (protected, or access denied)");
+        if (holdersTruncated > 0)
+            gaps.Add($"{holdersTruncated} process(es) hold more than {MaxHandlesPerHolderProcess} handles and were only partly checked");
+        if (timedOut)
+            gaps.Add("the scan stopped early after timing out or hitting its handle-count cap");
+
+        string? error = gaps.Count == 0
+            ? null
+            : $"{findings.Count} process(es) found holding a handle to lsass.exe, but the list may be incomplete: {string.Join("; ", gaps)}.";
         return (findings, error);
     }
 
@@ -199,6 +232,7 @@ public static class LsassHandleWatchService
 
     private const uint ProcessDupHandle = 0x0040;
     private const uint DuplicateSameAccess = 2;
+    private const int ErrorInvalidParameter = 87;
 
     [DllImport("ntdll.dll")]
     private static extern int NtDuplicateObject(IntPtr sourceProcessHandle, IntPtr sourceHandle, IntPtr targetProcessHandle,

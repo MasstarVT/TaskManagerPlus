@@ -174,7 +174,7 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
     // (process private working sets, standby/modified lists, kernel pools, driver-locked pages,
     // hardware-reserved memory) and shows the unaccounted remainder explicitly. Pure aggregation/
     // presentation over already-available figures, recomputed once per Performance tick (see the
-    // constructor's Performance.PropertyChanged subscription above) - no new sampling of its own.
+    // constructor's Performance.Sampled subscription) - no new sampling of its own.
     private double _reconciledProcessPrivateWsGb;
     public double ReconciledProcessPrivateWsGb { get => _reconciledProcessPrivateWsGb; private set => SetProperty(ref _reconciledProcessPrivateWsGb, value); }
 
@@ -374,21 +374,21 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         Performance.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(PerformanceViewModel.Uptime)) OnPropertyChanged(nameof(SystemUptimeText));
-            // #423: ModifiedGb is set on every Performance tick (RefreshCoreAsync), so this is a
-            // convenient "once per tick" hook to recompute the reconciliation below - same trick
-            // SystemUptimeText's own subscription uses, just against a different always-updated
-            // property. #428/#429/#432/#437/#438 reuse the same hook for their own per-tick
-            // recomputation, none of which involve any new I/O.
-            if (e.PropertyName == nameof(PerformanceViewModel.ModifiedGb))
-            {
-                RefreshTopConsumers();
-                RefreshReconciliation();
-                RefreshCommitProjection();
-                RefreshHighWaterMark();
-                RefreshThrashingState();
-                RefreshSystemCacheRunaway();
-                RefreshCompressionStats();
-            }
+        };
+
+        // #423/#428/#429/#432/#437/#438: per-tick recomputation, none of it new I/O. Hooked to
+        // Sampled (raised once at the end of every Performance tick), not to a property's
+        // PropertyChanged - SetProperty only raises on a change, so a value that holds still (or
+        // a missing counter that reads 0 every tick) would stall every refresh here.
+        Performance.Sampled += () =>
+        {
+            RefreshTopConsumers();
+            RefreshReconciliation();
+            RefreshCommitProjection();
+            RefreshHighWaterMark();
+            RefreshThrashingState();
+            RefreshSystemCacheRunaway();
+            RefreshCompressionStats();
         };
 
         var handleLeakView = new CollectionViewSource { Source = processes.Processes }.View;

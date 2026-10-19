@@ -271,10 +271,10 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Builds one row the same shape WriteRowIfLogging does, using the rolling buffer's
-    /// own column snapshot, then trims to the configured window (minutes * 1 row/sec) and flushes
-    /// to the fixed rolling-buffer file every 10s - frequent enough that a crash leaves a
-    /// reasonably fresh file, infrequent enough not to be wasteful disk I/O for a background,
-    /// always-on feature.</summary>
+    /// own column snapshot, then trims to the configured window (minutes of rows at the sample
+    /// interval) and flushes to the fixed rolling-buffer file every 10 rows - frequent enough that
+    /// a crash leaves a reasonably fresh file, infrequent enough not to be wasteful disk I/O for a
+    /// background, always-on feature.</summary>
     private void WriteRollingBufferRow()
     {
         // The ctor's snapshot normally runs before the first sample lands (Cores and the sensor
@@ -482,19 +482,23 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     {
         if (IsLogging)
         {
+            string? path = LogFilePath; // Stop clears it
             try
             {
                 // A marker added since the last tick would otherwise never reach this file - and
                 // would leak into the next session's (or the rolling buffer's) first row instead.
-                if (_pendingMarker is not null)
-                {
-                    try { WriteRowIfLogging(); }
-                    catch { /* the stop below reports nothing more useful for one lost row */ }
-                }
+                if (_pendingMarker is not null) WriteRowIfLogging();
                 _pendingMarker = null;
                 _logging.Stop();
             }
-            finally { RaiseLoggingChanged(); }
+            catch (Exception ex)
+            {
+                // A failed final row stays in the writer's buffer, so Stop's close re-flushes it
+                // and throws too - one report, the same way a tick's write failure is handled.
+                StopAfterWriteFailure(path, ex);
+                return;
+            }
+            RaiseLoggingChanged();
             return;
         }
 

@@ -47,6 +47,11 @@ public static class SharedMemoryInspectionService
             return new SharedMemoryScanResult { Sections = new List<SharedMemorySection>(), Error = "Couldn't read the system handle table." };
         }
 
+        // ReadSystemHandles reports a failed query (or a table past its size ceiling) as an empty
+        // list, not a throw - and a live system always has handles, so empty means failure.
+        if (allHandles.Count == 0)
+            return new SharedMemoryScanResult { Sections = new List<SharedMemorySection>(), Error = "Couldn't read the system handle table (the query failed, or the table is too large to snapshot)." };
+
         foreach (var group in allHandles.GroupBy(h => h.ProcessId))
         {
             if (resolved >= MaxHandlesToResolve || DateTime.UtcNow > deadline) { capped = true; break; }

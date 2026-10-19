@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 
@@ -19,22 +18,15 @@ namespace TaskManagerPlus.Services;
 /// just abandon an otherwise-successful large dump partway through. Callers (ProcessesViewModel)
 /// still run this via Task.Run to keep the UI thread responsive while it completes.
 ///
-/// #242: this file also carries a second, independently-added entry point - CreateDumpAsync,
-/// a one-click full user-mode dump for a hung window's owning process (ResponsivenessViewModel).
-/// It deliberately does NOT call WriteDump above: CLAUDE.md prefers a known Windows tool/API over
-/// raw interop where one exists, and for a full-process minidump that's
-/// `rundll32.exe comsvcs.dll,MiniDump &lt;pid&gt; &lt;path&gt; full` - the same built-in DLL export
-/// (every Windows install's comsvcs.dll ships a MiniDump entry point) that real Task Manager's own
-/// "Create dump file" action and many support scripts already shell out to. Two call paths to the
-/// "same" underlying capability, kept side by side rather than unified, since WriteDump's raw
-/// MiniDumpWriteDump P/Invoke and CreateDumpAsync's rundll32 shell-out have different failure
-/// modes/timeout behavior and each is already wired to a working caller.
+/// #242: CreateDumpAsync is the one-click full user-mode dump for a hung window's owning process
+/// (ResponsivenessViewModel) - a Full WriteDump on a worker thread. It used to shell out to
+/// `rundll32 comsvcs.dll,MiniDump`, but that export splits its argument string on spaces (so any
+/// dump path with a space - most user profiles, OneDrive folders - wrote nothing) and its command
+/// line is a well-known credential-dumping signature that endpoint protection flags.
 /// </summary>
 public static class ProcessDumpService
 {
     public enum DumpKind { Mini, Full }
-
-    private static readonly TimeSpan FullDumpWait = TimeSpan.FromMinutes(10);
 
     // MINIDUMP_TYPE flags (dbghelp.h) - only the handful this feature actually combines.
     private const int MiniDumpWithDataSegs = 0x00000001;
@@ -91,8 +83,8 @@ public static class ProcessDumpService
     }
 
     /// <summary>#242: one-click full user-mode process dump for a hung window's owning process,
-    /// ready to load in WinDbg - see the class remarks above for why this shells out to rundll32
-    /// instead of calling WriteDump above.</summary>
+    /// ready to load in WinDbg. No timeout, for the same reason as WriteDump: a multi-GB Full dump
+    /// legitimately takes minutes, and abandoning it partway leaves only a truncated file.</summary>
     public static async Task<(bool Success, string Message)> CreateDumpAsync(int pid, string outputPath)
     {
         try
@@ -100,37 +92,10 @@ public static class ProcessDumpService
             var dir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
-            string comsvcs = Path.Combine(Environment.SystemDirectory, "comsvcs.dll");
-            if (!File.Exists(comsvcs))
-                return (false, "comsvcs.dll wasn't found on this system - can't create a dump this way.");
-
-            // rundll32 writes nothing to stdout/stderr, so nothing is redirected (an unread pipe
-            // is just a way to stall it).
-            var psi = new ProcessStartInfo("rundll32.exe", $"\"{comsvcs}\", MiniDump {pid} \"{outputPath}\" full")
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return (false, "Couldn't start rundll32.exe.");
-
-            // A full dump writes the target's whole address space, which takes minutes for a
-            // multi-GB process. MiniDumpWriteDump suspends the target's threads while it works, so
-            // killing rundll32 mid-dump can leave the (already hung) process suspended for good -
-            // on timeout it's left to finish instead of being killed.
-            using var cts = new CancellationTokenSource(FullDumpWait);
-            try { await proc.WaitForExitAsync(cts.Token); }
-            catch (OperationCanceledException)
-            {
-                return (false, $"The dump is still being written after {FullDumpWait.TotalMinutes:0} minutes. rundll32 was left running so the process isn't left suspended - {outputPath} is complete only once rundll32.exe exits.");
-            }
-
-            if (!File.Exists(outputPath))
-                return (false, proc.ExitCode == 0
-                    ? "rundll32 reported success but no dump file was written - the target process may have exited."
-                    : $"Dump failed - rundll32 exited with code {proc.ExitCode} (access denied is common for a protected process).");
-
-            return (true, $"Dump written: {outputPath}");
+            var (success, error) = await Task.Run(() => WriteDump(pid, outputPath, DumpKind.Full));
+            return success
+                ? (true, $"Dump written: {outputPath}")
+                : (false, $"Dump failed: {error}");
         }
         catch (Exception ex)
         {

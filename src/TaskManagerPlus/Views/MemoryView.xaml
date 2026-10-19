@@ -415,8 +415,46 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Initial (MB)" Binding="{Binding InitialSizeMb, StringFormat={}{0:N0}}" Width="90" />
-                                    <DataGridTextColumn Header="Maximum (MB)" Binding="{Binding MaximumSizeMb, StringFormat={}{0:N0}}" Width="100" />
+                                    <!-- A system-managed file reports 0 for both configured sizes (Windows
+                                         picks them), so those cells say so instead of showing "0". -->
+                                    <DataGridTemplateColumn Header="Initial (MB)" Width="90">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock VerticalAlignment="Center" Margin="4,0" TextTrimming="CharacterEllipsis">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="{Binding InitialSizeMb, StringFormat={}{0:N0}}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsSystemManaged}" Value="True">
+                                                                    <Setter Property="Text" Value="Auto" />
+                                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Maximum (MB)" Width="100">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock VerticalAlignment="Center" Margin="4,0" TextTrimming="CharacterEllipsis">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="{Binding MaximumSizeMb, StringFormat={}{0:N0}}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsSystemManaged}" Value="True">
+                                                                    <Setter Property="Text" Value="Auto" />
+                                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                     <DataGridTextColumn Header="Current (MB)" Binding="{Binding CurrentSizeMb, StringFormat={}{0:N0}}" Width="100" />
                                     <DataGridTextColumn Header="Peak usage (MB)" Binding="{Binding PeakUsageMb, StringFormat={}{0:N0}}" Width="110" />
                                 </DataGrid.Columns>

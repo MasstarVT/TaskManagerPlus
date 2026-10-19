@@ -112,6 +112,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 WaitChainResults.Clear();
                 WaitChainNodes.Clear();
                 WaitChainStatusText = string.Empty;
+                _waitChainGeneration++;
                 SelectedProcessAddressSpace = null;
                 LoadAffinityForSelection();
                 RefreshSelectedWaitBreakdown();
@@ -205,6 +206,10 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
 
     private bool _isAnalyzingWaitChain;
     public bool IsAnalyzingWaitChain { get => _isAnalyzingWaitChain; private set => SetProperty(ref _isAnalyzingWaitChain, value); }
+
+    // Bumped whenever SelectedProcess changes, so a slow detailed analysis can't land in the panel
+    // after the selection it was started under has been cleared away.
+    private int _waitChainGeneration;
 
     /// <summary>#271: reachable both from the grid's context menu (no CommandParameter - falls
     /// back to SelectedProcess) and from #272's inline "Analyze" link on a flagged row
@@ -548,8 +553,11 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     {
         if (target is null) return;
 
+        // The inline link can analyze a row other than the selected one, so the guard below is
+        // "the selection changed while this ran" (which cleared the panel), not a pid compare.
+        int generation = _waitChainGeneration;
         IsAnalyzingWaitChain = true;
-        WaitChainStatusText = "Analyzing wait chain...";
+        WaitChainStatusText = $"Analyzing wait chain for {target.Name} (PID {target.Pid})...";
         WaitChainNodes.Clear();
         try
         {
@@ -565,7 +573,8 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             }
 
             var result = await Task.Run(() => WaitChainTraversalService.Analyze(target.Pid, threadId));
-            WaitChainStatusText = result.StatusText;
+            if (generation != _waitChainGeneration) return;
+            WaitChainStatusText = $"{target.Name} (PID {target.Pid}): {result.StatusText}";
             foreach (var n in result.Nodes) WaitChainNodes.Add(n);
         }
         finally
@@ -1062,9 +1071,13 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
         if (SelectedProcess?.Pid != pid) return;
 
         SelectedProcessForeignThreads.Clear();
-        if (result.Findings.Count == 0)
+        if (result.Error is not null)
         {
-            SelectedProcessForeignThreads.Add($"No unbacked thread start addresses found ({result.ThreadsScanned} of {result.ThreadsTotal} threads checked).");
+            SelectedProcessForeignThreads.Add(result.Error);
+        }
+        else if (result.Findings.Count == 0)
+        {
+            SelectedProcessForeignThreads.Add($"No unbacked thread start addresses found ({result.ThreadsChecked} of {result.ThreadsTotal} threads checked).");
         }
         else
         {

@@ -86,19 +86,27 @@ public static class ProcessEnvironmentDriftService
 
     private static ProcessEnvironmentDrift BuildDrift(int pid, string processName, List<string> processEnvironment, string effectivePath, string effectiveTemp)
     {
+        // An unreadable machine/user PATH would make every process "match" - not a result.
+        if (PathEntries(effectivePath).Count == 0)
+            return new ProcessEnvironmentDrift { Pid = pid, ProcessName = processName, HasDrift = false, Detail = "The current machine+user PATH couldn't be read - drift can't be determined." };
+
         string? procPath = FindValue(processEnvironment, "PATH");
         string? procTemp = FindValue(processEnvironment, "TEMP") ?? FindValue(processEnvironment, "TMP");
 
-        var mismatches = new List<string>();
-        if (procPath is not null && !PathsEquivalent(procPath, effectivePath))
-            mismatches.Add("PATH");
+        var details = new List<string>();
+        var missing = procPath is null ? new List<string>() : MissingFromProcess(procPath, effectivePath);
+        if (missing.Count > 0)
+        {
+            string sample = string.Join("; ", missing.Take(3)) + (missing.Count > 3 ? $"; +{missing.Count - 3} more" : "");
+            details.Add($"Its PATH is missing {missing.Count} folder(s) the current machine+user PATH has ({sample}) - it probably started before that change, and restarting it would pick them up.");
+        }
         if (procTemp is not null && !string.Equals(LongPath(procTemp).TrimEnd('\\'), LongPath(effectiveTemp).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
-            mismatches.Add("TEMP");
+            details.Add("Its TEMP differs from the current value - either it started before TEMP was changed (restarting it would pick that up), or it set its own.");
 
-        bool hasDrift = mismatches.Count > 0;
+        bool hasDrift = details.Count > 0;
         string detail = hasDrift
-            ? $"This process's {string.Join(" and ", mismatches)} no longer match{(mismatches.Count == 1 ? "es" : "")} the current machine+user value - it inherited its environment before the last change. Restart it to pick up the new value."
-            : "Matches the current machine+user environment.";
+            ? string.Join(" ", details)
+            : "Has every folder in the current machine+user PATH, and the current TEMP.";
 
         return new ProcessEnvironmentDrift { Pid = pid, ProcessName = processName, HasDrift = hasDrift, Detail = detail };
     }
@@ -133,15 +141,23 @@ public static class ProcessEnvironmentDriftService
         return line?[prefix.Length..];
     }
 
-    /// <summary>Order-insensitive comparison, since a process's inherited PATH segment order can
-    /// legitimately differ slightly from a freshly re-composed one without anything actually being
-    /// "wrong" - what matters for #799's purpose is whether the *set* of directories changed.</summary>
-    private static bool PathsEquivalent(string a, string b)
+    /// <summary>Folders in the current effective PATH that the process's PATH lacks - an addition
+    /// it never received. Order-insensitive, and one-directional on purpose: extra entries are
+    /// usually the process (or the shell that launched it - a VS developer prompt, conda, a
+    /// profile script) extending its own PATH, which restarting it wouldn't change.</summary>
+    private static List<string> MissingFromProcess(string processPath, string effectivePath)
     {
-        var setA = a.Split(';', StringSplitOptions.RemoveEmptyEntries).Select(s => s.TrimEnd('\\').ToLowerInvariant()).ToHashSet();
-        var setB = b.Split(';', StringSplitOptions.RemoveEmptyEntries).Select(s => s.TrimEnd('\\').ToLowerInvariant()).ToHashSet();
-        return setA.SetEquals(setB);
+        var have = PathEntries(processPath).Select(Normalize).ToHashSet();
+        return PathEntries(effectivePath)
+            .Where(e => !have.Contains(Normalize(e)))
+            .DistinctBy(Normalize)
+            .ToList();
     }
+
+    private static List<string> PathEntries(string path) =>
+        path.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    private static string Normalize(string entry) => entry.Trim('"').TrimEnd('\\').ToLowerInvariant();
 
     private static SecurityIdentifier? CurrentUserSid()
     {
