@@ -49,16 +49,34 @@ public sealed record WfpAuditScanResult(List<WfpDropEvent> Events, bool ChannelA
 /// </summary>
 public static class WfpAuditService
 {
-    private const string PacketDropSubcategory = "Filtering Platform Packet Drop";
-    private const string ConnectionSubcategory = "Filtering Platform Connection";
+    // Language-neutral subcategory GUIDs (`auditpol /list /subcategory:* /v`) - the names are
+    // localized, so "Filtering Platform Packet Drop" fails on a non-English install.
+    private const string PacketDropSubcategory = "{0CCE9225-69AE-11D9-BED3-505054503030}";
+    private const string ConnectionSubcategory = "{0CCE9226-69AE-11D9-BED3-505054503030}";
     private const int MaxEvents = 2000;
 
-    public static async Task<string> EnableAuditingAsync()
+    /// <summary>Succeeded only when both auditpol runs exit 0.</summary>
+    public static async Task<(string Text, bool Succeeded)> EnableAuditingAsync()
     {
-        string a = await RunAsync("auditpol.exe", $"/set /subcategory:\"{PacketDropSubcategory}\" /success:enable /failure:enable", 15000);
-        string b = await RunAsync("auditpol.exe", $"/set /subcategory:\"{ConnectionSubcategory}\" /success:enable /failure:enable", 15000);
+        var (a, codeA) = await RunWithExitCodeAsync("auditpol.exe", $"/set /subcategory:{PacketDropSubcategory} /success:enable /failure:enable", 15000);
+        var (b, codeB) = await RunWithExitCodeAsync("auditpol.exe", $"/set /subcategory:{ConnectionSubcategory} /success:enable /failure:enable", 15000);
+        bool ok = codeA == 0 && codeB == 0;
         string combined = $"{a}\n{b}".Trim();
-        return combined.Length == 0 ? "Auditing enabled for both subcategories." : combined;
+        if (!ok) return (combined.Length == 0 ? "auditpol failed." : combined, false);
+        return (combined.Length == 0 ? "Auditing enabled for both subcategories." : combined, true);
+    }
+
+    private static async Task<(string Output, int? ExitCode)> RunWithExitCodeAsync(string exe, string args, int timeoutMs)
+    {
+        try
+        {
+            var r = await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: $"{exe} timed out.");
+            return (r.Output.Trim(), r.ExitCode);
+        }
+        catch (Exception ex)
+        {
+            return ($"Failed: {ex.Message}", null);
+        }
     }
 
     public static async Task<WfpAuditScanResult> ScanAsync(TimeSpan window)

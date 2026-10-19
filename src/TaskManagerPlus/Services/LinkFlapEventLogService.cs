@@ -46,7 +46,8 @@ public static class LinkFlapEventLogService
         !providerName.StartsWith("Microsoft-Windows-", StringComparison.OrdinalIgnoreCase) &&
         !ExcludedClassicProviders.Contains(providerName, StringComparer.OrdinalIgnoreCase);
 
-    private static readonly Regex NamedDataRegex = new(@"<Data Name=""([^""]+)"">([^<]*)</Data>", RegexOptions.Compiled);
+    // EventRecord.ToXml() writes single-quoted attributes (<Data Name='X'>); accept either quote.
+    private static readonly Regex NamedDataRegex = new(@"<Data Name=(['""])([^'""]+)\1>([^<]*)</Data>", RegexOptions.Compiled);
     private static readonly string[] AdapterHintFieldNames = { "InterfaceDescription", "AdapterFriendlyName", "Description", "DeviceDescription", "Name" };
 
     public static LinkFlapScanResult Scan(TimeSpan window)
@@ -112,8 +113,8 @@ public static class LinkFlapEventLogService
         {
             string xml = record.ToXml();
             foreach (Match m in NamedDataRegex.Matches(xml))
-                if (!dict.ContainsKey(m.Groups[1].Value))
-                    dict[m.Groups[1].Value] = m.Groups[2].Value;
+                if (!dict.ContainsKey(m.Groups[2].Value))
+                    dict[m.Groups[2].Value] = System.Net.WebUtility.HtmlDecode(m.Groups[3].Value);
         }
         catch
         {

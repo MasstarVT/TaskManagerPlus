@@ -4251,8 +4251,9 @@ public sealed class EventLogService
     /// the UI text this backs, since the exact width is a judgment call, not a documented constant.</summary>
     private static readonly TimeSpan HardwareErrorCorrelationWindow = TimeSpan.FromMinutes(5);
 
+    // EventRecord.ToXml() writes single-quoted attributes; accept either quote.
     private static readonly Regex WheaRawDataHexRegex = new(
-        @"<Data Name=""RawData"">([0-9A-Fa-f]+)</Data>", RegexOptions.Compiled);
+        @"<Data Name=['""]RawData['""]>([0-9A-Fa-f]+)</Data>", RegexOptions.Compiled);
 
     /// <summary>#489: bus/device/function -&gt; friendly name, built once per Query() call from
     /// currently-present PCI devices (PnpDeviceTreeService.BuildPciLocationLookup) rather than once

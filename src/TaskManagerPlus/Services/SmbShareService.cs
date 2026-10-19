@@ -258,15 +258,16 @@ public static class SmbShareService
     /// <summary>#587's "Disconnect" action - `net use X: /delete /y`, always behind the caller's
     /// own confirm (same "caller owns the prompt" convention NetworkStackResetService's own
     /// remarks describe).</summary>
-    public static async Task<string> DisconnectAsync(string driveLetter)
+    public static async Task<(string Output, int? ExitCode)> DisconnectAsync(string driveLetter)
     {
         try
         {
-            return await RunCommandAsync("net.exe", $"use {driveLetter} /delete /y");
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync("net.exe", $"use {driveLetter} /delete /y", 15000, timeoutOutput: "net.exe timed out.");
+            return (output.Trim(), exitCode);
         }
         catch (Exception ex)
         {
-            return $"Failed: {ex.Message}";
+            return ($"Failed: {ex.Message}", null);
         }
     }
 

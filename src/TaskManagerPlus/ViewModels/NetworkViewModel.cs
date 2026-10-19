@@ -3702,10 +3702,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         bool success = false;
         try
         {
-            string text = await WfpAuditService.EnableAuditingAsync();
-            WfpAuditStatusText = text;
-            // Two auditpol runs folded into one string - either one's failure sentinel fails both.
-            success = !text.Contains("Failed:", StringComparison.Ordinal) && !text.Contains("timed out.", StringComparison.Ordinal);
+            (WfpAuditStatusText, success) = await WfpAuditService.EnableAuditingAsync();
         }
         catch (Exception ex)
         {
@@ -3716,7 +3713,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             IsEnablingWfpAuditing = false;
         }
         JournalOneShotRun("Enable WFP drop auditing",
-            "auditpol /set /subcategory:\"Filtering Platform Packet Drop\" and \"Filtering Platform Connection\" /success:enable /failure:enable", success);
+            "auditpol /set /subcategory:{0CCE9225-69AE-11D9-BED3-505054503030} (Filtering Platform Packet Drop) and {0CCE9226-69AE-11D9-BED3-505054503030} (Filtering Platform Connection) /success:enable /failure:enable", success);
     }
 
     private async Task ScanWfpDropsAsync()
@@ -4028,13 +4025,6 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         });
     }
 
-    /// <summary>The action services behind these buttons return the tool's own text or one of
-    /// their failure sentinels ("Failed: ...", "Couldn't start ...", "... timed out.") rather than
-    /// an exit code - this reads the sentinel so a failed run isn't journaled as a success.</summary>
-    private static bool LooksLikeRunFailure(string output) =>
-        output.StartsWith("Failed:", StringComparison.Ordinal) ||
-        output.StartsWith("Couldn't", StringComparison.Ordinal) ||
-        output.EndsWith("timed out.", StringComparison.Ordinal);
 
     // ---- #577 helper (VPN tunnel/DNS-leak check) -----------------------------------------------
 
@@ -4331,9 +4321,9 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         if (confirm != MessageBoxResult.Yes) return;
 
         NetworkDrivesStatusText = $"Disconnecting {drive.DriveLetter}...";
-        string output = await SmbShareService.DisconnectAsync(drive.DriveLetter);
+        var (output, exitCode) = await SmbShareService.DisconnectAsync(drive.DriveLetter);
         NetworkDrivesStatusText = output;
-        JournalOneShotRun("Disconnect network drive", $"net use {drive.DriveLetter} /delete /y", !LooksLikeRunFailure(output));
+        JournalOneShotRun("Disconnect network drive", $"net use {drive.DriveLetter} /delete /y", exitCode == 0);
         await RefreshNetworkDrivesAsync();
     }
 
