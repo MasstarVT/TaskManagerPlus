@@ -1223,10 +1223,11 @@ public static class EtwTraceService
     /// <summary>
     /// Checks a recipe's (already %OUTPUT%-substituted) arguments before the elevated app runs them:
     /// only allow-listed, non-persistent switches/verbs, and every file path - anything rooted or
-    /// containing a separator, and every value of a path-taking switch - must be a full path inside
-    /// <paramref name="traceDir"/>. A bare file name is refused too, since the tool would resolve it
-    /// against its own working directory. Built-in recipes (wpr -start ... -filemode, netsh trace
-    /// start ... tracefile=%OUTPUT%) pass unchanged.
+    /// containing a separator, and every value of a path-taking switch - must be a full path directly
+    /// inside <paramref name="traceDir"/> that isn't a reparse point. A bare file name, or a
+    /// path-taking switch left without a value, is refused too, since the tool would then use its
+    /// own working directory or default folder. Built-in recipes (wpr -start ... -filemode, netsh
+    /// trace start ... tracefile=%OUTPUT%) pass unchanged.
     /// </summary>
     internal static bool ValidateRecipeArguments(string toolFileName, string args, string traceDir, out string? refusal)
     {
@@ -1292,10 +1293,16 @@ public static class EtwTraceService
         }
         // Without -ets these verbs act on a saved data collector set, which persists (and can be
         // scheduled) - recipes are limited to in-memory event trace sessions.
-        if (verb != "query" && !tokens.Skip(start).Any(t => IsRecipeSwitch(t, out string name) && name.Equals("ets", StringComparison.OrdinalIgnoreCase)))
+        if (verb != "query" && !HasRecipeSwitch(tokens, start, "ets"))
             return Refuse($"logman {verb} recipes must use -ets (an event trace session, not a saved data collector set).", out refusal);
+        // Without -o a file session writes to logman's own default folder instead of Traces.
+        if (verb is "create" or "start" && !HasRecipeSwitch(tokens, start, "o") && !HasRecipeSwitch(tokens, start, "rt"))
+            return Refuse($"logman {verb} recipes need -o %OUTPUT% (or -rt for a real-time session).", out refusal);
         return ValidateSwitchTokens(tokens, start, LogmanRecipeSwitches, RecipeArgKind.Words, dir, out refusal);
     }
+
+    private static bool HasRecipeSwitch(List<string> tokens, int start, string name)
+        => tokens.Skip(start).Any(t => IsRecipeSwitch(t, out string n) && n.Equals(name, StringComparison.OrdinalIgnoreCase));
 
     private static bool ValidateNetshTraceTokens(List<string> tokens, string dir, out string? refusal)
     {
@@ -1304,6 +1311,9 @@ public static class EtwTraceService
         if (!NetshTraceRecipeVerbs.Contains(tokens[1], StringComparer.OrdinalIgnoreCase))
             return Refuse($"netsh trace \"{tokens[1]}\" isn't allowed in a recipe - only start, stop, show and convert are.", out refusal);
 
+        // netsh accepts any unambiguous prefix of a tag ("persist=", "tracef="), so tags are
+        // matched by prefix, not by exact name.
+        bool hasTraceFile = false;
         foreach (string token in tokens.Skip(2))
         {
             int eq = token.IndexOf('=');
@@ -1314,16 +1324,24 @@ public static class EtwTraceService
             }
             string key = token[..eq].Trim();
             string value = token[(eq + 1)..].Trim();
-            if (key.Equals("persistent", StringComparison.OrdinalIgnoreCase) && !value.Equals("no", StringComparison.OrdinalIgnoreCase))
+            if (IsTagPrefix(key, "persistent") && !value.Equals("no", StringComparison.OrdinalIgnoreCase))
                 return Refuse("netsh trace persistent=yes keeps tracing across reboots, which recipes don't allow.", out refusal);
-            bool ok = NetshTracePathKeys.Contains(key, StringComparer.OrdinalIgnoreCase)
-                ? IsPathInsideDir(value, dir)
+            bool isPathKey = NetshTracePathKeys.Any(k => IsTagPrefix(key, k));
+            bool ok = isPathKey
+                ? IsAllowedRecipePath(value, dir)
                 : IsPlainRecipeWord(key) && IsPlainRecipeWord(value);
             if (!ok) return Refuse(PathRefusal(token, dir), out refusal);
+            if (IsTagPrefix(key, "tracefile")) hasTraceFile = true;
         }
+        // Without tracefile= netsh writes to its own default folder instead of Traces.
+        if (tokens[1].Equals("start", StringComparison.OrdinalIgnoreCase) && !hasTraceFile)
+            return Refuse("netsh trace start recipes need tracefile=%OUTPUT%.", out refusal);
         refusal = null;
         return true;
     }
+
+    private static bool IsTagPrefix(string key, string tag)
+        => key.Length > 0 && tag.StartsWith(key, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Walks switch-led tokens from <paramref name="start"/>: each switch must be in
     /// <paramref name="allowed"/>, and the tokens after it must match its kind.
@@ -1332,14 +1350,17 @@ public static class EtwTraceService
         RecipeArgKind positional, string dir, out string? refusal)
     {
         RecipeArgKind kind = positional;
+        string? currentSwitch = null;
         int valueIndex = 0;
         for (int i = start; i < tokens.Count; i++)
         {
             string token = tokens[i];
             if (IsRecipeSwitch(token, out string name))
             {
+                if (!PathSwitchHasValue(currentSwitch, kind, valueIndex, out refusal)) return false;
                 if (!allowed.TryGetValue(name, out kind))
                     return Refuse($"the \"{token}\" option isn't allowed in a recipe.", out refusal);
+                currentSwitch = token;
                 valueIndex = 0;
                 continue;
             }
@@ -1348,8 +1369,8 @@ public static class EtwTraceService
             {
                 RecipeArgKind.Flag => false,
                 RecipeArgKind.Words => IsPlainRecipeWord(token),
-                RecipeArgKind.Paths => IsPathInsideDir(token, dir),
-                RecipeArgKind.StopArgs => valueIndex == 0 ? IsPathInsideDir(token, dir) : IsPlainRecipeWord(token),
+                RecipeArgKind.Paths => IsAllowedRecipePath(token, dir),
+                RecipeArgKind.StopArgs => valueIndex == 0 ? IsAllowedRecipePath(token, dir) : IsPlainRecipeWord(token),
                 RecipeArgKind.Profiles => IsAllowedProfileToken(token, dir),
                 _ => false,
             };
@@ -1361,12 +1382,26 @@ public static class EtwTraceService
             }
             valueIndex++;
         }
+        if (!PathSwitchHasValue(currentSwitch, kind, valueIndex, out refusal)) return false;
+        // tracerpt with no -o writes dumpfile.xml into its working directory.
+        if (ReferenceEquals(allowed, TracerptRecipeSwitches) && !HasRecipeSwitch(tokens, start, "o"))
+            return Refuse("tracerpt recipes need -o with a path inside the Traces folder.", out refusal);
         refusal = null;
         return true;
     }
 
+    /// <summary>A path-taking switch with no value makes the tool fall back to a default file name
+    /// in its working directory (tracerpt's summary.txt/workload.xml/dumpfile.xml), so one is required.</summary>
+    private static bool PathSwitchHasValue(string? switchToken, RecipeArgKind kind, int valueCount, out string? refusal)
+    {
+        refusal = null;
+        if (switchToken is null || valueCount > 0 || kind is not (RecipeArgKind.Paths or RecipeArgKind.StopArgs)) return true;
+        refusal = $"\"{switchToken}\" needs a file path inside the Traces folder.";
+        return false;
+    }
+
     private static string PathRefusal(string token, string dir)
-        => $"\"{token}\" isn't allowed - file paths in a recipe must be full paths inside {dir} (use %OUTPUT%), and other values can't contain path characters.";
+        => $"\"{token}\" isn't allowed - file paths in a recipe must be full paths directly inside {dir} (use %OUTPUT%), and other values can't contain path characters.";
 
     /// <summary>"-name" or "/name" (logman's "--name" negation too) with a letters-only name.</summary>
     private static bool IsRecipeSwitch(string token, out string name)
@@ -1384,20 +1419,31 @@ public static class EtwTraceService
     private static bool IsPlainRecipeWord(string token)
         => token.IndexOfAny(new[] { '\\', '/' }) < 0 && !Path.IsPathRooted(token);
 
+    /// <summary>A built-in profile name, or a custom .wprp (alone or as file.wprp!Profile) that is
+    /// an allowed recipe path - a bare "x.wprp" would be read from the tool's working directory.</summary>
     private static bool IsAllowedProfileToken(string token, string dir)
     {
         int bang = token.IndexOf('!');
-        if (bang < 0) return IsPlainRecipeWord(token);
-        return IsPathInsideDir(token[..bang], dir) && IsPlainRecipeWord(token[(bang + 1)..]);
+        if (bang >= 0) return IsAllowedRecipePath(token[..bang], dir) && IsPlainRecipeWord(token[(bang + 1)..]);
+        if (token.EndsWith(".wprp", StringComparison.OrdinalIgnoreCase)) return IsAllowedRecipePath(token, dir);
+        return IsPlainRecipeWord(token);
     }
 
-    private static bool IsPathInsideDir(string path, string dir)
+    /// <summary>A full local path whose parent is exactly <paramref name="dir"/> and which, if it
+    /// already exists, isn't a reparse point. Direct children only: a junction planted in a
+    /// subfolder of Traces would otherwise pass a plain prefix check.</summary>
+    private static bool IsAllowedRecipePath(string path, string dir)
     {
         try
         {
             if (path.StartsWith(@"\\", StringComparison.Ordinal) || !Path.IsPathFullyQualified(path)) return false;
             string full = Path.GetFullPath(path);
-            return full.StartsWith(dir + "\\", StringComparison.OrdinalIgnoreCase);
+            string? parent = Path.GetDirectoryName(full);
+            if (parent is null || !parent.TrimEnd('\\').Equals(dir, StringComparison.OrdinalIgnoreCase)) return false;
+            // GetAttributes reads a link's own attributes (dangling links included).
+            try { return !File.GetAttributes(full).HasFlag(FileAttributes.ReparsePoint); }
+            catch (FileNotFoundException) { return true; }
+            catch (DirectoryNotFoundException) { return true; }
         }
         catch { return false; }
     }

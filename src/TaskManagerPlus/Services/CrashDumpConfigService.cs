@@ -69,8 +69,8 @@ public static class CrashDumpConfigService
         // flag, not a verdict"). Complete dump: all of physical RAM plus a small header/overhead
         // margin. Kernel/Automatic/Active dump: only kernel-mode pages, commonly well under total
         // RAM, but with no fixed ratio Windows guarantees - a conservative third of RAM (floor
-        // 800 MB) is used as the "probably enough" bar. Small dump: Microsoft documents a 1 MB
-        // minimum page file for the 256 KB minidump.
+        // 800 MB) is used as the "probably enough" bar. Small dump: Microsoft's page-file sizing
+        // guidance gives a 1 MB minimum page file for the 256 KB minidump (also an estimate).
         long completeReq = ramBytes > 0 ? ramBytes + 257L * 1024 * 1024 : 0;
         long kernelReq = ramBytes > 0 ? Math.Max(800L * 1024 * 1024, ramBytes / 3) : 0;
         long requiredForType = rawType switch
