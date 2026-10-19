@@ -60,8 +60,8 @@ public static class StressTestReportService
         Line($"| Computation correct (no checksum mismatch) | {CriterionText(result.Criteria.ComputationChecked, result.Criteria.ComputationOk)} |");
         Line($"| No WHEA corrected-error delta | {(result.Criteria.NoWheaDelta ? "Pass" : "Fail")} |");
         Line($"| No display-driver reset (TDR) | {(result.Criteria.NoTdr ? "Pass" : "Fail")} |");
-        Line($"| Sustained clock at/above rated base | {CriterionText(result.Criteria.ClockChecked, result.Criteria.SustainedClockAtOrAboveBase)} |");
-        Line($"| Peak temperature below throttle point | {(result.Criteria.PeakTempBelowThrottlePoint ? "Pass" : "Fail")} |");
+        Line($"| Sustained clock at/above rated base | {result.Criteria.ClockResultText} |");
+        Line($"| Peak temperature below throttle point | {result.Criteria.TempResultText} |");
         Line();
 
         Line("## Summary");
@@ -137,8 +137,8 @@ public static class StressTestReportService
         Line($"<tr><td>Computation correct</td><td>{CriterionText(result.Criteria.ComputationChecked, result.Criteria.ComputationOk)}</td></tr>");
         Line($"<tr><td>No WHEA corrected-error delta</td><td>{(result.Criteria.NoWheaDelta ? "Pass" : "Fail")}</td></tr>");
         Line($"<tr><td>No display-driver reset (TDR)</td><td>{(result.Criteria.NoTdr ? "Pass" : "Fail")}</td></tr>");
-        Line($"<tr><td>Sustained clock at/above base</td><td>{CriterionText(result.Criteria.ClockChecked, result.Criteria.SustainedClockAtOrAboveBase)}</td></tr>");
-        Line($"<tr><td>Peak temperature below throttle point</td><td>{(result.Criteria.PeakTempBelowThrottlePoint ? "Pass" : "Fail")}</td></tr>");
+        Line($"<tr><td>Sustained clock at/above base</td><td>{result.Criteria.ClockResultText}</td></tr>");
+        Line($"<tr><td>Peak temperature below throttle point</td><td>{result.Criteria.TempResultText}</td></tr>");
         Line("</table>");
 
         Line("<h2>Trace</h2>");

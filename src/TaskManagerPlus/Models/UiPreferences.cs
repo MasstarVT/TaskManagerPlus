@@ -37,10 +37,11 @@ public sealed class UiPreferences
     /// changes for anyone who hasn't opted in.</summary>
     public bool PlainEnglishMode { get; set; }
 
-    /// <summary>#999: hard-disables every outbound network call this app can make on its own
-    /// (PublicIpLookupService, UpdateCheckService, TracerouteService/ping targets) - see
-    /// NetworkActivityCatalogService's remarks for the exact boundary (a user-initiated "Learn
-    /// more" browser navigation is deliberately NOT gated by this). Off by default.</summary>
+    /// <summary>#999: hard-disables exactly three outbound calls - PublicIpLookupService.LookupAsync,
+    /// UpdateCheckService.CheckForNewerReleaseAsync (including the automatic startup check) and
+    /// TracerouteService.RunAsync. Everything else (connectivity checks, the Network tab's other
+    /// tests, the PAC fetch, the Troubleshoot/Stability/Windows Health reachability checks, "Learn
+    /// more" links) still runs - see NetworkActivityCatalogService's remarks for why. Off by default.</summary>
     public bool OfflineMode { get; set; }
 
     public static UiPreferences Defaults => new();

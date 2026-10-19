@@ -96,7 +96,7 @@ public static class NetworkEventTimelineService
         // markers and the sleep/resume correlation all compare against real UTC.
         var dns = dnsTask.Result;
         foreach (var e in dns.Events) events.Add(new NetworkTimelineEvent(ToUtc(e.TimeUtc), "DNS-Client", e.Source, $"{e.QueriedName}: {e.Summary}"));
-        if (!dns.OperationalChannelAvailable) unavailable.Add("DNS-Client/Operational");
+        if (!dns.SystemLogAvailable) unavailable.Add("System (DNS-Client)");
 
         var dhcp = dhcpTask.Result;
         foreach (var e in dhcp.Events) events.Add(new NetworkTimelineEvent(ToUtc(e.TimeUtc), $"Dhcp-Client/{e.Channel}", e.Category, e.Message));

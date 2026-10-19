@@ -3872,10 +3872,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         bool success = false;
         try
         {
-            string text = await WinsockService.ResetAsync();
-            // ResetAsync reports only text; its two failure messages are the only ones starting this way.
-            success = !text.StartsWith("Winsock reset failed", StringComparison.Ordinal)
-                && !text.StartsWith("Winsock reset timed out", StringComparison.Ordinal);
+            (success, string text) = await WinsockService.ResetAsync();
             WinsockResetStatusText = text;
         }
         catch (Exception ex)

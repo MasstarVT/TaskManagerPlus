@@ -29,6 +29,10 @@ namespace TaskManagerPlus.Services;
 ///     monitors, hop monitor, jitter and path-MTU tests, the NCSI check, DNS comparisons). Each
 ///     runs only from its own button or toggle - except the PAC script fetch, which the proxy card
 ///     also runs once at startup when Windows has a PAC URL configured.
+///   - Other tabs' on-demand checks: the symbol-server test (plus the symbol downloads cdb.exe
+///     itself makes during dump analysis), the WSUS server reachability check and the Troubleshoot
+///     "No internet" TCP connect. Each runs only from its own button, and each exists to test
+///     whether that one connection works.
 /// </summary>
 public static class NetworkActivityCatalogService
 {
@@ -109,6 +113,27 @@ public static class NetworkActivityCatalogService
             Name = "Other Network tab tests",
             Trigger = "Network tab → \"Resolve names\", dual-stack test and LAN throughput test buttons (never automatic)",
             Destination = "Reverse-DNS lookups of the connections listed, via your resolver; the host name you type in (IPv4 and IPv6 TCP connects); the LAN host or share you enter",
+            GatedByOfflineMode = false,
+        },
+        new()
+        {
+            Name = "\"No internet\" outbound TCP check",
+            Trigger = "Troubleshoot tab → \"No internet\" symptom, after its gateway and DNS steps pass (never automatic)",
+            Destination = "A TCP connect to 1.1.1.1 port 443 (no data sent)",
+            GatedByOfflineMode = false,
+        },
+        new()
+        {
+            Name = "Symbol server test and dump analysis",
+            Trigger = "Settings → Crash analysis → \"Test symbol server\" button, and Stability tab → \"Analyse (!analyze -v)\" button (never automatic)",
+            Destination = "https://msdl.microsoft.com/download/symbols/ (the test's HTTPS GET); during analysis cdb.exe itself downloads symbols from whatever server its symbol path names",
+            GatedByOfflineMode = false,
+        },
+        new()
+        {
+            Name = "WSUS server reachability check",
+            Trigger = "Windows Health tab → \"Check reachability\" button, shown only when a WUServer update policy is set (never automatic)",
+            Destination = "The WUServer URL from Windows Update policy (HTTP HEAD, then GET if HEAD fails)",
             GatedByOfflineMode = false,
         },
         new()

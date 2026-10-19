@@ -14,12 +14,7 @@ public sealed record DnsFailureGroup(string Key, int Count, DateTime LastSeenUtc
 /// couldn't be queried for the DNS-Client timeout events at all (access denied, log service
 /// unavailable) - distinct from a successful scan that simply found nothing.</summary>
 public sealed record DnsFailureScanResult(
-    List<DnsFailureEvent> Events, List<DnsFailureGroup> ByName, List<DnsFailureGroup> ByResolver, bool SystemLogAvailable)
-{
-    /// <summary>Old name, still read by NetworkEventTimelineService - same meaning as
-    /// <see cref="SystemLogAvailable"/> (the Operational channel is no longer read).</summary>
-    public bool OperationalChannelAvailable => SystemLogAvailable;
-}
+    List<DnsFailureEvent> Events, List<DnsFailureGroup> ByName, List<DnsFailureGroup> ByResolver, bool SystemLogAvailable);
 
 /// <summary>
 /// Item #524: scans the System log for Microsoft-Windows-DNS-Client resolution-timeout events (ID

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace TaskManagerPlus.Services;
 
@@ -9,6 +10,8 @@ namespace TaskManagerPlus.Services;
 public sealed class NetworkTestHistoryEntry
 {
     public DateTime TimestampUtc { get; set; }
+    /// <summary>Display-only local-time view of <see cref="TimestampUtc"/>; not persisted.</summary>
+    [JsonIgnore] public DateTime TimestampLocal => TimestampUtc.ToLocalTime();
     public string TestKind { get; set; } = string.Empty; // "Download", "Upload", "Bufferbloat", "LAN"
     public string Target { get; set; } = string.Empty;
     public double Mbps { get; set; }

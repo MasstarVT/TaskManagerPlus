@@ -5,12 +5,10 @@ namespace TaskManagerPlus.Converters;
 
 /// <summary>
 /// #938: positions one Timeline marker along its lane's horizontal track - a MultiBinding over
-/// the marker's own Timestamp plus TimelineViewModel's WindowStartLocal/WindowEndLocal/TrackWidthPx
-/// (see TimelineView.xaml). A marker outside the resolved window (shouldn't normally happen, since
-/// TimelineViewModel already filters lane Events... actually lane Events are NOT date-filtered,
-/// only FilteredEvents is - so a marker outside the window is clamped to the nearest edge rather
-/// than laid out off the visible track) is clamped to 0/track width rather than positioned outside
-/// the Canvas.
+/// the marker's own Timestamp, TimelineViewModel's WindowStartLocal/WindowEndLocal, and the lane
+/// ItemsControl's own rendered ActualWidth (see TimelineView.xaml; 900 is only a fallback for an
+/// unset value). Lane Events aren't date-filtered (only FilteredEvents is), so a marker outside the
+/// resolved window is clamped to 0/track width rather than positioned outside the Canvas.
 /// </summary>
 public sealed class TimelineMarkerPositionConverter : IMultiValueConverter
 {

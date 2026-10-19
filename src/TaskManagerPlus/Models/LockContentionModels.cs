@@ -43,11 +43,11 @@ public sealed class StuckProcessHint
     public string HintText { get; init; } = string.Empty;
 }
 
-/// <summary>#273: the optional kernel "Synchronization" performance-counter category - a rarely-
-/// enabled category requiring a boot-time kernel flag, so IsAvailable is false on most machines by
-/// default. Per CLAUDE.md's "degrade to hidden, never show zeros as if real" rule, the card this
-/// backs is hidden entirely (not shown with zeroed values) when IsAvailable is false - see
-/// SynchronizationCountersService.</summary>
+/// <summary>#273: the kernel "Synchronization" performance-counter category - present by default
+/// on current Windows builds (multi-instance, read from its "_Total" instance). IsAvailable is false
+/// only when the category or all three counters can't be read; per CLAUDE.md's "degrade to hidden,
+/// never show zeros as if real" rule, the card this backs is then hidden entirely (not shown with
+/// zeroed values) - see SynchronizationCountersService.</summary>
 public sealed class SynchronizationCountersInfo
 {
     public bool IsAvailable { get; init; }

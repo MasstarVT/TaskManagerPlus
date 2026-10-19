@@ -567,7 +567,7 @@
                                                 <ColumnDefinition Width="Auto" />
                                                 <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding TimestampUtc, StringFormat='{}{0:MM/dd HH:mm}'}" FontSize="{StaticResource FontBody}" Margin="0,0,10,0" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <TextBlock Grid.Column="0" Text="{Binding TimestampLocal, StringFormat='{}{0:MM/dd HH:mm}'}" FontSize="{StaticResource FontBody}" Margin="0,0,10,0" Foreground="{DynamicResource TextSecondaryBrush}" />
                                             <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" TextWrapping="Wrap">
                                                 <Run Text="{Binding TestKind, Mode=OneWay}" FontWeight="SemiBold" />
                                                 <Run Text=" — " />
@@ -4351,7 +4351,7 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,4" TextWrapping="Wrap">
-                                            <Run Text="{Binding TriggeredAtUtc, StringFormat={}{0:g}, Mode=OneWay}" FontFamily="Consolas" FontWeight="SemiBold" />
+                                            <Run Text="{Binding TriggeredAtLocal, StringFormat={}{0:g}, Mode=OneWay}" FontFamily="Consolas" FontWeight="SemiBold" />
                                             <Run Text=" — " /><Run Text="{Binding TriggerReason, Mode=OneWay}" />
                                             <Run Text=" (" /><Run Text="{Binding SampleCount, Mode=OneWay}" /><Run Text=" sample(s)) — " />
                                             <Run Text="{Binding FilePath, Mode=OneWay}" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextSecondaryBrush}" />

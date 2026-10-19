@@ -36,14 +36,14 @@ public static class WinsockService
     /// <summary>Success only on exit code 0 - a timeout, a start failure or a netsh error (e.g.
     /// "requires elevation") used to come back as empty output and was reported as a completed
     /// reset.</summary>
-    public static async Task<string> ResetAsync()
+    public static async Task<(bool Success, string Message)> ResetAsync()
     {
         var (output, exitCode) = await RunNetshAsync("winsock reset", ResetTimeoutMs);
         if (exitCode is null)
-            return output.Length > 0 ? $"Winsock reset failed: {output}" : "Winsock reset timed out - it may not have completed. Check `netsh winsock show catalog` before restarting.";
+            return (false, output.Length > 0 ? $"Winsock reset failed: {output}" : "Winsock reset timed out - it may not have completed. Check `netsh winsock show catalog` before restarting.");
         if (exitCode != 0)
-            return output.Length > 0 ? $"Winsock reset failed (exit code {exitCode}): {output}" : $"Winsock reset failed (exit code {exitCode}).";
-        return output.Length == 0 ? "Winsock catalog reset. Restart Windows for this to fully take effect." : output;
+            return (false, output.Length > 0 ? $"Winsock reset failed (exit code {exitCode}): {output}" : $"Winsock reset failed (exit code {exitCode}).");
+        return (true, output.Length == 0 ? "Winsock catalog reset. Restart Windows for this to fully take effect." : output);
     }
 
     private static List<WinsockProviderEntry> Parse(string output)
@@ -64,13 +64,30 @@ public static class WinsockService
             block.Clear();
         }
 
+        // The provider entries are followed by "Name Space Provider Entry" blocks (no Entry Type or
+        // Provider Path) - skipped, or each would become a bogus "Unknown" provider row, or overwrite
+        // the last real one's Description where no blank line separates them.
+        bool inNameSpaceBlock = false;
         foreach (var rawLine in output.Split('\n'))
         {
             string line = rawLine.TrimEnd('\r');
             if (string.IsNullOrWhiteSpace(line)) { Flush(); continue; }
+            if (line.Contains("Winsock Catalog Provider Entry", StringComparison.OrdinalIgnoreCase))
+            {
+                Flush();
+                inNameSpaceBlock = false;
+                continue;
+            }
+            if (line.Contains("Name Space Provider Entry", StringComparison.OrdinalIgnoreCase))
+            {
+                Flush();
+                inNameSpaceBlock = true;
+                continue;
+            }
+            if (inNameSpaceBlock) continue;
 
             int idx = line.IndexOf(':');
-            if (idx < 0) continue; // the "Winsock Catalog Provider Entry" header line, or the "----" separator
+            if (idx < 0) continue; // the "----" separator
             string key = line[..idx].Trim();
             string value = line[(idx + 1)..].Trim();
             if (key.Length == 0) continue;

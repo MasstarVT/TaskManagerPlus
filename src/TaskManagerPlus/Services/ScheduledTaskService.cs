@@ -734,9 +734,9 @@ public static class ScheduledTaskService
     #region #766 - Tasks with a missing target
 
     /// <summary>
-    /// #766: resolves a task's "Task To Run" command line down to its target executable the same
-    /// way StartupManagerService.ExtractPath already does for the Startup tab's own registry Run
-    /// entries (quoted-path / first-space-before-.exe heuristic), then checks whether that resolved
+    /// #766: resolves a task's "Task To Run" command line down to its target executable (see
+    /// ExtractTaskTarget - StartupManagerService.ExtractPath plus an executable-extension boundary
+    /// for unquoted paths with spaces), then checks whether that resolved
     /// file actually exists - flags an uninstalled app, a deleted user profile path, or an
     /// unreachable network share the same way (File.Exists returns false for all three). A
     /// genuinely unreachable UNC share degrades to "unknown" (never flagged as missing) via a
@@ -779,11 +779,14 @@ public static class ScheduledTaskService
 
     private static readonly Regex ExecutableBoundaryRegex = new(@"^.*?\.(?:exe|com|bat|cmd)(?=\s|""|$)", RegexOptions.IgnoreCase);
 
-    /// <summary>StartupManagerService.ExtractPath cuts an unquoted command line at its first space,
-    /// which turns the common unquoted "C:\Program Files\Vendor\app.exe --arg" into "C:\Program".
-    /// For that shape, take the first executable-extension boundary (what CreateProcess ends up
-    /// launching), else grow the prefix one space-separated token at a time until it names an
-    /// existing local file. Quoted and space-free command lines are unchanged.</summary>
+    /// <summary>Quoted and space-free command lines go straight to StartupManagerService.ExtractPath.
+    /// An unquoted one with spaces first takes its first .exe/.com/.bat/.cmd boundary - no disk
+    /// access, so "C:\Program Files\Vendor\app.exe --arg" still resolves to app.exe's full path when
+    /// that file is gone and can be flagged missing (ExtractPath's grow-until-a-file-exists probe
+    /// finds nothing there and falls back to "C:\Program"). Failing that, the prefix grows one
+    /// space-separated token at a time until it names an existing local file, each probe bounded by
+    /// FileExistsWithTimeout (UNC skipped, stop at the first timeout); anything still unresolved
+    /// falls back to ExtractPath.</summary>
     private static string ExtractTaskTarget(string taskToRun)
     {
         string trimmed = taskToRun.Trim();

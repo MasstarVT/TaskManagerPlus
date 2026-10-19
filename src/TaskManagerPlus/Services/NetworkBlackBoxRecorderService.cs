@@ -2,6 +2,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace TaskManagerPlus.Services;
 
@@ -14,7 +15,11 @@ public sealed record BlackBoxSample(
 /// <summary>One incident the recorder actually wrote to disk (#600) - shown in the Network tab's
 /// incident list. <see cref="FilePath"/> may point at a file that's since been moved/deleted by the
 /// user outside the app; the view degrades that to a disabled "Open" action rather than throwing.</summary>
-public sealed record BlackBoxIncident(DateTime TriggeredAtUtc, string TriggerReason, string FilePath, int SampleCount);
+public sealed record BlackBoxIncident(DateTime TriggeredAtUtc, string TriggerReason, string FilePath, int SampleCount)
+{
+    /// <summary>Display-only local-time view of <see cref="TriggeredAtUtc"/>; not persisted.</summary>
+    [JsonIgnore] public DateTime TriggeredAtLocal => TriggeredAtUtc.ToLocalTime();
+}
 
 /// <summary>
 /// Item #600: a bounded in-memory ring buffer of latency/loss/link-state/RSSI/adapter-error-counter
