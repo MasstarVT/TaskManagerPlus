@@ -96,7 +96,11 @@ public static class DpcModuleMapService
     public static string? ResolveDriverName(List<LoadedModule> map, ulong address)
     {
         foreach (var m in map)
+        {
+            // A zeroed base (24H2 without SeDebugPrivilege) is no real range - it can only mis-match.
+            if (m.Base == 0) continue;
             if (address >= m.Base && address < m.Base + m.Size) return m.FileName;
+        }
         return null;
     }
 }

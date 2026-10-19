@@ -45,7 +45,7 @@ namespace TaskManagerPlus.Services;
 public sealed class DpcLatencyService
 {
     // The classic kernel logger's one fixed, reserved session name - see the class remarks.
-    private const string SessionName = "NT Kernel Logger";
+    private const string SessionName = KernelLoggerSession.Name;
 
     private static readonly string LogmanPath = Path.Combine(Environment.SystemDirectory, "logman.exe");
     private static readonly string TracerptPath = Path.Combine(Environment.SystemDirectory, "tracerpt.exe");
@@ -193,17 +193,24 @@ public sealed class DpcLatencyService
         string etl = Path.Combine(dir, $"sample_{Guid.NewGuid():N}.etl");
         string xml = Path.Combine(dir, $"sample_{Guid.NewGuid():N}.xml");
 
+        // The kernel logger is one system-wide session - see KernelLoggerSession. Claimed before any
+        // logman call and released once this sample's session is stopped (the tracerpt step below
+        // doesn't need it), so the page-fault capture can't start in between and be stopped here.
+        if (!KernelLoggerSession.TryClaim(KernelLoggerSession.Owner.DpcSampling, out var holder))
+        {
+            return (false, holder == KernelLoggerSession.Owner.PageFaultCapture
+                ? "The kernel logger is in use by the Memory tab's page-fault trace capture (about 30 seconds) - start the measurement again once it finishes."
+                : "The kernel logger is still held by the previous DPC/ISR sample - start the measurement again.", 0);
+        }
+        bool claimReleased = false;
+
         try
         {
-            // The Memory tab's page-fault capture holds this same singleton logger; the stop below
-            // would end that trace silently.
-            if (PageFaultTraceService.IsCapturing)
-                return (false, "The kernel logger is in use by the Memory tab's page-fault trace capture (about 30 seconds) - start the measurement again once it finishes.", 0);
+            // Stops a session only when it is provably one this app leaked (crash/kill) - never
+            // another tool's trace.
+            await KernelLoggerSession.ReclaimLeakedSessionAsync();
 
-            // Best-effort cleanup of a stale session left over from a previous crashed/killed run -
-            // errors ignored, and deliberately not tied to the caller's token so it always runs.
-            await RunProcessAsync(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(15), CancellationToken.None, ignoreExitCode: true);
-
+            KernelLoggerSession.RecordStarting(etl);
             var (startOk, startErr) = await RunProcessAsync(LogmanPath,
                 $"create trace \"{SessionName}\" -p \"Windows Kernel Trace\" \"(dpc,isr)\" -o \"{etl}\" -ets",
                 TimeSpan.FromSeconds(20), ct);
@@ -219,7 +226,11 @@ public sealed class DpcLatencyService
                 // Always stop the session we just started, even on cancel - CancellationToken.None
                 // so a cancelled measurement session still cleanly tears down the kernel trace
                 // rather than leaving "NT Kernel Logger" running for the next sample to trip over.
-                await RunProcessAsync(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(15), CancellationToken.None, ignoreExitCode: true);
+                // A failed stop keeps the marker, so the next claim can reclaim this session.
+                var (stopOk, _) = await RunProcessAsync(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(15), CancellationToken.None);
+                if (stopOk) KernelLoggerSession.RecordStopped();
+                KernelLoggerSession.Release(KernelLoggerSession.Owner.DpcSampling);
+                claimReleased = true;
             }
 
             if (!File.Exists(etl))
@@ -230,8 +241,11 @@ public sealed class DpcLatencyService
                 return (false, $"tracerpt couldn't convert the trace: {convErr}", 0);
 
             // Loading a multi-MB trace XML and building a field map per event stays off the UI
-            // thread; only the ingest, which mutates state the view model reads, runs back here.
+            // thread; only the ingest, which mutates state the view model reads, runs back here. A
+            // Stop during the parse discards the sample rather than letting it land in whatever
+            // session starts next.
             var events = await Task.Run(() => ParseEvents(xml));
+            ct.ThrowIfCancellationRequested();
             int parsed = Ingest(events);
             SampleSequence++;
             string message = parsed == 0
@@ -249,6 +263,8 @@ public sealed class DpcLatencyService
         }
         finally
         {
+            // Every early return before the session started (reclaim/create failure) lands here.
+            if (!claimReleased) KernelLoggerSession.Release(KernelLoggerSession.Owner.DpcSampling);
             try { if (File.Exists(etl)) File.Delete(etl); } catch { /* best-effort cleanup */ }
             try { if (File.Exists(xml)) File.Delete(xml); } catch { /* best-effort cleanup */ }
         }
@@ -258,8 +274,8 @@ public sealed class DpcLatencyService
     {
         if (raw.Contains("Access is denied", StringComparison.OrdinalIgnoreCase))
             return "Access denied starting the kernel trace - this needs administrator rights (the app should already be elevated; if this appears, DPC/ISR capture can't run).";
-        if (raw.Contains("already exists", StringComparison.OrdinalIgnoreCase))
-            return "A kernel trace session was already running and couldn't be replaced.";
+        if (KernelLoggerSession.LooksLikeAlreadyRunning(raw))
+            return "The NT Kernel Logger is already in use by another tool (WPR, xperf, PerfView, ...) - nothing was stopped. Close that trace and start the measurement again.";
         return string.IsNullOrWhiteSpace(raw) ? "Couldn't start the kernel trace." : $"Couldn't start the kernel trace: {raw}";
     }
 
@@ -466,13 +482,9 @@ public sealed class DpcLatencyService
     /// <summary>Synchronous best-effort stop of this service's kernel session, for app shutdown -
     /// the async loop's own finally-block stop is a dispatcher continuation that never runs once
     /// the dispatcher has shut down, which would leave "NT Kernel Logger" writing its .etl until
-    /// reboot. Only call while this app's measurement session is running: the logger name is a
-    /// system-wide singleton another tool may own.</summary>
-    public static void StopSessionBlocking()
-    {
-        try { ToolRunner.RunCaptured(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(5)); }
-        catch { /* best-effort */ }
-    }
+    /// reboot. A no-op unless a DPC sample holds the logger right now: between samples (and during
+    /// a sample's tracerpt step) the system-wide session may belong to someone else.</summary>
+    public static void StopSessionBlocking() => KernelLoggerSession.StopBlocking(KernelLoggerSession.Owner.DpcSampling);
 
     /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> - notably, the local copy
     /// this replaces never killed a timed-out child at all; the shared runner kills the whole

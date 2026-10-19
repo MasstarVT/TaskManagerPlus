@@ -154,7 +154,8 @@
                             <DockPanel Grid.Column="0">
                                 <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
                                     <Button Content="Load providers" Command="{Binding LoadEtwProvidersCommand}" Padding="6,2" Margin="0,0,6,0" FontSize="{StaticResource FontBody}" />
-                                    <ProgressBar Width="70" Height="6" IsIndeterminate="{Binding IsEtwProvidersLoading}" VerticalAlignment="Center" />
+                                    <ProgressBar Width="70" Height="6" IsIndeterminate="{Binding IsEtwProvidersLoading}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBlock Text="{Binding EtwProvidersStatusText}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" />
                                 </WrapPanel>
                                 <TextBox DockPanel.Dock="Top" Text="{Binding EtwProviderSearchText, UpdateSourceTrigger=PropertyChanged}"
                                           Margin="0,0,0,6" ToolTip="Filter by provider name or GUID" />
@@ -434,6 +435,9 @@
                         <StackPanel Visibility="{Binding LastSummary, Converter={StaticResource NullToVisibilityConverter}}">
                             <TextBlock Text="{Binding LastSummary.ErrorMessage}" TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}" Margin="0,0,0,8"
                                         Visibility="{Binding LastSummary.ErrorMessage, Converter={StaticResource NullToVisibilityConverter}}" />
+                            <!-- The parsed tiles and ranking only exist for a summary that ran; a failed
+                                 one would otherwise read as a real "0 events / 0 lost". -->
+                            <StackPanel Visibility="{Binding LastSummary.Success, Converter={StaticResource BoolToVisibilityConverter}}">
                             <WrapPanel Margin="0,0,0,8">
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="8,4" Margin="0,0,8,4">
                                     <StackPanel>
@@ -488,6 +492,7 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+                            </StackPanel>
 
                             <Expander Header="Raw summary.txt">
                                 <TextBox Text="{Binding LastSummary.RawSummaryText, Mode=OneWay}" IsReadOnly="True"

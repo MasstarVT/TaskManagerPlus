@@ -33,7 +33,7 @@ public static class InterruptManagementService
         [3] = "All processors in machine",
         [4] = "Specified processors",
         [5] = "Spread across all processors",
-        [6] = "Specified processors, when possible",
+        [6] = "All processors in machine when steered (reserved)", // IrqPolicyAllProcessorsInMachineWhenSteered
     };
 
     // IRQ_PRIORITY values.

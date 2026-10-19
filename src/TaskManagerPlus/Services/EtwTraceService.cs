@@ -43,52 +43,75 @@ public static class EtwTraceService
     /// no per-session detail, so this is fast even with dozens of sessions). Callers that also want
     /// provider/buffer/loss detail should follow up with <see cref="QuerySessionDetailAsync"/> per
     /// row - kept as two steps rather than one so the initial list renders immediately and detail
-    /// loads progressively instead of one slow up-front sweep.</summary>
-    public static async Task<List<EtwSessionRow>> QueryRunningSessionsAsync(CancellationToken ct = default)
+    /// loads progressively instead of one slow up-front sweep. Error is non-null when the list
+    /// couldn't be read at all (timeout, logman missing, an output shape with no table header) -
+    /// distinct from a readable list that is genuinely empty.</summary>
+    public static async Task<(List<EtwSessionRow> Rows, string? Error)> QueryRunningSessionsAsync(CancellationToken ct = default)
     {
-        var rows = new List<EtwSessionRow>();
         try
         {
-            var (output, _) = await RunCapturedAsync("logman.exe", "query -ets", 15000, ct);
-            rows = ParseSessionList(output);
+            // The exit code isn't trusted either way (see the class remarks) - the table header is.
+            var (output, exitCode) = await RunCapturedAsync("logman.exe", "query -ets", 15000, ct);
+            if (exitCode is null) return (new List<EtwSessionRow>(), "logman timed out listing ETW sessions.");
+            var rows = ParseSessionList(output);
+            return rows is null
+                ? (new List<EtwSessionRow>(), "logman's session list wasn't in the expected format: " + Truncate(output.Trim(), 200))
+                : (rows, null);
         }
-        catch
+        catch (Exception ex)
         {
-            // logman unavailable/failed entirely - empty list, same degrade as every other
-            // optional data source in this app.
+            return (new List<EtwSessionRow>(), $"Couldn't run logman: {ex.Message}");
         }
-        return rows;
     }
 
+    private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "...";
+
+    // Name, then Type and Status as the last two words - for a row whose name ran into the Type column.
+    private static readonly Regex OverflowSessionRowRegex = new(@"^(.+?)\s+(\S+)\s+(\S+)\s*$", RegexOptions.Compiled);
+
     /// <summary>Parses `logman query -ets`'s fixed-width "Data Collector Set / Type / Status"
-    /// table. Column positions are read from the header line itself rather than hardcoded offsets,
-    /// so this survives a session name long enough to push the columns over (logman right-pads to
-    /// fit the widest entry).</summary>
-    internal static List<EtwSessionRow> ParseSessionList(string output)
+    /// table, or null when no header row is found (an unexpected output shape - never guessed at).
+    /// Column positions are read from the header line itself. logman doesn't widen a column for a
+    /// longer value - its sibling `logman query providers` table, checked live, prints a 41+ char
+    /// name followed by one space and then the next column - so a row whose name reaches the Type
+    /// column is split from the right instead (Type and Status are single words there).</summary>
+    internal static List<EtwSessionRow>? ParseSessionList(string output)
     {
         var rows = new List<EtwSessionRow>();
         var lines = output.Replace("\r\n", "\n").Split('\n');
 
         int headerIndex = Array.FindIndex(lines, l => l.Contains("Data Collector Set", StringComparison.OrdinalIgnoreCase)
             && l.Contains("Type", StringComparison.OrdinalIgnoreCase) && l.Contains("Status", StringComparison.OrdinalIgnoreCase));
-        if (headerIndex < 0) return rows; // unexpected output shape - degrade to empty rather than guess
+        if (headerIndex < 0) return null;
 
         string header = lines[headerIndex];
         int typeCol = header.IndexOf("Type", StringComparison.OrdinalIgnoreCase);
         int statusCol = header.IndexOf("Status", StringComparison.OrdinalIgnoreCase);
-        if (typeCol < 0 || statusCol < 0 || statusCol <= typeCol) return rows;
+        if (typeCol <= 0 || statusCol < 0 || statusCol <= typeCol) return null;
 
         for (int i = headerIndex + 1; i < lines.Length; i++)
         {
-            string line = lines[i];
+            string line = lines[i].TrimEnd('\r');
             if (line.Length == 0 || line.StartsWith('-')) continue;
             if (line.Contains("command completed", StringComparison.OrdinalIgnoreCase)) break;
             if (line.Length <= typeCol) continue;
 
-            string name = line[..typeCol].Trim();
+            string name, type, status;
+            if (!char.IsWhiteSpace(line[typeCol - 1]))
+            {
+                var m = OverflowSessionRowRegex.Match(line);
+                if (!m.Success) continue;
+                name = m.Groups[1].Value.Trim();
+                type = m.Groups[2].Value;
+                status = m.Groups[3].Value;
+            }
+            else
+            {
+                name = line[..typeCol].Trim();
+                type = statusCol <= line.Length ? line[typeCol..Math.Min(statusCol, line.Length)].Trim() : string.Empty;
+                status = statusCol < line.Length ? line[statusCol..].Trim() : string.Empty;
+            }
             if (name.Length == 0) continue;
-            string type = statusCol <= line.Length ? line[typeCol..Math.Min(statusCol, line.Length)].Trim() : string.Empty;
-            string status = statusCol < line.Length ? line[statusCol..].Trim() : string.Empty;
 
             rows.Add(new EtwSessionRow { Name = name, Type = type.Length > 0 ? type : "Trace", Status = status.Length > 0 ? status : "Unknown" });
         }
@@ -335,42 +358,45 @@ public static class EtwTraceService
     /// testing while building this showed that command only returns the provider's keyword/level
     /// legend plus a PID/Image registration list, never which sessions have it enabled; "who's
     /// listening" is answered by <see cref="FindListeningSessions"/> instead, against whatever
-    /// #146 session detail is already loaded.</summary>
-    public static async Task<List<EtwProviderRow>> QueryEtwProvidersAsync(CancellationToken ct = default)
+    /// #146 session detail is already loaded. Error is non-null when the catalog couldn't be read
+    /// (timeout, logman missing, no table header) rather than being genuinely empty.</summary>
+    public static async Task<(List<EtwProviderRow> Rows, string? Error)> QueryEtwProvidersAsync(CancellationToken ct = default)
     {
         var rows = new List<EtwProviderRow>();
         try
         {
-            var (output, _) = await RunCapturedAsync("logman.exe", "query providers", 15000, ct);
+            // Exit code deliberately not checked - a complete listing has been seen exiting 255.
+            var (output, exitCode) = await RunCapturedAsync("logman.exe", "query providers", 15000, ct);
+            if (exitCode is null) return (rows, "logman timed out listing ETW providers.");
             var lines = output.Replace("\r\n", "\n").Split('\n');
 
             int headerIndex = Array.FindIndex(lines, l => l.Contains("Provider", StringComparison.OrdinalIgnoreCase)
                 && l.Contains("GUID", StringComparison.OrdinalIgnoreCase));
-            if (headerIndex < 0) return rows;
-
-            string header = lines[headerIndex];
-            int guidCol = header.IndexOf("GUID", StringComparison.OrdinalIgnoreCase);
-            if (guidCol < 0) return rows;
+            if (headerIndex < 0) return (rows, "logman's provider list wasn't in the expected format: " + Truncate(output.Trim(), 200));
 
             for (int i = headerIndex + 1; i < lines.Length; i++)
             {
-                string line = lines[i];
+                string line = lines[i].TrimEnd('\r');
                 if (line.Length == 0 || line.StartsWith('-')) continue;
                 if (line.Contains("command completed", StringComparison.OrdinalIgnoreCase)) break;
-                if (line.Length <= guidCol) continue;
 
-                string name = line[..guidCol].Trim();
-                string guid = line[guidCol..].Trim();
-                if (name.Length == 0 || !guid.StartsWith('{')) continue;
+                // Split at the last " {", not at the header's GUID column: logman doesn't widen the
+                // column for a longer name (178 of 1,080 names on a Windows 11 test machine ran past
+                // it and pushed the GUID right), so a fixed split dropped or truncated them.
+                int brace = line.LastIndexOf(" {", StringComparison.Ordinal);
+                if (brace <= 0) continue;
+                string name = line[..brace].Trim();
+                string guid = line[(brace + 1)..].Trim();
+                if (name.Length == 0 || !Guid.TryParse(guid, out _)) continue;
 
                 rows.Add(new EtwProviderRow { Name = name, Guid = guid });
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // logman unavailable - empty catalog, same degrade as everywhere else.
+            return (rows, $"Couldn't run logman: {ex.Message}");
         }
-        return rows;
+        return (rows, null);
     }
 
     /// <summary>#148's "who's listening" - which of the already-detail-loaded sessions (from

@@ -78,8 +78,14 @@ public sealed class HungWindowService : IDisposable
     private volatile string _foregroundProcessName = string.Empty;
 
     /// <summary>#238: default 500ms per the task spec - configurable so a user on a slower machine
-    /// can raise it past their normal baseline response time.</summary>
-    public double StallThresholdMs { get; set; } = 500;
+    /// can raise it past their normal baseline response time. Capped at 5s: the foreground
+    /// window's probe waits just past this threshold (see RunProbeCycleAsync), on the probe thread.</summary>
+    public double StallThresholdMs
+    {
+        get => _stallThresholdMs;
+        set => _stallThresholdMs = Math.Clamp(value, 50, 5000);
+    }
+    private double _stallThresholdMs = 500;
 
     /// <summary>Internal (not private) so ShellResponsivenessService (#246) can reuse the same
     /// top-level-window enumeration, filtered down to explorer.exe's own frames, instead of
@@ -207,15 +213,23 @@ public sealed class HungWindowService : IDisposable
         int fgPidSnapshot = _foregroundPid;
         string fgNameSnapshot = _foregroundProcessName;
 
+        // #238: the foreground app's windows get a timeout just past the stall threshold - with the
+        // 250ms cap every window gets, a 500ms default threshold could never be reached. A probe
+        // that times out there has taken at least the threshold, so it counts as a stall.
+        double threshold = StallThresholdMs;
+        int foregroundTimeoutMs = (int)Math.Ceiling(threshold) + 50;
+
         foreach (var w in raw)
         {
             if (ct.IsCancellationRequested) break;
             if (w.Hwnd == IntPtr.Zero || !IsWindow(w.Hwnd)) continue;
 
-            double ms = ProbeWindowMs(w.Hwnd);
-            _lastResponseMs[w.Hwnd] = ms;
+            bool isForegroundApp = fgPidSnapshot != 0 && w.Pid == fgPidSnapshot && !string.IsNullOrEmpty(fgNameSnapshot);
+            double ms = ProbeWindowMs(w.Hwnd, isForegroundApp ? Math.Max(ProbeTimeoutMs, foregroundTimeoutMs) : ProbeTimeoutMs);
+            // The grid/score keep reading the same 250ms-capped round-trip as before.
+            _lastResponseMs[w.Hwnd] = Math.Min(ms, ProbeTimeoutMs);
 
-            if (ms >= StallThresholdMs && fgPidSnapshot != 0 && w.Pid == fgPidSnapshot && !string.IsNullOrEmpty(fgNameSnapshot))
+            if (isForegroundApp && ms >= threshold)
                 RecordStall(fgNameSnapshot, ms);
         }
 
@@ -247,16 +261,16 @@ public sealed class HungWindowService : IDisposable
     /// probe logic/cadence against just Shell_TrayWnd/Progman/explorer's own frames, rather than
     /// re-deriving the SendMessageTimeout call. Always call this from a background thread - it's
     /// the genuinely blocking-ish part of this whole service.</summary>
-    internal static double ProbeWindowMs(IntPtr hwnd)
+    internal static double ProbeWindowMs(IntPtr hwnd, int timeoutMs = ProbeTimeoutMs)
     {
         var sw = Stopwatch.StartNew();
         IntPtr result = SendMessageTimeout(hwnd, WM_NULL, IntPtr.Zero, IntPtr.Zero,
-            SMTO_ABORTIFHUNG | SMTO_BLOCK, ProbeTimeoutMs, out _);
+            SMTO_ABORTIFHUNG | SMTO_BLOCK, (uint)timeoutMs, out _);
         sw.Stop();
 
         // A zero return means SendMessageTimeout itself gave up (SMTO_ABORTIFHUNG kicked in) - treat
         // that the same as hitting the cap, since the window didn't answer in time either way.
-        return result == IntPtr.Zero ? ProbeTimeoutMs : Math.Min(sw.Elapsed.TotalMilliseconds, ProbeTimeoutMs);
+        return result == IntPtr.Zero ? timeoutMs : Math.Min(sw.Elapsed.TotalMilliseconds, timeoutMs);
     }
 
     private void RecordStall(string appName, double ms)

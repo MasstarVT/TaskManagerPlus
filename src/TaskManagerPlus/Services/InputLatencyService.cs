@@ -23,11 +23,13 @@ namespace TaskManagerPlus.Services;
 /// if some other app has raised the system timer resolution - see TimerResolutionService); this is
 /// a quick flag on queueing delay, not a sub-millisecond instrument.
 ///
-/// #257: the true hardware polling interval is approximated from the tightest back-to-back
-/// intervals actually observed per device class (mouse/keyboard) - a genuinely idle period between
-/// reports (the user not moving the mouse) would otherwise skew a plain average, so this looks at
-/// the smallest cluster of intervals instead, which approximates the device's real report rate
-/// during active use.
+/// #257: the mouse's hardware polling interval is approximated from the median interval between
+/// consecutive reports from the same device while it is actively moving (gaps of 50ms or more are
+/// idle time, not polling). The median, not the smallest intervals: timestamps are taken when this
+/// thread processes WM_INPUT, so a burst delayed behind other UI work arrives back to back and
+/// would otherwise read as an implausibly fast rate. No keyboard figure is derived - keyboard raw
+/// input arrives only when a key changes state (and twice in a row for a chord), so its intervals
+/// are typing cadence, hold time or auto-repeat, never the polling rate; it reads Unknown.
 ///
 /// Must be Start/Stop-gated (a live hidden window + message pump isn't appropriate to run
 /// unconditionally) - Start/Stop mirror VBlankJitterService's lifecycle, except everything here
@@ -82,9 +84,8 @@ public sealed class InputLatencyService : IDisposable
 
     private readonly List<double> _queueDelaysMs = new();
     private readonly List<double> _mouseIntervalsMs = new();
-    private readonly List<double> _kbIntervalsMs = new();
     private long _lastMouseTick = -1;
-    private long _lastKbTick = -1;
+    private IntPtr _lastMouseDevice = IntPtr.Zero;
 
     public bool IsRunning { get; private set; }
     private string _statusText = "Not running - press Start.";
@@ -125,9 +126,8 @@ public sealed class InputLatencyService : IDisposable
 
             _queueDelaysMs.Clear();
             _mouseIntervalsMs.Clear();
-            _kbIntervalsMs.Clear();
             _lastMouseTick = -1;
-            _lastKbTick = -1;
+            _lastMouseDevice = IntPtr.Zero;
             LastEventUtc = null;
             IsRunning = true;
             _statusText = "Measuring input queue delay...";
@@ -212,11 +212,11 @@ public sealed class InputLatencyService : IDisposable
             long nowTimestamp = Stopwatch.GetTimestamp();
             if (header.dwType == RIM_TYPEMOUSE)
             {
+                // Two mice (or a touchpad plus a mouse) interleave reports - an interval between
+                // different devices is no device's polling interval.
+                if (header.hDevice != _lastMouseDevice) _lastMouseTick = -1;
+                _lastMouseDevice = header.hDevice;
                 RecordInterval(_mouseIntervalsMs, ref _lastMouseTick, nowTimestamp);
-            }
-            else if (header.dwType == RIM_TYPEKEYBOARD)
-            {
-                RecordInterval(_kbIntervalsMs, ref _lastKbTick, nowTimestamp);
             }
         }
         finally
@@ -270,23 +270,27 @@ public sealed class InputLatencyService : IDisposable
             P99DelayMs = P(0.99),
             MaxDelayMs = sorted[^1],
             MouseReportHz = ComputeHz(_mouseIntervalsMs),
-            KeyboardReportHz = ComputeHz(_kbIntervalsMs),
+            // Not derivable from raw input - see the class remarks.
+            KeyboardReportHz = null,
             MouseQueueSizeText = mouseQueue,
             KeyboardQueueSizeText = kbQueue,
             StatusText = $"{sorted.Count} input event(s) captured. {_statusText}",
         };
     }
 
-    /// <summary>#257: 1000 / the average of the tightest ~10% of observed intervals - approximates
-    /// the device's real back-to-back report rate without a genuinely idle gap (the user not
-    /// moving the mouse) dragging a plain average down toward an implausibly low "rate".</summary>
+    // A gap this long is the mouse sitting still, not a polling interval (20 Hz is below any HID mouse).
+    private const double MaxActiveIntervalMs = 50;
+
+    /// <summary>#257: 1000 / the median interval while the mouse is actively moving - see the class
+    /// remarks for why the median and not the tightest intervals.</summary>
     private static double? ComputeHz(List<double> intervals)
     {
-        if (intervals.Count < 5) return null;
-        var sorted = intervals.OrderBy(x => x).ToList();
-        int n = Math.Max(1, sorted.Count / 10);
-        double avgSmallest = sorted.Take(n).Average();
-        return avgSmallest > 0 ? 1000.0 / avgSmallest : null;
+        var active = intervals.Where(x => x < MaxActiveIntervalMs).OrderBy(x => x).ToList();
+        if (active.Count < 5) return null;
+        double median = active.Count % 2 == 1
+            ? active[active.Count / 2]
+            : (active[active.Count / 2 - 1] + active[active.Count / 2]) / 2.0;
+        return median > 0 ? 1000.0 / median : null;
     }
 
     /// <summary>#257: HKLM\SYSTEM\CurrentControlSet\Services\mouclass\Parameters\MouseDataQueueSize

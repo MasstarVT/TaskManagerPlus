@@ -127,11 +127,17 @@ public sealed class MeasurementSessionSummary
     public double DpcTimePercentOfWallClock { get; init; }
     public List<DriverSessionStat> PerDriver { get; init; } = new();
 
+    /// <summary>mm:ss, with total hours in front once a session runs past an hour (a bare mm:ss
+    /// format silently drops them).</summary>
+    public string DurationText => Duration.TotalHours >= 1
+        ? $"{(int)Duration.TotalHours}:{Duration:mm\\:ss}"
+        : Duration.ToString(@"mm\:ss");
+
     /// <summary>Plain-text rendering for the "Copy summary" button.</summary>
     public string ToSummaryText()
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"Responsiveness measurement — started {StartedAt:g}, duration {Duration:mm\\:ss}");
+        sb.AppendLine($"Responsiveness measurement — started {StartedAt:g}, duration {DurationText}");
         sb.AppendLine($"Total DPC time: {TotalDpcTimeUs / 1000.0:0.##} ms ({DpcTimePercentOfWallClock:0.###}% of wall clock)");
         sb.AppendLine();
         if (PerDriver.Count == 0)
@@ -360,8 +366,9 @@ public sealed class HungWindowRow : TaskManagerPlus.Common.ObservableObject
     public bool IsHung { get => _isHung; set => SetProperty(ref _isHung, value); }
 
     /// <summary>#236: last known SendMessageTimeout round-trip, in milliseconds - null until the
-    /// probe cycle has measured this window at least once. 250 (the capped timeout) means either a
-    /// genuinely slow response or a hung window that never returned inside the cap.</summary>
+    /// probe cycle has measured this window at least once. Shown capped at 250 even for the
+    /// foreground window (which is probed with a longer timeout for the stall recorder): 250 means
+    /// either a genuinely slow response or a hung window that never returned inside the cap.</summary>
     private double? _responseMs;
     public double? ResponseMs
     {

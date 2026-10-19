@@ -1283,10 +1283,10 @@
                             </TextBlock>
                             <TextBlock FontSize="{StaticResource FontStrong}" Margin="0,0,0,2">
                                 <Run Text="Keyboard: " FontWeight="SemiBold" />
-                                <Run Text="{Binding InputLatencySnapshot.KeyboardReportHz, StringFormat={}{0:0} Hz, TargetNullValue=Unknown - type while this is running, Mode=OneWay}" />
+                                <Run Text="{Binding InputLatencySnapshot.KeyboardReportHz, StringFormat={}{0:0} Hz, TargetNullValue=Unknown - not measurable from key events, Mode=OneWay}" />
                                 <Run Text="   (queue size: " /><Run Text="{Binding InputLatencySnapshot.KeyboardQueueSizeText, Mode=OneWay}" /><Run Text=")" />
                             </TextBlock>
-                            <TextBlock Text="Report rate is derived from the tightest back-to-back intervals actually observed while running, not a direct hardware read - a &quot;1000Hz&quot; mouse genuinely reporting at 125Hz becomes visible here."
+                            <TextBlock Text="The mouse report rate is derived from the median interval between reports while the mouse is moving, not a direct hardware read - a &quot;1000Hz&quot; mouse genuinely reporting at 125Hz becomes visible here. A keyboard only sends events when a key changes, so its polling rate can't be read this way."
                                        Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,6,0,0" />
                         </StackPanel>
                     </Border>
@@ -1589,7 +1589,7 @@
                                 </TextBlock>
                                 <UniformGrid Columns="2" Margin="0,0,0,8">
                                     <views:VfdMeter Title="CPU cap" Glow="False" Margin="0,0,8,0"
-                                                    ValueText="{Binding DefenderScan.ScanAvgCpuLoadFactor, TargetNullValue=Unknown}" Unit="%"
+                                                    ValueText="{Binding DefenderScan.ScanAvgCpuLoadFactor, StringFormat={}{0}%, TargetNullValue=Unknown}"
                                                     AccentBrush="{DynamicResource TextSecondaryBrush}" />
                                     <views:VfdMeter Title="Signatures updated" Glow="False" Margin="8,0,0,0"
                                                     ValueText="{Binding DefenderScan.SignatureLastUpdated, StringFormat={}{0:g}, TargetNullValue=Unknown}"
@@ -2011,7 +2011,7 @@
                                             <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled}" VerticalAlignment="Center" Margin="0,0,10,0" />
                                             <ComboBox Grid.Column="1" SelectedItem="{Binding Kind}" VerticalAlignment="Center" Margin="0,0,10,0"
                                                       ItemsSource="{Binding DataContext.TriggerKinds, RelativeSource={RelativeSource AncestorType=UserControl}}" />
-                                            <TextBox Grid.Column="2" Text="{Binding Threshold, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center" Margin="0,0,10,0"
+                                            <TextBox Grid.Column="2" Text="{Binding Threshold, UpdateSourceTrigger=LostFocus}" VerticalAlignment="Center" Margin="0,0,10,0"
                                                      ToolTip="Threshold (ms/µs/faults-per-sec/queue-length depending on the rule kind - ignored for &quot;WindowHung&quot;)." />
                                             <Button Grid.Column="3" Content="Remove" FontSize="{StaticResource FontCaption}" Padding="6,0" VerticalAlignment="Center"
                                                     Command="{Binding DataContext.RemoveTriggerRuleCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"

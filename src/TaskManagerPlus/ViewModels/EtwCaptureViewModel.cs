@@ -77,10 +77,16 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         SessionsStatusText = "Loading ETW sessions...";
         try
         {
-            var list = await EtwTraceService.QueryRunningSessionsAsync();
+            var (list, error) = await EtwTraceService.QueryRunningSessionsAsync();
             Sessions.Clear();
+            if (error is not null)
+            {
+                // A failed read is not "no sessions running".
+                SessionsStatusText = $"Couldn't list ETW sessions: {error}";
+                return;
+            }
             foreach (var row in list) Sessions.Add(row);
-            SessionsStatusText = list.Count == 0 ? "No running ETW sessions found (or logman is unavailable)." : $"{list.Count} session(s) found - loading detail...";
+            SessionsStatusText = list.Count == 0 ? "No running ETW sessions found." : $"{list.Count} session(s) found - loading detail...";
 
             using var gate = new SemaphoreSlim(4);
             var detailTasks = list.Select(async row =>
@@ -215,14 +221,20 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
 
     public AsyncRelayCommand LoadEtwProvidersCommand { get; }
 
+    private string? _etwProvidersStatusText;
+    public string? EtwProvidersStatusText { get => _etwProvidersStatusText; private set => SetProperty(ref _etwProvidersStatusText, value); }
+
     private async Task LoadEtwProvidersAsync()
     {
         IsEtwProvidersLoading = true;
         try
         {
-            var list = await EtwTraceService.QueryEtwProvidersAsync();
+            var (list, error) = await EtwTraceService.QueryEtwProvidersAsync();
             EtwProviders.Clear();
             foreach (var p in list.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)) EtwProviders.Add(p);
+            EtwProvidersStatusText = error is not null
+                ? $"Couldn't list ETW providers: {error}"
+                : $"{list.Count} provider(s).";
         }
         finally
         {
@@ -601,14 +613,29 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
 
         CaptureStatusText = "Stopping and merging the trace - this can take a minute or two for a longer capture...";
         var (success, message) = await EtwTraceService.StopCaptureAsync(outputPath);
-        IsCapturing = false;
-        ActiveCaptureName = null;
 
         if (!success)
         {
+            // A failed or timed-out `wpr -stop` can leave the kernel sessions recording. Clearing
+            // IsCapturing then would disable Stop and skip Dispose's exit-time cancel, so it stays
+            // set unless WPR confirms nothing is recording any more.
+            var status = await EtwTraceService.GetWprStatusAsync();
+            WprStatus = status;
+            if (status.IsRecording || status.ErrorMessage is not null)
+            {
+                _elapsedTimer.Start();
+                _growthTimer.Start();
+                CaptureStatusText = $"{message} WPR may still be recording - try Stop again, or use Cancel under \"Trace status & rescue\".";
+                return;
+            }
+            IsCapturing = false;
+            ActiveCaptureName = null;
             CaptureStatusText = message;
             return;
         }
+
+        IsCapturing = false;
+        ActiveCaptureName = null;
 
         CaptureStatusText = message;
         LastEtlPath = outputPath;
@@ -622,7 +649,8 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
     private void ElapsedTimerTick(object? sender, EventArgs e)
     {
         var elapsed = DateTime.UtcNow - _captureStartedAtUtc;
-        ElapsedText = elapsed.TotalHours >= 1 ? elapsed.ToString(@"hh\:mm\:ss") : elapsed.ToString(@"mm\:ss");
+        // Total hours, not "hh" - that wraps to 00 after 24h of recording.
+        ElapsedText = elapsed.TotalHours >= 1 ? $"{(int)elapsed.TotalHours}:{elapsed:mm\\:ss}" : elapsed.ToString(@"mm\:ss");
     }
 
     // ==================== #151: boot trace ====================
@@ -753,9 +781,21 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         try
         {
             if (!File.Exists(BootTraceMarkerPath)) return null;
-            return JsonSerializer.Deserialize<BootTraceMarker>(File.ReadAllText(BootTraceMarkerPath));
+            var marker = JsonSerializer.Deserialize<BootTraceMarker>(File.ReadAllText(BootTraceMarkerPath));
+            // EtlPath goes straight into an elevated `wpr -stopboot "<path>"`, and this file sits in
+            // a user-writable folder - anything but a plain .etl under this app's Traces folder (what
+            // ArmBootTraceCoreAsync writes) is treated as corrupt.
+            return marker is not null && IsOwnBootTracePath(marker.EtlPath) ? marker : null;
         }
         catch { return null; } // corrupt/missing marker - same as "no boot trace pending"
+    }
+
+    private static bool IsOwnBootTracePath(string? etlPath)
+    {
+        if (string.IsNullOrWhiteSpace(etlPath) || etlPath.Contains('"')
+            || !etlPath.EndsWith(".etl", StringComparison.OrdinalIgnoreCase)) return false;
+        string tracesDir = Path.GetFullPath(AppPaths.GetPath("Traces")).TrimEnd(Path.DirectorySeparatorChar);
+        return string.Equals(Path.GetDirectoryName(Path.GetFullPath(etlPath)), tracesDir, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void SaveBootTraceMarker(BootTraceMarker? marker)
@@ -807,8 +847,12 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         {
             var (success, message) = await EtwTraceService.CancelCaptureAsync();
             CaptureStatusText = message;
-            if (IsCapturing) { IsCapturing = false; ActiveCaptureName = null; _elapsedTimer.Stop(); _growthTimer.Stop(); }
-            if (success) WprStatus = await EtwTraceService.GetWprStatusAsync();
+            var status = await EtwTraceService.GetWprStatusAsync();
+            WprStatus = status;
+            // Only once WPR confirms nothing is recording - a failed cancel leaves this capture's
+            // Stop (and Dispose's exit-time cancel) in place.
+            bool stillRecording = status.IsRecording || (!success && status.ErrorMessage is not null);
+            if (IsCapturing && !stillRecording) { IsCapturing = false; ActiveCaptureName = null; _elapsedTimer.Stop(); _growthTimer.Stop(); }
         }
         finally
         {

@@ -102,6 +102,9 @@ public sealed class HardFaultEtwService
             if (!convOk || !File.Exists(xml))
                 return (false, $"tracerpt couldn't convert the trace: {convErr}", 0);
 
+            // A Stop during the conversion discards the sample rather than letting it land in
+            // whatever session starts next.
+            ct.ThrowIfCancellationRequested();
             int parsed = ParseAndIngest(xml);
             string message = parsed == 0
                 ? "Trace captured, but no recognizable hard-fault events could be parsed from it on this Windows build."

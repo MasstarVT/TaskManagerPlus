@@ -2138,6 +2138,10 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     {
         if (IsMeasuring || !DpcToolsAvailable) return;
 
+        // Stop only cancels the previous loop - its in-flight sample still has to stop its kernel
+        // session and release the logger. Starting before that lands would race it for the session.
+        if (!await AwaitPreviousLoopAsync(_measureLoopTask, s => MeasurementStatusText = s)) return;
+
         _dpc.ResetSession();
         RaiseHeadlineChanged(); // back to "not measured" until this session's first sample
         RebuildDriverRows();
@@ -2161,6 +2165,8 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             while (!ct.IsCancellationRequested)
             {
                 var (ok, message, parsed) = await _dpc.SampleOnceAsync(window, ct);
+                // A sample that finished just as Stop was pressed belongs to the ended session.
+                if (ct.IsCancellationRequested) break;
                 MeasurementStatusText = message;
 
                 if (ok)
@@ -2171,10 +2177,12 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
                     RecentSpikes.Clear();
                     foreach (var s in _dpc.RecentSpikes) RecentSpikes.Add(s);
 
-                    // A sample that parsed no DPCs has nothing to plot - not a 0 µs point.
-                    if (HasDpcData)
+                    // This sample's own longest DPC, not the session max (which only ever rises, so
+                    // plotting it drew a staircase). A sample that parsed no DPCs (none, or ISRs
+                    // only) has nothing to plot - not a 0 µs point.
+                    if (_dpc.LastSampleMaxDpcUs > 0)
                     {
-                        DpcLatencyHistory.Add(_dpc.HighestDpcUs);
+                        DpcLatencyHistory.Add(_dpc.LastSampleMaxDpcUs);
                         if (DpcLatencyHistory.Count > HistoryLength) DpcLatencyHistory.RemoveAt(0);
                     }
                     ThresholdHistory.Add(AudioGlitchThresholdUs);
@@ -2186,8 +2194,8 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
                 if (parsed == 0 && !ok)
                 {
                     // A hard failure (tools missing, access denied) won't fix itself by retrying -
-                    // stop rather than spin forever on the same error.
-                    await Application.Current.Dispatcher.InvokeAsync(StopMeasurement);
+                    // stop rather than spin forever on the same error, keeping the reason visible.
+                    await Application.Current.Dispatcher.InvokeAsync(() => StopMeasurement(message));
                     break;
                 }
             }
@@ -2199,8 +2207,10 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>#213: Stop button - cancels the sample loop and builds the min/avg/max/p99-per-
-    /// driver summary for the "Copy summary" button.</summary>
-    private void StopMeasurement()
+    /// driver summary for the "Copy summary" button. <paramref name="failureReason"/> is the
+    /// sample loop's own error when it stops itself, kept in the status line instead of a plain
+    /// "Stopped".</summary>
+    private void StopMeasurement(string? failureReason = null)
     {
         if (!IsMeasuring) return;
         _measureCts?.Cancel();
@@ -2208,7 +2218,23 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
 
         var summary = _dpc.BuildSummary();
         SessionSummaryText = summary.ToSummaryText();
-        MeasurementStatusText = $"Stopped - measured {summary.Duration:mm\\:ss}.";
+        MeasurementStatusText = failureReason is null
+            ? $"Stopped - measured {summary.DurationText}."
+            : $"Stopped after {summary.DurationText}: {failureReason}";
+    }
+
+    /// <summary>Waits for a Stop-cancelled sample loop to finish its own session teardown before a
+    /// new Start reuses the same (fixed-name) trace session - otherwise the old loop's teardown can
+    /// stop the new session, or its last sample can land in the new one. False if this view model
+    /// was disposed meanwhile.</summary>
+    private async Task<bool> AwaitPreviousLoopAsync(Task? previous, Action<string> setStatus)
+    {
+        if (previous is { IsCompleted: false })
+        {
+            setStatus("Waiting for the previous capture to finish stopping...");
+            try { await previous; } catch { /* the loop's own failure was already reported */ }
+        }
+        return !_disposed;
     }
 
     private void CopySummary()
@@ -2307,6 +2333,10 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         var snapshotsDir = AppPaths.GetPath("Snapshots");
         try { Directory.CreateDirectory(snapshotsDir); } catch { /* SaveFileDialog still works without a pre-created folder */ }
 
+        // Captured before the dialog so a PID the OS reuses while it is open can't be dumped instead.
+        DateTime? startTime = null;
+        try { using var p = System.Diagnostics.Process.GetProcessById(row.Pid); startTime = p.StartTime; } catch { /* name-only check below */ }
+
         var dialog = new SaveFileDialog
         {
             Title = $"Save process dump for {row.ProcessName} (pid {row.Pid})",
@@ -2316,6 +2346,12 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             InitialDirectory = snapshotsDir,
         };
         if (dialog.ShowDialog() != true) return;
+
+        if (!ProcessMonitorService.IsSameProcess(row.Pid, row.ProcessName, startTime))
+        {
+            DumpStatusText = $"{row.ProcessName} (pid {row.Pid}) exited while the save dialog was open - no dump was written.";
+            return;
+        }
 
         DumpStatusText = "Writing dump...";
         var (_, message) = await ProcessDumpService.CreateDumpAsync(row.Pid, dialog.FileName);
@@ -2413,6 +2449,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private async Task StartPresentMonitorAsync()
     {
         if (IsMeasuringPresent || !PresentToolsAvailable) return;
+        if (!await AwaitPreviousLoopAsync(_presentLoopTask, s => PresentStatusText = s)) return;
 
         _presentMonitor.ResetSession();
         PresentAppRows.Clear();
@@ -2440,6 +2477,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
                 DateTime? lastInputUtc = _inputLatency.LastEventUtc;
 
                 var (ok, message, parsed) = await _presentMonitor.SampleOnceAsync(window, ct);
+                if (ct.IsCancellationRequested) break;
                 PresentStatusText = message;
 
                 if (ok)
@@ -2478,7 +2516,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
                 {
                     // A hard failure (tools missing, access denied, provider unavailable) won't fix
                     // itself by retrying - stop rather than spin forever on the same error.
-                    await Application.Current.Dispatcher.InvokeAsync(StopPresentMonitor);
+                    await Application.Current.Dispatcher.InvokeAsync(() => StopPresentMonitor(message));
                     break;
                 }
             }
@@ -2489,12 +2527,14 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void StopPresentMonitor()
+    private void StopPresentMonitor() => StopPresentMonitor(null);
+
+    private void StopPresentMonitor(string? failureReason)
     {
         if (!IsMeasuringPresent) return;
         _presentCts?.Cancel();
         IsMeasuringPresent = false;
-        PresentStatusText = "Stopped.";
+        PresentStatusText = failureReason is null ? "Stopped." : $"Stopped: {failureReason}";
     }
 
     /// <summary>#256: Start button.</summary>
@@ -2520,6 +2560,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     private async Task StartHardFaultEtwAsync()
     {
         if (IsMeasuringHardFaultEtw || !HardFaultEtwToolsAvailable) return;
+        if (!await AwaitPreviousLoopAsync(_hardFaultEtwLoopTask, s => HardFaultEtwStatusText = s)) return;
 
         _hardFaultEtw.ResetSession();
         HardFaultEtwRows.Clear();
@@ -2539,6 +2580,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             while (!ct.IsCancellationRequested)
             {
                 var (ok, message, parsed) = await _hardFaultEtw.SampleOnceAsync(window, ct);
+                if (ct.IsCancellationRequested) break;
                 HardFaultEtwStatusText = message;
 
                 if (ok)
@@ -2551,7 +2593,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
                 {
                     // A hard failure (tools missing, access denied) won't fix itself by retrying -
                     // stop rather than spin forever on the same error.
-                    await Application.Current.Dispatcher.InvokeAsync(StopHardFaultEtw);
+                    await Application.Current.Dispatcher.InvokeAsync(() => StopHardFaultEtw(message));
                     break;
                 }
             }
@@ -2562,12 +2604,14 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void StopHardFaultEtw()
+    private void StopHardFaultEtw() => StopHardFaultEtw(null);
+
+    private void StopHardFaultEtw(string? failureReason)
     {
         if (!IsMeasuringHardFaultEtw) return;
         _hardFaultEtwCts?.Cancel();
         IsMeasuringHardFaultEtw = false;
-        HardFaultEtwStatusText = "Stopped.";
+        HardFaultEtwStatusText = failureReason is null ? "Stopped." : $"Stopped: {failureReason}";
     }
 
     /// <summary>#281: PagingFiles registry parse + media-type join + Paging File(*) usage counters
@@ -3001,8 +3045,11 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         IncidentReplayYAxes[0].SeparatorsPaint = new SolidColorPaint(sepSk) { StrokeThickness = 1 };
     }
 
+    private bool _disposed;
+
     public void Dispose()
     {
+        _disposed = true;
         _lightTimer.Stop();
         _probeTimer.Stop();
         _schedulerTimer.Stop();
@@ -3015,10 +3062,12 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         // Cancelling only wakes the loops; their logman/wpr teardown runs as dispatcher
         // continuations, which never execute once shutdown follows this Closed-handler call - and
         // these sessions live in the kernel, outliving the process (the DPC/present/hard-fault ones
-        // keep writing .etl files until reboot). Stop each one this app started, synchronously.
-        if (IsMeasuring) DpcLatencyService.StopSessionBlocking();
-        if (IsMeasuringPresent) PresentMonitorService.StopSessionBlocking();
-        if (IsMeasuringHardFaultEtw) HardFaultEtwService.StopSessionBlocking();
+        // keep writing .etl files until reboot). Stop each one this app started, synchronously -
+        // including a loop whose Stop was clicked but whose teardown hadn't run yet. The DPC one is
+        // a no-op unless a sample holds the shared kernel logger right now.
+        DpcLatencyService.StopSessionBlocking();
+        if (IsMeasuringPresent || _presentLoopTask is { IsCompleted: false }) PresentMonitorService.StopSessionBlocking();
+        if (IsMeasuringHardFaultEtw || _hardFaultEtwLoopTask is { IsCompleted: false }) HardFaultEtwService.StopSessionBlocking();
         if (WprCaptureService.IsCircularCaptureRunning || IsCapturing) WprCaptureService.CancelBlocking();
 
         _vblank.Dispose();
