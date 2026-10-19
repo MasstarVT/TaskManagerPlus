@@ -246,6 +246,7 @@ public sealed class StartupViewModel : ObservableObject
     public ObservableCollection<SleepStateInfo> SleepStates { get; } = new();
     private HiberFileInfo? _hiberFileInfo;
     public HiberFileInfo? HiberFileInfo { get => _hiberFileInfo; private set => SetProperty(ref _hiberFileInfo, value); }
+    public string HiberFilePath => FastStartupService.HiberFilePath;
     public AsyncRelayCommand DisableHibernationCommand { get; }
     public AsyncRelayCommand EnableHibernationCommand { get; }
     public AsyncRelayCommand ReduceHiberFileTypeCommand { get; }
@@ -1307,9 +1308,13 @@ public sealed class StartupViewModel : ObservableObject
     private async Task CheckPendingCaptureWorkflowsAsync()
     {
         var logState = await Task.Run(BootLogCaptureService.LoadState);
-        if (logState.IsArmed && logState.ArmedAtUtc is { } armedAt)
+        if (logState.IsArmed)
         {
-            var parsed = await Task.Run(() => BootLogCaptureService.ReadAndParseLog(armedAt));
+            // A state file missing its timestamp still means boot logging is on - stay armed (so
+            // Disarm is offered) and just skip the parse, which needs the arm time.
+            var parsed = logState.ArmedAtUtc is { } armedAt
+                ? await Task.Run(() => BootLogCaptureService.ReadAndParseLog(armedAt))
+                : null;
             System.Windows.Application.Current?.Dispatcher.Invoke(() =>
             {
                 IsBootLogCaptureArmed = true;
@@ -1359,8 +1364,8 @@ public sealed class StartupViewModel : ObservableObject
     private async Task DisarmBootLogCaptureAsync()
     {
         var (success, error) = await BootLogCaptureService.DisarmAsync();
-        IsBootLogCaptureArmed = false;
-        NtbtlogResult = null;
+        IsBootLogCaptureArmed = !success;
+        if (success) NtbtlogResult = null;
         StatusMessage = success ? "Boot logging turned off." : $"Couldn't turn off boot logging: {error}";
     }
 

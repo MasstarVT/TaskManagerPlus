@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
 
@@ -52,14 +53,20 @@ public static class ActiveSetupService
                     if (string.IsNullOrWhiteSpace(displayName)) displayName = name;
 
                     var hklmVersion = compKey.GetValue("Version") as string ?? string.Empty;
-                    var isInstalled = compKey.GetValue("IsInstalled");
+                    // IsInstalled is a DWORD on most components but REG_SZ "0"/"1" on some.
+                    bool isDisabled = compKey.GetValue("IsInstalled") switch
+                    {
+                        int flag => flag == 0,
+                        string str => str.Trim() == "0",
+                        _ => false,
+                    };
                     var hkcuVersion = ReadHkcuVersion(name);
 
-                    string state = isInstalled is int flag && flag == 0
+                    string state = isDisabled
                         ? "Disabled (IsInstalled=0)"
                         : hklmVersion.Length == 0
                             ? "Unknown (no Version value)"
-                            : !hkcuVersion.Equals(hklmVersion, StringComparison.OrdinalIgnoreCase)
+                            : IsVersionLower(hkcuVersion, hklmVersion)
                                 ? "Pending - will run at this user's next sign-in"
                                 : "Complete";
 
@@ -91,5 +98,31 @@ public static class ActiveSetupService
             return key?.GetValue("Version") as string ?? string.Empty;
         }
         catch { return string.Empty; }
+    }
+
+    /// <summary>Windows re-runs a stub only while the HKCU version is missing or LOWER than
+    /// HKLM's - an equal or newer HKCU copy (or a different separator, "1.2" vs "1,2") counts as
+    /// done. Versions are comma-separated numbers; an unparseable pair falls back to "differs".
+    /// Same comparison as AutorunsService's Active Setup check.</summary>
+    private static bool IsVersionLower(string hkcuVersion, string hklmVersion)
+    {
+        if (string.IsNullOrWhiteSpace(hkcuVersion)) return true;
+        static int[]? Parse(string v)
+        {
+            var parts = v.Split(new[] { ',', '.' }, StringSplitOptions.TrimEntries);
+            var nums = new int[parts.Length];
+            for (int i = 0; i < parts.Length; i++)
+                if (!int.TryParse(parts[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out nums[i])) return null;
+            return nums;
+        }
+        var cu = Parse(hkcuVersion);
+        var lm = Parse(hklmVersion);
+        if (cu is null || lm is null) return !hkcuVersion.Equals(hklmVersion, StringComparison.OrdinalIgnoreCase);
+        for (int i = 0; i < Math.Max(cu.Length, lm.Length); i++)
+        {
+            int a = i < cu.Length ? cu[i] : 0, b = i < lm.Length ? lm[i] : 0;
+            if (a != b) return a < b;
+        }
+        return false;
     }
 }

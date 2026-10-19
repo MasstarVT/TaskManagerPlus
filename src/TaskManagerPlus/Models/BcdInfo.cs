@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TaskManagerPlus.Models;
 
 /// <summary>
@@ -186,6 +188,9 @@ public sealed class BcdBackupEntry
 {
     public string FilePath { get; init; } = string.Empty;
     public DateTime CreatedUtc { get; init; }
+
+    /// <summary>Display copy of <see cref="CreatedUtc"/> in local time.</summary>
+    [JsonIgnore] public DateTime CreatedLocal => CreatedUtc.ToLocalTime();
 
     public string ImportCommandText => $"bcdedit /import \"{FilePath}\"";
 }

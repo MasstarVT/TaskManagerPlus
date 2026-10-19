@@ -580,16 +580,17 @@ public static class BootPerformanceService
 
         if (record.Id == 7026)
         {
-            // 7026's insertion strings are one failed boot/system-start driver or service name
-            // apiece - no per-name error text alongside them, just the enumerated list.
+            // 7026 carries a single insertion string holding every failed boot/system-start driver
+            // name, each on its own CRLF-prefixed line - no per-name error text, just the list.
             IList<EventProperty> props;
             try { props = record.Properties; }
             catch { yield break; }
 
             foreach (var prop in props)
             {
-                if (prop.Value is string name && !string.IsNullOrWhiteSpace(name))
-                    yield return new DriverLoadFailure { TimeCreated = time, EventId = record.Id, Name = name.Trim(), Detail = "Listed in the boot/system-start driver failure summary." };
+                if (prop.Value is not string list) continue;
+                foreach (var name in list.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                    yield return new DriverLoadFailure { TimeCreated = time, EventId = record.Id, Name = name, Detail = "Listed in the boot/system-start driver failure summary." };
             }
             yield break;
         }
@@ -753,28 +754,53 @@ public static class BootPerformanceService
 
     private static string TruncateText(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
 
-    /// <summary>#62 (System Specs): longest continuous-uptime record this month/this year - a pure
-    /// derived read over this same persisted boot-history.json, no new sampling. A completed
-    /// session's uptime is approximated as the gap between one recorded boot timestamp and the
-    /// next (i.e. "the machine presumably stayed up in between", the same approximation
-    /// EventLogService's own boot-time correlation already relies on elsewhere in this app); the
-    /// most recent boot's still-ongoing session is measured against DateTime.Now instead, since
-    /// there isn't a following boot yet. Returns (null, null) when there's fewer than one recorded
-    /// boot to compare against.</summary>
+    private const string KernelGeneralProviderName = "Microsoft-Windows-Kernel-General";
+    private const int MaxKernelSessionEvents = 5000;
+
+    /// <summary>#62 (System Specs): longest continuous-uptime record this month/this year, built
+    /// from the System log's Kernel-General 12 (OS started) / 13 (OS shutting down) pairs - every
+    /// real kernel session, not just the boots this app happened to be running for (gaps between
+    /// those span several sessions). A session with no 13 before the next 12 (crash/power loss)
+    /// has no known end and is skipped rather than guessed; the newest open session runs to now.
+    /// Only covers what the System log still retains. Returns (null, null) when the log can't be
+    /// read or holds no session started this year.</summary>
     public static (TimeSpan? ThisMonth, TimeSpan? ThisYear) ComputeLongestUptimeRecords()
     {
-        var history = LoadHistory().OrderBy(h => h.Timestamp).ToList();
-        if (history.Count == 0) return (null, null);
-
+        var now = DateTime.Now;
         var sessions = new List<(DateTime Start, TimeSpan Duration)>();
-        for (int i = 0; i < history.Count; i++)
+        try
         {
-            var start = history[i].Timestamp;
-            var end = i + 1 < history.Count ? history[i + 1].Timestamp : DateTime.Now;
-            if (end > start) sessions.Add((start, end - start));
+            long maxAgeMs = (long)Math.Ceiling((DateTime.UtcNow - new DateTime(now.Year, 1, 1).ToUniversalTime()).TotalMilliseconds);
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{KernelGeneralProviderName}'] and (EventID=12 or EventID=13) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]");
+            using var reader = new EventLogReader(query);
+
+            DateTime? openStart = null;
+            int count = 0;
+            while (count < MaxKernelSessionEvents && reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    count++;
+                    if (record.TimeCreated is not { } time) continue;
+                    if (record.Id == 12)
+                    {
+                        openStart = time; // an earlier start still open here never logged its 13 - dropped
+                    }
+                    else if (record.Id == 13 && openStart is { } start)
+                    {
+                        if (time > start) sessions.Add((start, time - start));
+                        openStart = null;
+                    }
+                }
+            }
+            if (openStart is { } current && now > current) sessions.Add((current, now - current));
+        }
+        catch
+        {
+            return (null, null);
         }
 
-        var now = DateTime.Now;
         TimeSpan? thisMonth = sessions.Where(s => s.Start.Year == now.Year && s.Start.Month == now.Month)
             .Select(s => (TimeSpan?)s.Duration).OrderByDescending(d => d).FirstOrDefault();
         TimeSpan? thisYear = sessions.Where(s => s.Start.Year == now.Year)
@@ -790,7 +816,21 @@ public static class BootPerformanceService
             {
                 var json = File.ReadAllText(HistoryPath);
                 var entries = JsonSerializer.Deserialize<List<BootHistoryEntry>>(json);
-                if (entries is not null) return entries;
+                if (entries is not null)
+                {
+                    // Valid JSON can still hold null elements, duplicate boots or nonsense values -
+                    // drop/de-dupe them so no consumer of the history can throw on load.
+                    return entries
+                        .Where(e => e is not null && e.TotalMs > 0)
+                        .GroupBy(e => e.Timestamp)
+                        .Select(g => g.First())
+                        .Select(e => e.Type is { } t && !Enum.IsDefined(t)
+                            ? new BootHistoryEntry { Timestamp = e.Timestamp, TotalMs = e.TotalMs, Type = null }
+                            : e)
+                        .OrderBy(e => e.Timestamp)
+                        .TakeLast(MaxHistoryEntries)
+                        .ToList();
+                }
             }
         }
         catch

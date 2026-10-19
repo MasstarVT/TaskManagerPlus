@@ -92,9 +92,10 @@ public static class CodeIntegrityPostureService
         foreach (var rawLine in output.Split('\n'))
         {
             string line = rawLine.TrimEnd('\r');
-            var match = Regex.Match(line, @"^([A-Za-z][A-Za-z0-9]*)\s{2,}(.+)$");
+            // Values start at column 24, so a 23+-character name is followed by a single space.
+            var match = Regex.Match(line, @"^(?:(?<key>[A-Za-z][A-Za-z0-9]*)\s{2,}|(?<key>[A-Za-z][A-Za-z0-9]{22,}) )(?<value>.+)$");
             if (!match.Success) continue;
-            fields[match.Groups[1].Value] = match.Groups[2].Value.Trim();
+            fields[match.Groups["key"].Value] = match.Groups["value"].Value.Trim();
         }
         return fields;
     }

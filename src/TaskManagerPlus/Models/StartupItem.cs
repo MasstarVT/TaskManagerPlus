@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using TaskManagerPlus.Common;
 
 namespace TaskManagerPlus.Models;
@@ -112,6 +113,9 @@ public sealed class StartupItem : ObservableObject
     /// StartupManagerService.Sample() - null for a file that can't be resolved or no longer exists.</summary>
     public long? FileSizeBytes { get; init; }
     public DateTime? LastModifiedUtc { get; init; }
+
+    /// <summary>Display copy of <see cref="LastModifiedUtc"/> in local time.</summary>
+    [JsonIgnore] public DateTime? LastModifiedLocal => LastModifiedUtc?.ToLocalTime();
 
     // #748: persisted per-item startup cost history (startup-history.json, keyed by Name) - a
     // median across this item's retained samples plus a sparkline, shown alongside (not instead

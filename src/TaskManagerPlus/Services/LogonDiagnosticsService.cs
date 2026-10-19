@@ -290,24 +290,29 @@ public static class LogonDiagnosticsService
     #region #718 - synchronous foreground policy audit
 
     private const string SyncPolicyKeyPath = @"SOFTWARE\Policies\Microsoft\Windows\System";
+    // DelayedDesktopSwitchTimeout is read by Winlogon from the CurrentVersion policies key, not
+    // the Group Policy one above (KB940452).
+    private const string DesktopSwitchKeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System";
 
     /// <summary>#718: reads the handful of documented policy values under
-    /// HKLM\SOFTWARE\Policies\Microsoft\Windows\System that force the desktop to wait for policy/
-    /// scripts - a read-only audit card, no attempt to change these (they're domain-administered
-    /// Group Policy values; flipping them locally would just be overwritten on the next policy
-    /// refresh). Missing key/values degrade to null (shown as "Not configured") rather than a
-    /// guessed default.</summary>
+    /// HKLM\SOFTWARE\Policies\Microsoft\Windows\System (and DelayedDesktopSwitchTimeout under
+    /// HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System) that force the desktop to
+    /// wait for policy/scripts - a read-only audit card, no attempt to change these (they're
+    /// domain-administered Group Policy values; flipping them locally would just be overwritten on
+    /// the next policy refresh). Missing key/values degrade to null (shown as "Not configured")
+    /// rather than a guessed default.</summary>
     public static SyncForegroundPolicyAudit ReadSyncForegroundPolicyAudit()
     {
         try
         {
             using var key = Registry.LocalMachine.OpenSubKey(SyncPolicyKeyPath);
+            using var switchKey = Registry.LocalMachine.OpenSubKey(DesktopSwitchKeyPath);
             return new SyncForegroundPolicyAudit
             {
                 SyncForegroundPolicy = key?.GetValue("SyncForegroundPolicy") as int?,
                 GpNetworkStartTimeoutPolicyValue = key?.GetValue("GpNetworkStartTimeoutPolicyValue") as int?,
                 RunLogonScriptSync = key?.GetValue("RunLogonScriptSync") as int?,
-                DelayedDesktopSwitchTimeout = key?.GetValue("DelayedDesktopSwitchTimeout") as int?,
+                DelayedDesktopSwitchTimeout = switchKey?.GetValue("DelayedDesktopSwitchTimeout") as int?,
             };
         }
         catch

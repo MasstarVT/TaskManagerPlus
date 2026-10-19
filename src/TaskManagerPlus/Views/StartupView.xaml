@@ -172,7 +172,7 @@
                             </DataGridTemplateColumn>
                             <!-- #21: file size and last-modified time of the target executable. -->
                             <DataGridTextColumn Header="Size" Binding="{Binding FileSizeBytes, Converter={StaticResource BytesToReadableConverter}, TargetNullValue=Unknown}" Width="90" />
-                            <DataGridTextColumn Header="Modified" Binding="{Binding LastModifiedUtc, StringFormat={}{0:d}, TargetNullValue=Unknown}" Width="90" />
+                            <DataGridTextColumn Header="Modified" Binding="{Binding LastModifiedLocal, Mode=OneWay, StringFormat={}{0:d}, TargetNullValue=Unknown}" Width="90" />
                             <!-- #91: measured (not estimated) delay since boot, for whichever items are
                                  still running - see StartupDelayService's remarks. -->
                             <DataGridTextColumn Header="Measured delay" Binding="{Binding MeasuredDelayText}" Width="1.3*" MinWidth="105" ElementStyle="{StaticResource CellTextTrim}" />
@@ -238,7 +238,7 @@
                                         <Button Command="{Binding DataContext.ToggleEnabledCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                 CommandParameter="{Binding}"
                                                 IsEnabled="{Binding SupportsToggle}"
-                                                ToolTip="No approval flag exists for this autorun location - it can be seen here but not toggled."
+                                                ToolTipService.ShowOnDisabled="True"
                                                 Padding="10,3">
                                             <TextBlock>
                                                 <TextBlock.Style>
@@ -268,6 +268,9 @@
                                                         </DataTrigger>
                                                         <DataTrigger Binding="{Binding SupportsToggle}" Value="False">
                                                             <Setter Property="Opacity" Value="0.5" />
+                                                            <!-- Only the un-toggleable rows explain themselves; the button is
+                                                                 disabled there, hence ShowOnDisabled above. -->
+                                                            <Setter Property="ToolTip" Value="No approval flag exists for this autorun location - it can be seen here but not toggled." />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -956,7 +959,7 @@
                                             <DataTemplate>
                                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="6" Padding="10,8" Margin="0,0,0,6">
                                                     <StackPanel>
-                                                        <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="{Binding CreatedUtc, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                        <TextBlock FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Text="{Binding CreatedLocal, StringFormat={}{0:g}, Mode=OneWay}" />
                                                         <TextBlock FontSize="{StaticResource FontBody}" FontFamily="Consolas" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap"
                                                                    Text="{Binding ImportCommandText}" Margin="0,2,0,0" />
                                                     </StackPanel>
@@ -1128,7 +1131,7 @@
                                 <Border Background="{DynamicResource BgElevatedBrush}" CornerRadius="8" Padding="12,10">
                                     <StackPanel>
                                         <TextBlock FontSize="{StaticResource FontBody}" Text="{Binding HiberFileInfo.SizeText}" TextWrapping="Wrap" />
-                                        <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,10" Text="C:\hiberfil.sys" />
+                                        <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,10" Text="{Binding HiberFilePath, Mode=OneWay}" />
                                         <WrapPanel>
                                             <Button Content="Turn off hibernation" Margin="0,0,8,8" Command="{Binding DisableHibernationCommand}" />
                                             <Button Content="Turn on hibernation" Margin="0,0,8,8" Command="{Binding EnableHibernationCommand}" />
@@ -1472,7 +1475,7 @@
                                     </Style>
                                 </StackPanel.Style>
                                 <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,6">
-                                    <Run Text="Captured " /><Run Text="{Binding NtbtlogResult.CapturedAtUtc, StringFormat={}{0:g}, Mode=OneWay}" />
+                                    <Run Text="Captured " /><Run Text="{Binding NtbtlogResult.CapturedAtLocal, StringFormat={}{0:g}, Mode=OneWay}" />
                                     <Run Text=" · " /><Run Text="{Binding NtbtlogResult.FailedDrivers.Count, Mode=OneWay}" /><Run Text=" driver(s) did not load" />
                                 </TextBlock>
                                 <ItemsControl ItemsSource="{Binding NtbtlogResult.FailedDrivers}">
@@ -1588,7 +1591,7 @@
                                                 </TextBlock>
                                                 <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap">
                                                     <Run Text="{Binding Path, Mode=OneWay}" />
-                                                    <Run Text=" · " /><Run Text="{Binding LastModifiedUtc, StringFormat={}{0:g}, TargetNullValue=Unknown, Mode=OneWay}" />
+                                                    <Run Text=" · " /><Run Text="{Binding LastModifiedLocal, StringFormat={}{0:g}, TargetNullValue=Unknown, Mode=OneWay}" />
                                                 </TextBlock>
                                             </StackPanel>
                                         </Border>

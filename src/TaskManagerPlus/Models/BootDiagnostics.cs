@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TaskManagerPlus.Models;
 
 /// <summary>One boot-start/system-start driver or service that failed to load, read from the
@@ -133,6 +135,10 @@ public sealed class NtbtlogEntry
 public sealed class NtbtlogResult
 {
     public DateTime CapturedAtUtc { get; init; }
+
+    /// <summary>Display copy of <see cref="CapturedAtUtc"/> in local time.</summary>
+    [JsonIgnore] public DateTime CapturedAtLocal => CapturedAtUtc.ToLocalTime();
+
     public List<NtbtlogEntry> Entries { get; init; } = new();
 
     public List<NtbtlogEntry> FailedDrivers => Entries.Where(e => !e.Loaded).ToList();

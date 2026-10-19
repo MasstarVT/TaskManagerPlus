@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TaskManagerPlus.Models;
 
 /// <summary>One Winlogon notification-subscriber timing (#715) - GPClient/Profiles/TermSrv/Sens
@@ -44,8 +46,9 @@ public sealed class GroupPolicyCseEntry
 }
 
 /// <summary>Synchronous foreground policy audit (#718) - the handful of policy values under
-/// HKLM\SOFTWARE\Policies\Microsoft\Windows\System that force the desktop to wait on policy/
-/// scripts before sign-in completes, the classic "domain PC takes 3 minutes to sign in" cause.
+/// HKLM\SOFTWARE\Policies\Microsoft\Windows\System (DelayedDesktopSwitchTimeout: under
+/// HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System) that force the desktop to wait
+/// on policy/scripts before sign-in completes, the classic "domain PC takes 3 minutes to sign in" cause.
 /// Every field is nullable (Unknown) when the value isn't configured at all - an unset policy
 /// value is a real, common, and entirely normal state, not a failure to read.</summary>
 public sealed class SyncForegroundPolicyAudit
@@ -98,6 +101,9 @@ public sealed class LogonScriptInfo
     public string Path { get; init; } = string.Empty;
     public bool Exists { get; init; }
     public DateTime? LastModifiedUtc { get; init; }
+
+    /// <summary>Display copy of <see cref="LastModifiedUtc"/> in local time.</summary>
+    [JsonIgnore] public DateTime? LastModifiedLocal => LastModifiedUtc?.ToLocalTime();
 
     public string StatusText => Exists ? "Found" : "Configured, but not found on disk";
 }

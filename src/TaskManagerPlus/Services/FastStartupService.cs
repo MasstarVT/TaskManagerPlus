@@ -24,7 +24,10 @@ namespace TaskManagerPlus.Services;
 public static class FastStartupService
 {
     private const string PowerKeyPath = @"SYSTEM\CurrentControlSet\Control\Session Manager\Power";
-    private const string HiberFilePath = @"C:\hiberfil.sys";
+    // hiberfil.sys lives at the root of the system volume, which isn't always C:.
+    public static string HiberFilePath { get; } = Path.Combine(
+        Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.Windows)) is { Length: > 0 } root ? root : @"C:\",
+        "hiberfil.sys");
 
     #region #734: uptime reconciliation
 
@@ -141,8 +144,15 @@ public static class FastStartupService
 
                 // Within an "available" section every indented line is a state name. Within a
                 // "not available" section, a lightly-indented line is the state name and a more
-                // deeply-indented line under it is powercfg's own reason text.
-                int indent = raw.Length - raw.TrimStart(' ', '\t').Length;
+                // deeply-indented line under it is powercfg's own reason text. powercfg indents
+                // names with 4 spaces but reasons with a tab, so a tab counts as 8 columns here.
+                int indent = 0;
+                foreach (char c in raw)
+                {
+                    if (c == ' ') indent++;
+                    else if (c == '\t') indent += 8;
+                    else break;
+                }
                 if (currentlyAvailable == true)
                 {
                     result.Add(new SleepStateInfo { Name = trimmed, Available = true });
@@ -157,8 +167,10 @@ public static class FastStartupService
                     var existing = result.LastOrDefault(s => s.Name == pendingName && !s.Available);
                     if (existing is not null)
                     {
+                        // A state can list several reasons, one per line - keep them all.
                         int idx = result.LastIndexOf(existing);
-                        result[idx] = new SleepStateInfo { Name = existing.Name, Available = false, UnavailableReason = trimmed };
+                        string reason = existing.UnavailableReason is { Length: > 0 } prior ? $"{prior} {trimmed}" : trimmed;
+                        result[idx] = new SleepStateInfo { Name = existing.Name, Available = false, UnavailableReason = reason };
                     }
                 }
             }
@@ -171,7 +183,7 @@ public static class FastStartupService
         return result;
     }
 
-    /// <summary>#736: the real, measured C:\hiberfil.sys size on disk, compared against installed
+    /// <summary>#736: the real, measured hiberfil.sys size on disk, compared against installed
     /// RAM - see HiberFileInfo's remarks for why this measures the actual file rather than trying
     /// to read a configured-percentage value powercfg has no query switch for.</summary>
     public static HiberFileInfo ReadHiberFileInfo()

@@ -30,8 +30,10 @@ public static class BcdInspectorService
     // A real "name  value" line always starts at column 0 (no leading whitespace) with at least
     // two spaces separating the name from its value - bcdedit pads names to a fixed column width.
     // A header line ("Windows Boot Manager") never contains a run of 2+ spaces, so it naturally
-    // fails this pattern and falls through to the header-candidate branch below.
-    private static readonly Regex KeyValueRegex = new(@"^(\S.*?)\s{2,}(\S.*)$", RegexOptions.Compiled);
+    // fails this pattern and falls through to the header-candidate branch below. The value column
+    // is 24, so a 23+-character name ("allowedinmemorysettings") gets only one space - the second
+    // branch accepts that, but only for a name with no spaces of its own, so headers still fail.
+    private static readonly Regex KeyValueRegex = new(@"^(?:(?<key>\S.*?)\s{2,}|(?<key>\S{23,}) )(?<value>\S.*)$", RegexOptions.Compiled);
 
     // A continuation line for a multi-valued option (e.g. a second/third displayorder entry) is
     // indented to align under the value column, with no name of its own.
@@ -111,8 +113,8 @@ public static class BcdInspectorService
             var kvMatch = KeyValueRegex.Match(line);
             if (kvMatch.Success)
             {
-                string key = kvMatch.Groups[1].Value.Trim();
-                string value = kvMatch.Groups[2].Value.Trim();
+                string key = kvMatch.Groups["key"].Value.Trim();
+                string value = kvMatch.Groups["value"].Value.Trim();
 
                 if (current is null)
                 {

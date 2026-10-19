@@ -71,8 +71,14 @@ public static class BootLogCaptureService
     public static async Task<(bool Success, string? Error)> DisarmAsync()
     {
         var (output, exitCode) = await RunCapturedAsync("bcdedit.exe", "/set {current} bootlog no");
+        if (exitCode != 0)
+        {
+            // Boot logging is still on - keep the pending state so Disarm stays offered.
+            return (false, string.IsNullOrWhiteSpace(output) ? "bcdedit failed." : output.Trim());
+        }
+
         SaveState(new BootLogCaptureState());
-        return exitCode == 0 ? (true, null) : (false, string.IsNullOrWhiteSpace(output) ? "bcdedit failed." : output.Trim());
+        return (true, null);
     }
 
     /// <summary>Step two: parses %windir%\ntbtlog.txt, only when it was written after the capture
