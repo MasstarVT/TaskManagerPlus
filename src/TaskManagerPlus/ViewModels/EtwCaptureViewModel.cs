@@ -908,21 +908,14 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>Opens the tracerpt HTML report in the user's default browser -
-    /// UseShellExecute=true is the deliberate exception here (opening a document for the user to
-    /// read, not consuming its output the way every other Process.Start in this app does).</summary>
+    /// <summary>Opens the tracerpt HTML report in the user's default browser, unelevated
+    /// (SafeLaunchService.OpenDocument - never an elevated association lookup).</summary>
     private void OpenHtmlReport()
     {
         string? path = LastSummary?.HtmlReportPath;
         if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
-        try
-        {
-            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            CaptureStatusText = $"Couldn't open the report: {ex.Message}";
-        }
+        if (!SafeLaunchService.OpenDocument(path))
+            CaptureStatusText = $"Couldn't open the report - it's at {path}";
     }
 
     // ==================== #158: user-editable capture recipes ====================
@@ -1104,19 +1097,13 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         IsWpaInstalled = path is not null;
     }
 
-    /// <summary>Hands the trace off to WPA - UseShellExecute=true is the same deliberate exception
-    /// OpenHtmlReport above takes (opening a document/app for the user, not consuming its output).</summary>
+    /// <summary>Hands the trace off to WPA. This app is elevated, so WPA starts only from an
+    /// admin-owned install folder (SafeLaunchService.StartTrustedExecutable checks it).</summary>
     private void OpenInWpa()
     {
         if (WpaPath is null || LastEtlPath is null || !File.Exists(LastEtlPath)) return;
-        try
-        {
-            Process.Start(new ProcessStartInfo(WpaPath, $"\"{LastEtlPath}\"") { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            NotesStatusText = $"Couldn't open WPA: {ex.Message}";
-        }
+        if (SafeLaunchService.StartTrustedExecutable(WpaPath, $"\"{LastEtlPath}\"") is { } refusal)
+            NotesStatusText = $"Couldn't open WPA: {refusal}";
     }
 
     private async Task GenerateNotesAsync()

@@ -741,12 +741,12 @@ public static class EtwTraceService
     /// <summary>
     /// Runs `tracerpt &lt;etl&gt; -o dumpfile.xml -of XML -summary summary.txt -report report.html
     /// -f HTML -y` against a finished capture and parses summary.txt for event counts per provider,
-    /// lost events, and trace duration. Output lands in a scratch folder under this app's own
-    /// settings area (<c>AppPaths.GetPath("Traces","Reports",...)</c>, one subfolder per run) rather
-    /// than next to the .etl itself, so repeated runs against the same trace - or traces saved
-    /// somewhere the user doesn't want clutter, like Desktop - don't leave dumpfile.xml/summary.txt/
-    /// report.html scattered around; this mirrors the "Logs"/"Snapshots"/"Reports" subfolder
-    /// convention every other export in this app already uses under AppPaths.
+    /// lost events, and trace duration. dumpfile.xml and summary.txt are working files - tracerpt
+    /// writes them elevated and this app reads summary.txt back - so they go in a per-run
+    /// admin-only folder (AdminDataPaths) that is deleted afterwards. report.html is for the user
+    /// to open, so it lands in this app's own settings area (<c>AppPaths.GetPath("Traces","Reports",
+    /// ...)</c>, one subfolder per run) rather than next to the .etl itself, mirroring the
+    /// "Logs"/"Snapshots"/"Reports" subfolder convention every other export here uses.
     ///
     /// tracerpt's summary.txt is a real tool's real output but - like logman's per-session detail -
     /// isn't a documented stable schema, and this was never validated against a live capture's real
@@ -759,6 +759,7 @@ public static class EtwTraceService
     public static async Task<TracerptSummary> RunTracerptSummaryAsync(string etlPath, CancellationToken ct = default)
     {
         var result = new TracerptSummary();
+        DirectoryInfo? workDir = null;
         try
         {
             if (!File.Exists(etlPath))
@@ -767,13 +768,20 @@ public static class EtwTraceService
                 return result;
             }
 
-            string scratchDir = AppPaths.GetPath("Traces", "Reports",
-                $"{Path.GetFileNameWithoutExtension(etlPath)}-{DateTime.Now:yyyyMMdd-HHmmss}");
-            Directory.CreateDirectory(scratchDir);
+            workDir = AdminDataPaths.CreatePrivateTempDirectory("TracerptSummary", out string? workError);
+            if (workDir is null)
+            {
+                result.ErrorMessage = $"Couldn't create a private working folder for tracerpt: {workError}";
+                return result;
+            }
 
-            string dumpPath = Path.Combine(scratchDir, "dumpfile.xml");
-            string summaryPath = Path.Combine(scratchDir, "summary.txt");
-            string reportPath = Path.Combine(scratchDir, "report.html");
+            string reportDir = AppPaths.GetPath("Traces", "Reports",
+                $"{Path.GetFileNameWithoutExtension(etlPath)}-{DateTime.Now:yyyyMMdd-HHmmss}");
+            Directory.CreateDirectory(reportDir);
+
+            string dumpPath = Path.Combine(workDir.FullName, "dumpfile.xml");
+            string summaryPath = Path.Combine(workDir.FullName, "summary.txt");
+            string reportPath = Path.Combine(reportDir, "report.html");
 
             string args = $"\"{etlPath}\" -o \"{dumpPath}\" -of XML -summary \"{summaryPath}\" -report \"{reportPath}\" -f HTML -y";
             var (output, exitCode) = await RunCapturedAsync("tracerpt.exe", args, 300000, ct); // a large/verbose trace can take minutes to process
@@ -793,7 +801,6 @@ public static class EtwTraceService
 
             string summaryText = await File.ReadAllTextAsync(summaryPath, ct);
             result.RawSummaryText = summaryText;
-            result.SummaryTextPath = summaryPath;
             if (File.Exists(reportPath)) result.HtmlReportPath = reportPath;
 
             ParseTracerptSummary(summaryText, result);
@@ -802,6 +809,10 @@ public static class EtwTraceService
         catch (Exception ex)
         {
             result.ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            AdminDataPaths.TryDelete(workDir);
         }
         return result;
     }
@@ -1018,11 +1029,13 @@ public static class EtwTraceService
         if (!File.Exists(etlPath)) return (false, "Trace file not found.", 0);
         if (string.IsNullOrWhiteSpace(providerName)) return (false, "Choose a provider first.", 0);
 
-        string scratchDir = AppPaths.GetPath("Traces", "CsvExtract", $"{Path.GetFileNameWithoutExtension(etlPath)}-{DateTime.Now:yyyyMMdd-HHmmss}");
-        string rawCsvPath = Path.Combine(scratchDir, "raw.csv");
+        // tracerpt writes raw.csv elevated and this app reads it back and deletes it, so it goes in
+        // a per-run admin-only folder rather than the user-writable settings area.
+        var scratchDir = AdminDataPaths.CreatePrivateTempDirectory("EtwCsvExtract", out string? scratchError);
+        if (scratchDir is null) return (false, $"Couldn't create a private working folder for tracerpt: {scratchError}", 0);
+        string rawCsvPath = Path.Combine(scratchDir.FullName, "raw.csv");
         try
         {
-            Directory.CreateDirectory(scratchDir);
             string args = $"\"{etlPath}\" -of CSV -o \"{rawCsvPath}\" -y";
             var (output, exitCode) = await RunCapturedAsync("tracerpt.exe", args, 300000, ct); // a large/verbose trace can take minutes to re-parse
 
@@ -1079,7 +1092,7 @@ public static class EtwTraceService
         }
         finally
         {
-            try { if (File.Exists(rawCsvPath)) File.Delete(rawCsvPath); } catch { /* best-effort scratch cleanup */ }
+            AdminDataPaths.TryDelete(scratchDir);
         }
     }
 
@@ -1565,22 +1578,14 @@ public static class EtwTraceService
         return results.OrderByDescending(r => r.SizeBytes).ToList();
     }
 
-    /// <summary>Opens Explorer with the given file pre-selected (`explorer.exe /select,"&lt;path&gt;"`) -
-    /// used by #159's stale-artifact list. No pre-existing "reveal in Explorer" helper was found
-    /// anywhere else in this codebase to reuse (grepped every Services/ViewModels file for
-    /// "explorer"/"/select"/"Reveal") despite the coordinator's note that this pattern already
-    /// existed for minidumps/servicing logs - whatever those actually do (if anything) apparently
-    /// isn't this exact action, so this is a small new helper rather than a reuse. explorer.exe's
-    /// own exit code isn't a reliable success signal (same caveat as logman/wpr elsewhere in this
-    /// file), so this is deliberately fire-and-forget rather than awaited/validated.</summary>
+    /// <summary>Shows a file (selected) or a folder in an unelevated Explorer window - used by
+    /// #159's stale-artifact list and several other tabs. Forwards to
+    /// SafeLaunchService.RevealInExplorer, the app's one launcher; fire-and-forget, since
+    /// Explorer's own result isn't a reliable success signal.</summary>
     public static void RevealInExplorer(string path)
     {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(path)) return;
-            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
-        }
-        catch { /* best-effort - worst case nothing happens */ }
+        if (string.IsNullOrWhiteSpace(path)) return;
+        SafeLaunchService.RevealInExplorer(path);
     }
 
     // ==================== #160: trace handoff helper (WPA detection + notes.md stub) ====================
@@ -1593,14 +1598,19 @@ public static class EtwTraceService
     };
 
     /// <summary>
-    /// #160: detects whether Windows Performance Analyzer is installed - a few common Windows ADK
-    /// install paths, then a PATH lookup (`where wpa.exe`), then the "App Paths" registry key
-    /// Explorer itself uses to resolve a bare exe name to a full path
-    /// (HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\wpa.exe) - tried in that order,
-    /// first hit wins. Returns null (never a guessed path) when none of the three find it, which
-    /// the UI treats as "not installed" and shows install guidance for instead.
+    /// #160: detects whether Windows Performance Analyzer is installed - the Windows ADK/SDK
+    /// install paths, then the Microsoft Store package folder under Program Files\WindowsApps.
+    /// Only admin-owned install folders are looked at: this app is elevated, so a PATH lookup
+    /// (which includes the user-writable %LOCALAPPDATA%\Microsoft\WindowsApps) or an App Paths
+    /// entry could hand it a planted wpa.exe to start as Administrator. Launching still goes
+    /// through SafeLaunchService.StartTrustedExecutable, which re-checks the folder ACLs. Returns
+    /// null (never a guessed path) when nothing is found, which the UI treats as "not installed"
+    /// and shows install guidance for instead.
     /// </summary>
-    public static async Task<string?> DetectWpaPathAsync(CancellationToken ct = default)
+    public static Task<string?> DetectWpaPathAsync(CancellationToken ct = default) => Task.Run(DetectWpaPath, ct);
+
+    /// <summary>Synchronous form of <see cref="DetectWpaPathAsync"/> - file-system checks only.</summary>
+    public static string? DetectWpaPath()
     {
         foreach (var template in WpaCommonPaths)
         {
@@ -1610,22 +1620,15 @@ public static class EtwTraceService
 
         try
         {
-            var (output, exitCode) = await RunCapturedAsync("where.exe", "wpa.exe", 5000, ct);
-            if (exitCode == 0)
+            string windowsApps = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WindowsApps");
+            foreach (var package in Directory.EnumerateDirectories(windowsApps, "Microsoft.WindowsPerformanceAnalyzer*")
+                         .OrderByDescending(d => d, StringComparer.OrdinalIgnoreCase))
             {
-                var firstLine = output.Replace("\r\n", "\n").Split('\n').FirstOrDefault(l => l.Trim().Length > 0);
-                if (firstLine is not null && File.Exists(firstLine.Trim())) return firstLine.Trim();
+                string candidate = Path.Combine(package, "wpa.exe");
+                if (File.Exists(candidate)) return candidate;
             }
         }
-        catch { /* where.exe unavailable - fall through to the registry check */ }
-
-        try
-        {
-            using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\wpa.exe");
-            string? path = key?.GetValue(null) as string;
-            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) return path;
-        }
-        catch { /* denied/missing key - not installed, as far as this app can tell */ }
+        catch { /* not listable (unelevated) or absent - not installed, as far as this app can tell */ }
 
         return null;
     }

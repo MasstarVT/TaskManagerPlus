@@ -265,6 +265,10 @@ public sealed class TimerResolutionInfo
 {
     public double CurrentMs { get; init; }
 
+    /// <summary>False when the read failed (CurrentMs is only set from a successful, nonzero read) -
+    /// the view hides the numeric tiles then and shows StatusText alone.</summary>
+    public bool IsAvailable => CurrentMs > 0;
+
     /// <summary>NtQueryTimerResolution's "MinimumTime" - the finest (best/shortest) interval this
     /// system can be raised to.</summary>
     public double FinestMs { get; init; }

@@ -186,37 +186,46 @@ public sealed class DpcLatencyService
         if (!ToolsAvailable)
             return (false, "logman.exe/tracerpt.exe weren't found on this system - DPC/ISR capture isn't available.", 0);
 
-        string dir = Path.Combine(AppPaths.SettingsDirectory, "ResponsivenessTraces");
-        try { Directory.CreateDirectory(dir); }
-        catch { return (false, "Couldn't create a temp folder for the trace.", 0); }
+        // The kernel logger writes the .etl and tracerpt the .xml, both elevated, and this app reads
+        // and deletes them - so they go in a per-sample admin-only folder, not the user-writable
+        // settings folder (where a swapped-in junction could redirect the writes and the delete).
+        var workDir = AdminDataPaths.CreatePrivateTempDirectory(KernelLoggerSession.DpcSampleFolderPurpose, out string? dirError);
+        if (workDir is null)
+            return (false, $"Couldn't create a private folder for the trace: {dirError}", 0);
 
-        string etl = Path.Combine(dir, $"sample_{Guid.NewGuid():N}.etl");
-        string xml = Path.Combine(dir, $"sample_{Guid.NewGuid():N}.xml");
+        string etl = Path.Combine(workDir.FullName, $"sample_{Guid.NewGuid():N}.etl");
+        string xml = Path.Combine(workDir.FullName, $"sample_{Guid.NewGuid():N}.xml");
 
         // The kernel logger is one system-wide session - see KernelLoggerSession. Claimed before any
         // logman call and released once this sample's session is stopped (the tracerpt step below
         // doesn't need it), so the page-fault capture can't start in between and be stopped here.
         if (!KernelLoggerSession.TryClaim(KernelLoggerSession.Owner.DpcSampling, out var holder))
         {
+            AdminDataPaths.TryDelete(workDir);
             return (false, holder == KernelLoggerSession.Owner.PageFaultCapture
                 ? "The kernel logger is in use by the Memory tab's page-fault trace capture (about 30 seconds) - start the measurement again once it finishes."
                 : "The kernel logger is still held by the previous DPC/ISR sample - start the measurement again.", 0);
         }
         bool claimReleased = false;
+        bool createAttempted = false, created = false;
 
         try
         {
             // Stops a session only when it is provably one this app leaked (crash/kill) - never
             // another tool's trace. The finally below releases the claim on this early return.
-            if (!await KernelLoggerSession.ReclaimLeakedSessionAsync())
-                return (false, KernelLoggerSession.UnconfirmedStateMessage, 0);
+            if (await KernelLoggerSession.ReclaimLeakedSessionAsync() is { } refusal)
+                return (false, refusal, 0);
 
+            // -max (MB) bounds the file if the session outlives this app (a sample is a few MB).
             KernelLoggerSession.RecordStarting(etl);
+            createAttempted = true;
             var (startOk, startErr) = await RunProcessAsync(LogmanPath,
-                $"create trace \"{SessionName}\" -p \"Windows Kernel Trace\" \"(dpc,isr)\" -o \"{etl}\" -ets",
+                $"create trace \"{SessionName}\" -p \"Windows Kernel Trace\" \"(dpc,isr)\" -o \"{etl}\" -max 256 -ets",
                 TimeSpan.FromSeconds(20), ct);
             if (!startOk)
                 return (false, DescribeLogmanError(startErr), 0);
+            created = true;
+            KernelLoggerSession.RecordCreated();
 
             try
             {
@@ -264,10 +273,19 @@ public sealed class DpcLatencyService
         }
         finally
         {
-            // Every early return before the session started (reclaim/create failure) lands here.
-            if (!claimReleased) KernelLoggerSession.Release(KernelLoggerSession.Owner.DpcSampling);
-            try { if (File.Exists(etl)) File.Delete(etl); } catch { /* best-effort cleanup */ }
-            try { if (File.Exists(xml)) File.Delete(xml); } catch { /* best-effort cleanup */ }
+            // Every early return before the session started (reclaim/create failure) lands here. A
+            // create that failed, timed out or was cancelled by Stop may still have started the
+            // session; the marker-checked reclaim stops it only if it is writing this sample's file.
+            if (!claimReleased)
+            {
+                if (createAttempted && !created)
+                {
+                    try { await KernelLoggerSession.ReclaimLeakedSessionAsync(); }
+                    catch { /* best-effort - the marker stays for the next start */ }
+                }
+                KernelLoggerSession.Release(KernelLoggerSession.Owner.DpcSampling);
+            }
+            AdminDataPaths.TryDelete(workDir);
         }
     }
 

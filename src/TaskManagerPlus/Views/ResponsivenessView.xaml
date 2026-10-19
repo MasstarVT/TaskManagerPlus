@@ -310,6 +310,15 @@
                         <StackPanel>
                             <TextBlock Text="Timer resolution &amp; QPC" FontWeight="SemiBold" Margin="0,0,0,6" />
                             <UniformGrid Columns="2" Margin="0,0,0,10">
+                                <UniformGrid.Style>
+                                    <Style TargetType="UniformGrid">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding TimerResolution.IsAvailable}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </UniformGrid.Style>
                                 <views:VfdMeter Title="Current resolution" Glow="True" Margin="0,0,8,0"
                                                 ValueText="{Binding TimerResolution.CurrentMs, StringFormat={}{0:0.###}}" Unit="ms"
                                                 SubText="{Binding TimerResolution.WakeupsPerSec, StringFormat={}{0:0} wake-ups/sec}">
@@ -1303,6 +1312,15 @@
                             <TextBlock Text="Hard faults (a page actually read from disk) are what stall a thread and freeze the UI for a moment - this is the number behind &quot;the whole PC freezes for a second when I alt-tab&quot;. Soft faults (resolved straight from RAM) dominate Memory\Page Faults/sec and happen harmlessly by the thousand, so they're excluded here."
                                        Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
                             <UniformGrid Columns="2" Margin="0,0,0,10">
+                                <UniformGrid.Style>
+                                    <Style TargetType="UniformGrid">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HardFaultRate.IsAvailable}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </UniformGrid.Style>
                                 <views:VfdMeter Title="Hard faults (pages read from disk)" Glow="True" Margin="0,0,8,0"
                                                 ValueText="{Binding HardFaultRate.PagesInputPerSec, StringFormat={}{0:0}}" Unit="/s"
                                                 SubText="Memory\Pages Input/sec"
@@ -1407,6 +1425,15 @@
                                 </TextBlock.Style>
                             </TextBlock>
                             <UniformGrid Columns="3" Margin="0,0,0,6">
+                                <UniformGrid.Style>
+                                    <Style TargetType="UniformGrid">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding StandbyListInfo.IsAvailable}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </UniformGrid.Style>
                                 <views:VfdMeter Title="Free &amp; zero list" Glow="False" Margin="0,0,6,0"
                                                 ValueText="{Binding StandbyListInfo.FreeZeroBytes, Converter={StaticResource BytesToReadableConverter}}"
                                                 AccentBrush="{DynamicResource TextSecondaryBrush}" />
@@ -1506,14 +1533,35 @@
                                 </TextBlock.Style>
                             </TextBlock>
                             <UniformGrid Columns="2" Margin="0,0,0,6">
+                                <!-- Each tile hides when its own source couldn't be read, rather than showing 0 B / 0%. -->
                                 <views:VfdMeter Title="Compressed-memory working set" Glow="True" Margin="0,0,8,0"
                                                 Percent="{Binding MemoryCompression.PercentOfTotalRam}"
                                                 ValueText="{Binding MemoryCompression.WorkingSetBytes, Converter={StaticResource BytesToReadableConverter}}"
                                                 SubText="{Binding MemoryCompression.PercentOfTotalRam, StringFormat={}{0:0.0}% of total RAM}"
-                                                AccentBrush="{Binding MemoryCompression.PercentOfTotalRam, Converter={StaticResource PercentToBrushConverter}}" />
+                                                AccentBrush="{Binding MemoryCompression.PercentOfTotalRam, Converter={StaticResource PercentToBrushConverter}}">
+                                    <views:VfdMeter.Style>
+                                        <Style TargetType="views:VfdMeter">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding MemoryCompression.IsAvailable}" Value="False">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </views:VfdMeter.Style>
+                                </views:VfdMeter>
                                 <views:VfdMeter Title="Modified page list" Glow="False" Margin="8,0,0,0"
                                                 ValueText="{Binding StandbyListInfo.ModifiedPageListBytes, Converter={StaticResource BytesToReadableConverter}}"
-                                                AccentBrush="{DynamicResource TextSecondaryBrush}" />
+                                                AccentBrush="{DynamicResource TextSecondaryBrush}">
+                                    <views:VfdMeter.Style>
+                                        <Style TargetType="views:VfdMeter">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding StandbyListInfo.IsAvailable}" Value="False">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </views:VfdMeter.Style>
+                                </views:VfdMeter>
                             </UniformGrid>
                             <TextBlock Text="A large compressed-memory pool means decompression is happening constantly under the hood - that cost shows up as CPU spikes/micro-stutter, not as a separate memory warning. See the Memory tab for overall RAM pressure."
                                        Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" TextWrapping="Wrap" Margin="0,4,0,0" />
@@ -1672,7 +1720,7 @@
                                                 ValueText="{Binding SearchIndexerLive.TotalCpuPercent, StringFormat={}{0:0.#}}" Unit="%"
                                                 AccentBrush="{DynamicResource TextSecondaryBrush}" />
                                 <views:VfdMeter Title="Indexer process disk" Glow="False" Margin="8,0,0,0"
-                                                ValueText="{Binding SearchIndexerLive.TotalDiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}}"
+                                                ValueText="{Binding SearchIndexerLive.TotalDiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}"
                                                 AccentBrush="{DynamicResource TextSecondaryBrush}" />
                             </UniformGrid>
                             <TextBlock Text="{Binding SearchIndexerCrawl.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,8" />
@@ -1768,7 +1816,7 @@
                                     <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.5*" />
                                     <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
                                     <DataGridTextColumn Header="CPU %" Binding="{Binding CpuPercent, StringFormat={}{0:0.#}}" Width="80" />
-                                    <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                                    <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}" Width="100" />
                                 </DataGrid.Columns>
                             </DataGrid>
                             <TextBlock Text="No servicing processes running is the normal case, not an error." Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" Margin="0,0,0,8">
@@ -1899,7 +1947,7 @@
                                     <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.5*" />
                                     <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
                                     <DataGridTextColumn Header="CPU %" Binding="{Binding CpuPercent, StringFormat={}{0:0.#}}" Width="80" />
-                                    <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                                    <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}" Width="100" />
                                 </DataGrid.Columns>
                             </DataGrid>
                             <TextBlock Text="No cloud-sync client currently running." Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" Margin="0,0,0,14">
@@ -1923,7 +1971,7 @@
                                     <DataGridTextColumn Header="Process" Binding="{Binding ProcessName}" Width="1.5*" />
                                     <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="70" />
                                     <DataGridTextColumn Header="CPU %" Binding="{Binding CpuPercent, StringFormat={}{0:0.#}}" Width="80" />
-                                    <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}}" Width="100" />
+                                    <DataGridTextColumn Header="Disk" Binding="{Binding DiskBytesPerSec, Converter={StaticResource BytesToReadableConverter}, ConverterParameter=rate}" Width="100" />
                                 </DataGrid.Columns>
                             </DataGrid>
                             <TextBlock Text="No Steam/Epic helper process currently running." Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" FontStyle="Italic" Margin="0,0,0,14">

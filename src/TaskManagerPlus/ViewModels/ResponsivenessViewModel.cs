@@ -335,7 +335,18 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     public ObservableCollection<HungWindowRow> HungWindowRows { get; } = new();
 
     private HungWindowRow? _selectedHungWindow;
-    public HungWindowRow? SelectedHungWindow { get => _selectedHungWindow; set => SetProperty(ref _selectedHungWindow, value); }
+    public HungWindowRow? SelectedHungWindow
+    {
+        get => _selectedHungWindow;
+        set
+        {
+            IntPtr previous = _selectedHungWindow?.Hwnd ?? IntPtr.Zero;
+            if (!SetProperty(ref _selectedHungWindow, value)) return;
+            // The wait-chain result belongs to one window; it's shown inside the selected row's
+            // details, so a different window must not inherit it (or a still-running analysis).
+            if ((value?.Hwnd ?? IntPtr.Zero) != previous) ClearHungWindowWaitChain();
+        }
+    }
 
     // #242: one-click dump for whatever hung window is selected in the grid above.
     public AsyncRelayCommand CreateDumpCommand { get; }
@@ -1074,8 +1085,8 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         StopMeasurementCommand = new RelayCommand(() => StopMeasurement(), () => IsMeasuring);
         CopySummaryCommand = new RelayCommand(() => CopySummary(), () => !string.IsNullOrEmpty(SessionSummaryText));
         CaptureWprCommand = new AsyncRelayCommand(() => CaptureWprAsync(), () => !IsCapturing && WprToolsAvailable);
-        OpenCaptureCommand = new RelayCommand(() => { if (_lastEtlPath is not null) WprCaptureService.OpenInDefaultApp(_lastEtlPath); }, () => _lastEtlPath is not null);
-        OpenReportCommand = new RelayCommand(() => { if (_lastReportPath is not null) WprCaptureService.OpenInDefaultApp(_lastReportPath); }, () => _lastReportPath is not null);
+        OpenCaptureCommand = new RelayCommand(() => { if (_lastEtlPath is not null && !WprCaptureService.OpenInDefaultApp(_lastEtlPath)) WprStatusText = $"Couldn't open the capture - it's at {_lastEtlPath}"; }, () => _lastEtlPath is not null);
+        OpenReportCommand = new RelayCommand(() => { if (_lastReportPath is not null && !WprCaptureService.OpenInDefaultApp(_lastReportPath)) WprStatusText = $"Couldn't open the report - it's at {_lastReportPath}"; }, () => _lastReportPath is not null);
 
         LoadDeviceTopologyCommand = new AsyncRelayCommand(LoadDeviceTopologyAsync, () => !IsLoadingDeviceTopology);
         CheckWifiScanStormCommand = new AsyncRelayCommand(CheckWifiScanStormAsync, () => !IsCheckingWifiScanStorm);
@@ -1084,10 +1095,10 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         CheckQpcCommand = new AsyncRelayCommand(CheckQpcAsync, () => !IsCheckingQpc);
         CheckTimerRequestersCommand = new AsyncRelayCommand(CheckTimerRequestersAsync, () => !IsCheckingTimerRequesters);
         RunEnergyReportCommand = new AsyncRelayCommand(RunEnergyReportAsync, () => !IsRunningEnergyReport);
-        OpenEnergyReportCommand = new RelayCommand(() => { if (_energyReportPath is not null) WprCaptureService.OpenInDefaultApp(_energyReportPath); }, () => _energyReportPath is not null);
+        OpenEnergyReportCommand = new RelayCommand(() => { if (_energyReportPath is not null && !WprCaptureService.OpenInDefaultApp(_energyReportPath)) EnergyReportStatusText = $"Couldn't open the report - it's at {_energyReportPath}"; }, () => _energyReportPath is not null);
         LoadPowerRequestsCommand = new AsyncRelayCommand(LoadPowerRequestsAsync, () => !IsLoadingPowerRequests);
         RunSleepStudyCommand = new AsyncRelayCommand(RunSleepStudyAsync, () => !IsRunningSleepStudy && ModernStandbySupported);
-        OpenSleepStudyReportCommand = new RelayCommand(() => { if (_sleepStudyReportPath is not null) WprCaptureService.OpenInDefaultApp(_sleepStudyReportPath); }, () => _sleepStudyReportPath is not null);
+        OpenSleepStudyReportCommand = new RelayCommand(() => { if (_sleepStudyReportPath is not null && !WprCaptureService.OpenInDefaultApp(_sleepStudyReportPath)) SleepStudyStatusText = $"Couldn't open the report - it's at {_sleepStudyReportPath}"; }, () => _sleepStudyReportPath is not null);
 
         CreateDumpCommand = new AsyncRelayCommand(CreateDumpAsync, () => SelectedHungWindow is not null);
         // #271
@@ -1110,6 +1121,11 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         // #237: load the persisted hang log before the first sample so HangsToday/LongestHang read
         // correctly even before this session has produced a single new hang.
         foreach (var e in HangLogService.Load()) HangLog.Add(e);
+
+        // A DPC/page-fault kernel session a crashed or killed earlier run left behind keeps writing
+        // until something stops it - settle it once now rather than at the next Start (only a
+        // session the marker proves is this app's own is stopped).
+        _ = Task.Run(() => KernelLoggerSession.ReclaimAtStartupAsync(KernelLoggerSession.Owner.DpcSampling));
 
         _lightTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
         _lightTimer.Tick += (_, _) => SampleLight();
@@ -1990,11 +2006,16 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     {
         if (!_bitsLoadedOnce)
             return new BackgroundActivityRow { Key = "bits", Name = "BITS Transfers", State = BackgroundActivityState.Unknown, CostText = "Not loaded yet", HasDetail = true };
-        // Finished (TRANSFERRED) jobs stay in the list until their owner acknowledges them; only
-        // jobs still moving data count as background activity.
-        int active = BitsTransfers.Count(BitsTransferService.IsInProgress);
-        var state = active > 0 ? BackgroundActivityState.Active : BackgroundActivityState.Inactive;
-        return new BackgroundActivityRow { Key = "bits", Name = "BITS Transfers", State = state, CostText = active > 0 ? $"{active} active transfer(s)" : "No active transfers", HasDetail = true };
+        // Finished (TRANSFERRED) jobs stay in the list until their owner acknowledges them, and
+        // QUEUED/SUSPENDED/TRANSIENT_ERROR jobs are waiting, not moving data (a SUSPENDED one may
+        // never resume on its own) - only CONNECTING/TRANSFERRING count as background activity.
+        int moving = BitsTransfers.Count(r => r.StateText.Trim().ToUpperInvariant() is "CONNECTING" or "TRANSFERRING");
+        int waiting = BitsTransfers.Count(BitsTransferService.IsInProgress) - moving;
+        var state = moving > 0 ? BackgroundActivityState.Active : BackgroundActivityState.Inactive;
+        string cost = moving > 0
+            ? $"{moving} transfer(s) moving data" + (waiting > 0 ? $", {waiting} waiting" : string.Empty)
+            : waiting > 0 ? $"No active transfers ({waiting} queued, suspended or retrying)" : "No active transfers";
+        return new BackgroundActivityRow { Key = "bits", Name = "BITS Transfers", State = state, CostText = cost, HasDetail = true };
     }
 
     private BackgroundActivityRow BuildScheduledTasksRow()
@@ -2327,8 +2348,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>#242: writes a full user-mode dump of SelectedHungWindow's owning process via
-    /// ProcessDumpService (rundll32/comsvcs.dll's MiniDump export), to a location the user picks.</summary>
+    /// <summary>#242: writes a full user-mode dump of SelectedHungWindow's owning process via ProcessDumpService.CreateDumpAsync (MiniDumpWriteDump), to a location the user picks.</summary>
     private async Task CreateDumpAsync()
     {
         if (SelectedHungWindow is not { } row) return;
@@ -2370,19 +2390,32 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         var target = SelectedHungWindow;
         if (target is null) return;
 
+        int generation = ++_hungWindowWaitChainGeneration;
         IsAnalyzingHungWindowWaitChain = true;
         HungWindowWaitChainStatusText = "Analyzing wait chain...";
         HungWindowWaitChainNodes.Clear();
         try
         {
             var result = await Task.Run(() => WaitChainTraversalService.Analyze(target.Pid, target.ThreadId));
+            // Dropped if the selection moved to another window (or another analysis started) meanwhile.
+            if (generation != _hungWindowWaitChainGeneration) return;
             HungWindowWaitChainStatusText = result.StatusText;
             foreach (var n in result.Nodes) HungWindowWaitChainNodes.Add(n);
         }
         finally
         {
-            IsAnalyzingHungWindowWaitChain = false;
+            if (generation == _hungWindowWaitChainGeneration) IsAnalyzingHungWindowWaitChain = false;
         }
+    }
+
+    private int _hungWindowWaitChainGeneration;
+
+    private void ClearHungWindowWaitChain()
+    {
+        _hungWindowWaitChainGeneration++;
+        HungWindowWaitChainNodes.Clear();
+        HungWindowWaitChainStatusText = string.Empty;
+        IsAnalyzingHungWindowWaitChain = false;
     }
 
     /// <summary>#246: a registry-tree walk (ShellExtensionService.List), not a per-tick cost -
@@ -3069,7 +3102,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         // including a loop whose Stop was clicked but whose teardown hadn't run yet. The DPC one is
         // a no-op unless a sample holds the shared kernel logger right now.
         DpcLatencyService.StopSessionBlocking();
-        if (IsMeasuringPresent || _presentLoopTask is { IsCompleted: false }) PresentMonitorService.StopSessionBlocking();
+        if (PresentMonitorService.SessionMayBeRunning || IsMeasuringPresent || _presentLoopTask is { IsCompleted: false }) PresentMonitorService.StopSessionBlocking();
         if (IsMeasuringHardFaultEtw || _hardFaultEtwLoopTask is { IsCompleted: false }) HardFaultEtwService.StopSessionBlocking();
         if (WprCaptureService.IsCircularCaptureRunning || IsCapturing) WprCaptureService.CancelBlocking();
 

@@ -143,52 +143,79 @@ public sealed class PerCoreDpcService : IDisposable
         _lastCategoryTickMs = now;
     }
 
-    public List<CoreDpcRow> SampleCoreDpcInterrupt()
+    /// <summary>One SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION entry per processor the call reports.
+    /// The count comes from the call's own returnLength, not Environment.ProcessorCount: that spans
+    /// every processor group (and follows process affinity), while this information class returns
+    /// only the calling thread's group - so on a machine with more than 64 logical processors a
+    /// ProcessorCount-sized loop would read entries the call never wrote. Null on failure.</summary>
+    private static SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION[]? ReadProcessorPerformance()
     {
-        var rows = new List<CoreDpcRow>();
-        try
+        int entrySize = Marshal.SizeOf<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION>();
+        int bufSize = entrySize * Math.Max(Environment.ProcessorCount, 64);
+        for (int attempt = 0; attempt < 2; attempt++)
         {
-            int procCount = Environment.ProcessorCount;
-            int entrySize = Marshal.SizeOf<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION>();
-            int bufSize = entrySize * procCount;
             IntPtr buffer = Marshal.AllocHGlobal(bufSize);
             try
             {
-                int status = NtQuerySystemInformation(SystemProcessorPerformanceInformation, buffer, bufSize, out _);
-                if (status != 0) return rows;
-
-                var dpc = new long[procCount];
-                var interrupt = new long[procCount];
-                for (int i = 0; i < procCount; i++)
+                int status = NtQuerySystemInformation(SystemProcessorPerformanceInformation, buffer, bufSize, out int returned);
+                if (status == StatusInfoLengthMismatch && returned > bufSize)
                 {
-                    var s = Marshal.PtrToStructure<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION>(IntPtr.Add(buffer, i * entrySize));
-                    dpc[i] = s.DpcTime;
-                    interrupt[i] = s.InterruptTime;
+                    bufSize = returned;
+                    continue;
                 }
+                if (status != 0 || returned <= 0) return null;
 
-                var now = DateTime.UtcNow;
-                if (_prevDpc is not null && _prevDpc.Length == procCount && _prevInterrupt is not null)
-                {
-                    double elapsed100ns = (now - _prevTime).TotalMilliseconds * 10000.0;
-                    if (elapsed100ns > 0)
-                    {
-                        for (int i = 0; i < procCount; i++)
-                        {
-                            double dpcPct = Math.Clamp((dpc[i] - _prevDpc[i]) / elapsed100ns * 100.0, 0, 100);
-                            double intPct = Math.Clamp((interrupt[i] - _prevInterrupt[i]) / elapsed100ns * 100.0, 0, 100);
-                            rows.Add(new CoreDpcRow { CoreIndex = i, DpcPercent = dpcPct, InterruptPercent = intPct });
-                        }
-                    }
-                }
-
-                _prevDpc = dpc;
-                _prevInterrupt = interrupt;
-                _prevTime = now;
+                int count = Math.Min(returned, bufSize) / entrySize;
+                var entries = new SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION[count];
+                for (int i = 0; i < count; i++)
+                    entries[i] = Marshal.PtrToStructure<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION>(IntPtr.Add(buffer, i * entrySize));
+                return entries;
             }
             finally
             {
                 Marshal.FreeHGlobal(buffer);
             }
+        }
+        return null;
+    }
+
+    private const int StatusInfoLengthMismatch = unchecked((int)0xC0000004);
+
+    public List<CoreDpcRow> SampleCoreDpcInterrupt()
+    {
+        var rows = new List<CoreDpcRow>();
+        try
+        {
+            var entries = ReadProcessorPerformance();
+            if (entries is null || entries.Length == 0) return rows;
+            int procCount = entries.Length;
+
+            var dpc = new long[procCount];
+            var interrupt = new long[procCount];
+            for (int i = 0; i < procCount; i++)
+            {
+                dpc[i] = entries[i].DpcTime;
+                interrupt[i] = entries[i].InterruptTime;
+            }
+
+            var now = DateTime.UtcNow;
+            if (_prevDpc is not null && _prevDpc.Length == procCount && _prevInterrupt is not null)
+            {
+                double elapsed100ns = (now - _prevTime).TotalMilliseconds * 10000.0;
+                if (elapsed100ns > 0)
+                {
+                    for (int i = 0; i < procCount; i++)
+                    {
+                        double dpcPct = Math.Clamp((dpc[i] - _prevDpc[i]) / elapsed100ns * 100.0, 0, 100);
+                        double intPct = Math.Clamp((interrupt[i] - _prevInterrupt[i]) / elapsed100ns * 100.0, 0, 100);
+                        rows.Add(new CoreDpcRow { CoreIndex = i, DpcPercent = dpcPct, InterruptPercent = intPct });
+                    }
+                }
+            }
+
+            _prevDpc = dpc;
+            _prevInterrupt = interrupt;
+            _prevTime = now;
         }
         catch
         {
@@ -242,46 +269,32 @@ public sealed class PerCoreDpcService : IDisposable
     {
         try
         {
-            int procCount = Environment.ProcessorCount;
-            int entrySize = Marshal.SizeOf<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION>();
-            int bufSize = entrySize * procCount;
-            IntPtr buffer = Marshal.AllocHGlobal(bufSize);
-            try
+            var entries = ReadProcessorPerformance();
+            if (entries is null || entries.Length == 0) return null;
+            int procCount = entries.Length;
+
+            var counts = new long[procCount];
+            for (int i = 0; i < procCount; i++) counts[i] = entries[i].InterruptCount;
+
+            var now = DateTime.UtcNow;
+            List<double>? rates = null;
+            if (_prevInterruptCount is not null && _prevInterruptCount.Length == procCount)
             {
-                int status = NtQuerySystemInformation(SystemProcessorPerformanceInformation, buffer, bufSize, out _);
-                if (status != 0) return null;
-
-                var counts = new long[procCount];
-                for (int i = 0; i < procCount; i++)
+                double elapsedSec = (now - _prevInterruptCountTime).TotalSeconds;
+                if (elapsedSec > 0)
                 {
-                    var s = Marshal.PtrToStructure<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION>(IntPtr.Add(buffer, i * entrySize));
-                    counts[i] = s.InterruptCount;
-                }
-
-                var now = DateTime.UtcNow;
-                List<double>? rates = null;
-                if (_prevInterruptCount is not null && _prevInterruptCount.Length == procCount)
-                {
-                    double elapsedSec = (now - _prevInterruptCountTime).TotalSeconds;
-                    if (elapsedSec > 0)
+                    rates = new List<double>(procCount);
+                    for (int i = 0; i < procCount; i++)
                     {
-                        rates = new List<double>(procCount);
-                        for (int i = 0; i < procCount; i++)
-                        {
-                            long delta = counts[i] - _prevInterruptCount[i];
-                            rates.Add(delta > 0 ? delta / elapsedSec : 0);
-                        }
+                        long delta = counts[i] - _prevInterruptCount[i];
+                        rates.Add(delta > 0 ? delta / elapsedSec : 0);
                     }
                 }
+            }
 
-                _prevInterruptCount = counts;
-                _prevInterruptCountTime = now;
-                return rates;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
-            }
+            _prevInterruptCount = counts;
+            _prevInterruptCountTime = now;
+            return rates;
         }
         catch
         {

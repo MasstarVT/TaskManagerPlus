@@ -152,18 +152,15 @@ public static class BootEtwTraceService
     }
 
     /// <summary>Best-effort "open in WPA" - falls back to selecting the file in Explorer when the
-    /// Windows Performance Analyzer isn't on PATH, rather than failing silently or throwing.</summary>
+    /// Windows Performance Analyzer isn't installed in an admin-owned folder (or won't start),
+    /// rather than failing silently or throwing. WPA is found the same way the ETW panel finds it
+    /// (EtwTraceService.DetectWpaPath - never PATH or App Paths, which this elevated app would
+    /// otherwise resolve through user-writable locations).</summary>
     public static void OpenInWpa(string etlPath)
     {
-        try
-        {
-            Process.Start(new ProcessStartInfo("wpa.exe", $"\"{etlPath}\"") { UseShellExecute = true });
-        }
-        catch
-        {
-            try { Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{etlPath}\"") { UseShellExecute = true }); }
-            catch { /* best-effort - nothing more to do if even Explorer can't be launched */ }
-        }
+        string? wpa = EtwTraceService.DetectWpaPath();
+        if (wpa is not null && SafeLaunchService.StartTrustedExecutable(wpa, $"\"{etlPath}\"") is null) return;
+        SafeLaunchService.RevealInExplorer(etlPath);
     }
 
     /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout

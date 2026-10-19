@@ -187,41 +187,47 @@ public sealed class PresentMonitorService
         if (!ToolsAvailable)
             return (false, "logman.exe/tracerpt.exe weren't found on this system - present/frame-time capture isn't available.", 0);
 
-        string dir = Path.Combine(AppPaths.SettingsDirectory, "ResponsivenessTraces");
-        try { Directory.CreateDirectory(dir); }
-        catch { return (false, "Couldn't create a temp folder for the trace.", 0); }
+        // logman/tracerpt write these elevated and this app reads and deletes them, so they live in
+        // a per-sample admin-only folder rather than the user-writable settings folder.
+        var workDir = AdminDataPaths.CreatePrivateTempDirectory("PresentSample", out string? dirError);
+        if (workDir is null)
+            return (false, $"Couldn't create a private folder for the trace: {dirError}", 0);
 
-        string etl = Path.Combine(dir, $"present_{Guid.NewGuid():N}.etl");
-        string xml = Path.Combine(dir, $"present_{Guid.NewGuid():N}.xml");
+        string etl = Path.Combine(workDir.FullName, $"present_{Guid.NewGuid():N}.etl");
+        string xml = Path.Combine(workDir.FullName, $"present_{Guid.NewGuid():N}.xml");
 
         try
         {
             // Best-effort cleanup of a stale session left over from a previous crashed/killed run.
             await RunProcessAsync(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(15), CancellationToken.None, ignoreExitCode: true);
 
-            var (createOk, createErr) = await RunProcessAsync(LogmanPath, $"create trace \"{SessionName}\" -o \"{etl}\" -ets", TimeSpan.FromSeconds(20), ct);
-            if (!createOk)
-                return (false, DescribeLogmanError(createErr), 0);
-
-            var (dxgOk, dxgErr) = await RunProcessAsync(LogmanPath, $"update trace \"{SessionName}\" -p \"{DxgKrnlProvider}\" -ets", TimeSpan.FromSeconds(15), ct);
-            // Dwm-Core is best-effort - some Windows builds don't expose it as a standalone
-            // provider name; DxgKrnl alone is still enough for #250's frame-time capture, so a
-            // failure here doesn't abort the whole sample.
-            await RunProcessAsync(LogmanPath, $"update trace \"{SessionName}\" -p \"{DwmCoreProvider}\" -ets", TimeSpan.FromSeconds(15), ct, ignoreExitCode: true);
-
-            if (!dxgOk)
-            {
-                await RunProcessAsync(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(15), CancellationToken.None, ignoreExitCode: true);
-                return (false, DescribeLogmanError(dxgErr), 0);
-            }
-
+            // From here on the session may exist - a create that timed out or was cancelled by Stop
+            // can still have started it - so every path out stops it (CancellationToken.None, so a
+            // cancelled measurement still tears it down). -max (MB) bounds the file regardless.
+            SessionMayBeRunning = true;
             try
             {
+                var (createOk, createErr) = await RunProcessAsync(LogmanPath, $"create trace \"{SessionName}\" -o \"{etl}\" -max 256 -ets", TimeSpan.FromSeconds(20), ct);
+                if (!createOk)
+                    return (false, DescribeLogmanError(createErr), 0);
+
+                var (dxgOk, dxgErr) = await RunProcessAsync(LogmanPath, $"update trace \"{SessionName}\" -p \"{DxgKrnlProvider}\" -ets", TimeSpan.FromSeconds(15), ct);
+                // Dwm-Core is best-effort - some Windows builds don't expose it as a standalone
+                // provider name; DxgKrnl alone is still enough for #250's frame-time capture, so a
+                // failure here doesn't abort the whole sample.
+                await RunProcessAsync(LogmanPath, $"update trace \"{SessionName}\" -p \"{DwmCoreProvider}\" -ets", TimeSpan.FromSeconds(15), ct, ignoreExitCode: true);
+
+                if (!dxgOk)
+                    return (false, DescribeLogmanError(dxgErr), 0);
+
                 await Task.Delay(window, ct);
             }
             finally
             {
-                await RunProcessAsync(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(15), CancellationToken.None, ignoreExitCode: true);
+                // A failed stop (including "nothing to stop") leaves the flag set, which costs at
+                // most one extra stop at exit.
+                var (stopOk, _) = await RunProcessAsync(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(15), CancellationToken.None);
+                if (stopOk) SessionMayBeRunning = false;
             }
 
             if (!File.Exists(etl))
@@ -253,17 +259,25 @@ public sealed class PresentMonitorService
         }
         finally
         {
-            try { if (File.Exists(etl)) File.Delete(etl); } catch { /* best-effort cleanup */ }
-            try { if (File.Exists(xml)) File.Delete(xml); } catch { /* best-effort cleanup */ }
+            AdminDataPaths.TryDelete(workDir);
         }
     }
+
+    /// <summary>True from just before a sample's `create` until a stop succeeds - including after a
+    /// cancelled or failed cycle - so the exit-time stop doesn't depend on the loop still running.</summary>
+    public static bool SessionMayBeRunning { get => _sessionMayBeRunning; private set => _sessionMayBeRunning = value; }
+    private static volatile bool _sessionMayBeRunning;
 
     /// <summary>Synchronous best-effort stop of this service's session, for app shutdown - the async
     /// loop's own finally-block stop is a dispatcher continuation that never runs once the
     /// dispatcher has shut down.</summary>
     public static void StopSessionBlocking()
     {
-        try { ToolRunner.RunCaptured(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(5)); }
+        try
+        {
+            var (_, exitCode) = ToolRunner.RunCaptured(LogmanPath, $"stop \"{SessionName}\" -ets", TimeSpan.FromSeconds(5));
+            if (exitCode == 0) SessionMayBeRunning = false;
+        }
         catch { /* best-effort */ }
     }
 

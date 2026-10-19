@@ -236,12 +236,25 @@ public sealed class HungWindowService : IDisposable
             }
             else if (!foregroundThreadMs.TryGetValue(w.ThreadId, out ms))
             {
-                ms = ProbeWindowMs(w.Hwnd, foregroundTimeoutMs);
+                (ms, bool timedOut) = ProbeWindow(w.Hwnd, foregroundTimeoutMs);
                 foregroundThreadMs[w.ThreadId] = ms;
-                if (ms >= threshold) RecordStall(fgNameSnapshot, ms);
+                TrackForegroundStall(w.Pid, w.ThreadId, fgNameSnapshot, ms, timedOut, threshold);
             }
             // The grid/score keep reading the same 250ms-capped round-trip as before.
             _lastResponseMs[w.Hwnd] = Math.Min(ms, ProbeTimeoutMs);
+        }
+
+        // A stall whose thread wasn't probed as foreground this cycle (the user switched away, or
+        // the window closed) ends here, at the last moment it was seen not answering.
+        if (!ct.IsCancellationRequested)
+        {
+            foreach (var key in _openStalls.Keys.ToList())
+            {
+                if (key.Pid == fgPidSnapshot && foregroundThreadMs.ContainsKey(key.ThreadId)) continue;
+                var open = _openStalls[key];
+                _openStalls.Remove(key);
+                RecordStall(open.AppName, Stopwatch.GetElapsedTime(open.StartTimestamp, open.LastUnansweredTimestamp).TotalMilliseconds);
+            }
         }
 
         // #244: resolve at most one still-hung, not-yet-resolved window's chain per cycle - capped
@@ -272,7 +285,12 @@ public sealed class HungWindowService : IDisposable
     /// probe logic/cadence against just Shell_TrayWnd/Progman/explorer's own frames, rather than
     /// re-deriving the SendMessageTimeout call. Always call this from a background thread - it's
     /// the genuinely blocking-ish part of this whole service.</summary>
-    internal static double ProbeWindowMs(IntPtr hwnd, int timeoutMs = ProbeTimeoutMs)
+    internal static double ProbeWindowMs(IntPtr hwnd, int timeoutMs = ProbeTimeoutMs) => ProbeWindow(hwnd, timeoutMs).Ms;
+
+    /// <summary>ProbeWindowMs plus whether the window failed to answer at all (timed out, or
+    /// SMTO_ABORTIFHUNG gave up at once on an already-hung window) - in that case Ms is only the
+    /// cap, not how long the window was actually unresponsive.</summary>
+    private static (double Ms, bool TimedOut) ProbeWindow(IntPtr hwnd, int timeoutMs)
     {
         var sw = Stopwatch.StartNew();
         IntPtr result = SendMessageTimeout(hwnd, WM_NULL, IntPtr.Zero, IntPtr.Zero,
@@ -281,7 +299,36 @@ public sealed class HungWindowService : IDisposable
 
         // A zero return means SendMessageTimeout itself gave up (SMTO_ABORTIFHUNG kicked in) - treat
         // that the same as hitting the cap, since the window didn't answer in time either way.
-        return result == IntPtr.Zero ? timeoutMs : Math.Min(sw.Elapsed.TotalMilliseconds, timeoutMs);
+        return result == IntPtr.Zero ? (timeoutMs, true) : (Math.Min(sw.Elapsed.TotalMilliseconds, timeoutMs), false);
+    }
+
+    // #238: one foreground stall still in progress per UI thread - opened by the first probe that
+    // got no answer, extended by each later one, and recorded once when the thread answers again
+    // (or stops being probed). Only touched by RunProbeCycleAsync, which never overlaps itself.
+    private readonly record struct OpenStall(string AppName, long StartTimestamp, long LastUnansweredTimestamp);
+    private readonly Dictionary<(int Pid, int ThreadId), OpenStall> _openStalls = new();
+
+    /// <summary>Records a foreground stall once, with the time it was actually seen unresponsive,
+    /// rather than once per probe cycle at the probe's cap. The duration is a lower bound: from the
+    /// start of the first probe that got no answer to the end of the last one (plus the answering
+    /// probe's own wait) - the freeze may have run slightly longer between probes.</summary>
+    private void TrackForegroundStall(int pid, int threadId, string appName, double ms, bool timedOut, double threshold)
+    {
+        long now = Stopwatch.GetTimestamp();
+        var key = (pid, threadId);
+        if (timedOut)
+        {
+            if (_openStalls.TryGetValue(key, out var open))
+                _openStalls[key] = open with { LastUnansweredTimestamp = now };
+            else
+                _openStalls[key] = new OpenStall(appName, now - (long)(ms / 1000.0 * Stopwatch.Frequency), now);
+            return;
+        }
+
+        if (_openStalls.Remove(key, out var ended))
+            RecordStall(ended.AppName, Stopwatch.GetElapsedTime(ended.StartTimestamp, ended.LastUnansweredTimestamp).TotalMilliseconds + ms);
+        else if (ms >= threshold)
+            RecordStall(appName, ms);
     }
 
     private void RecordStall(string appName, double ms)
