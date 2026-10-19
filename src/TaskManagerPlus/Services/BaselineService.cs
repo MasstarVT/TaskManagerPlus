@@ -183,6 +183,7 @@ public static class BaselineService
             Snapshot = SnapshotService.Sanitize(b.Snapshot),
             Fingerprint = new HardwareFingerprint
             {
+                IsComplete = fp.IsComplete,
                 CpuName = fp.CpuName ?? string.Empty,
                 RamTotalGb = fp.RamTotalGb,
                 DiskModels = fp.DiskModels?.Where(d => d is not null).ToList() ?? new List<string>(),

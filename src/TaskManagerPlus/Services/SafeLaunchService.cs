@@ -40,7 +40,7 @@ public static class SafeLaunchService
     {
         try
         {
-            if (!Path.IsPathFullyQualified(path) || !File.Exists(path) || IsExecutableType(path)) return false;
+            if (!Path.IsPathFullyQualified(path) || !File.Exists(path) || !IsDocumentType(path)) return false;
             return ShellExecuteUnelevated(Path.GetFullPath(path), null);
         }
         catch
@@ -141,12 +141,18 @@ public static class SafeLaunchService
         }
     }
 
-    private static bool IsExecutableType(string path)
+    // An allow-list, not a blocklist: ShellExecute runs far more types than any list of
+    // "executable" extensions covers (.settingcontent-ms, .search-ms, .diagcab, .application, ...).
+    // These are the kinds of file this app itself produces and offers to open.
+    private static readonly string[] DocumentExtensions =
+    {
+        ".html", ".htm", ".txt", ".log", ".csv", ".json", ".xml", ".md", ".etl", ".evtx", ".zip",
+    };
+
+    private static bool IsDocumentType(string path)
     {
         string ext = Path.GetExtension(path);
-        string[] blocked = { ".exe", ".com", ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
-                             ".msc", ".msi", ".msp", ".scr", ".pif", ".lnk", ".url", ".hta", ".cpl", ".reg", ".appref-ms" };
-        return blocked.Any(b => ext.Equals(b, StringComparison.OrdinalIgnoreCase));
+        return DocumentExtensions.Any(d => ext.Equals(d, StringComparison.OrdinalIgnoreCase));
     }
 
     // ---- ShellExecute inside the desktop Explorer process (unelevated) ----
@@ -168,6 +174,10 @@ public static class SafeLaunchService
         object? shellWindows = null, desktop = null, browserObj = null, view = null, folderView = null, app = null;
         try
         {
+            // A per-user (HKCU) registration of this class would make the activation below load
+            // whatever the user registered; refuse rather than trust it (callers fall back to
+            // copying the link).
+            if (HasPerUserComOverride(ClsidShellWindows)) return false;
             var type = Type.GetTypeFromCLSID(ClsidShellWindows, throwOnError: false);
             if (type is null) return false;
             shellWindows = Activator.CreateInstance(type);
@@ -208,6 +218,34 @@ public static class SafeLaunchService
                     try { Marshal.ReleaseComObject(o); } catch { /* best-effort */ }
                 }
             }
+        }
+    }
+
+    /// <summary>True when HKCU\Software\Classes registers <paramref name="clsid"/> (or one of the
+    /// ProgIDs) per-user - a registration any unelevated program can create. Used before this
+    /// elevated process activates a COM class, so it never loads a per-user replacement.</summary>
+    internal static bool HasPerUserComOverride(Guid clsid, params string[] progIds)
+    {
+        try
+        {
+            using var classes = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Classes");
+            if (classes is null) return false;
+            string key = "{" + clsid.ToString().ToUpperInvariant() + "}";
+            foreach (string path in new[] { $@"CLSID\{key}", $@"Wow6432Node\CLSID\{key}" })
+            {
+                using var sub = classes.OpenSubKey(path);
+                if (sub is not null) return true;
+            }
+            foreach (string progId in progIds)
+            {
+                using var sub = classes.OpenSubKey(progId);
+                if (sub is not null) return true;
+            }
+            return false;
+        }
+        catch
+        {
+            return true; // can't tell - treat as overridden (fail closed)
         }
     }
 
