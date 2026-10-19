@@ -16,11 +16,14 @@ public sealed class LatencyHistoryEntry
     public double AvgMs { get; set; }
     public double MaxMs { get; set; }
     public double LossPercent { get; set; }
+    /// <summary>Replies received in the window; -1 for entries written before this was recorded.
+    /// A window with none has no latency to average (its AvgMs/MaxMs are 0, not a measurement).</summary>
+    public int SuccessCount { get; set; } = -1;
 }
 
 /// <summary>One aggregated point for the #506 24h/7d history view - one bucket (an hour, for the
 /// 24h view; a day, for the 7d view) averaged/maxed across every window recorded within it.</summary>
-public sealed record LatencyHistoryPoint(DateTime BucketStartLocal, double AvgMs, double MaxMs, double LossPercent);
+public sealed record LatencyHistoryPoint(DateTime BucketStartLocal, double? AvgMs, double? MaxMs, double LossPercent);
 
 /// <summary>
 /// Item #506: persisted latency/loss history, appended to on the same periodic cadence
@@ -36,7 +39,7 @@ public static class LatencyHistoryService
     private static string HistoryPath => AppPaths.GetPath("latency-history.json");
     private const int MaxDays = 30;
 
-    public static void RecordWindow(string target, double minMs, double avgMs, double maxMs, double lossPercent)
+    public static void RecordWindow(string target, double minMs, double avgMs, double maxMs, double lossPercent, int successCount)
     {
         try
         {
@@ -49,6 +52,7 @@ public static class LatencyHistoryService
                 AvgMs = avgMs,
                 MaxMs = maxMs,
                 LossPercent = lossPercent,
+                SuccessCount = successCount,
             });
 
             var cutoff = DateTime.UtcNow.AddDays(-MaxDays);
@@ -81,11 +85,16 @@ public static class LatencyHistoryService
         return withTimestamps
             .GroupBy(x => new DateTime((x.When.Ticks / bucketSize.Ticks) * bucketSize.Ticks, DateTimeKind.Utc))
             .OrderBy(g => g.Key)
-            .Select(g => new LatencyHistoryPoint(
-                g.Key.ToLocalTime(),
-                g.Average(x => x.Entry.AvgMs),
-                g.Max(x => x.Entry.MaxMs),
-                g.Average(x => x.Entry.LossPercent)))
+            .Select(g =>
+            {
+                // Only windows that got replies have a latency; a fully-lost window (or a legacy
+                // entry at 100% loss) would otherwise average in as 0 ms and hide the outage.
+                var replied = g.Where(x => !(x.Entry.SuccessCount == 0 || (x.Entry.SuccessCount < 0 && x.Entry.LossPercent >= 100))).ToList();
+                double? avg = replied.Count == 0 ? null
+                    : replied.Sum(x => x.Entry.AvgMs * Math.Max(1, x.Entry.SuccessCount)) / replied.Sum(x => Math.Max(1, x.Entry.SuccessCount));
+                double? max = replied.Count == 0 ? null : replied.Max(x => x.Entry.MaxMs);
+                return new LatencyHistoryPoint(g.Key.ToLocalTime(), avg, max, g.Average(x => x.Entry.LossPercent));
+            })
             .ToList();
     }
 

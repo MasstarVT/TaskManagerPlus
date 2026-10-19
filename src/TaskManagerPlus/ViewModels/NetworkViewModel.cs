@@ -2518,7 +2518,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             {
                 if (stats.SampleCount == 0) continue;
                 string key = tier.ToString();
-                LatencyHistoryService.RecordWindow(key, stats.MinMs, stats.AvgMs, stats.MaxMs, stats.LossPercent);
+                LatencyHistoryService.RecordWindow(key, stats.MinMs, stats.AvgMs, stats.MaxMs, stats.LossPercent, roundtrips.Count);
                 LatencyBaselineService.UpdateBaseline(_latencyBaseline, key, roundtrips);
             }
             LatencyBaselineService.Save(_latencyBaseline);

@@ -358,8 +358,8 @@
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Text="{Binding BucketStartLocal, StringFormat='{}{0:MM/dd HH:mm}'}" FontSize="{StaticResource FontBody}" Margin="0,0,10,0" />
                                                 <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
-                                                    <Run Text="avg " /><Run Text="{Binding AvgMs, StringFormat={}{0:0.#} ms, Mode=OneWay}" />
-                                                    <Run Text="  ·  max " /><Run Text="{Binding MaxMs, StringFormat={}{0:0.#} ms, Mode=OneWay}" />
+                                                    <Run Text="avg " /><Run Text="{Binding AvgMs, StringFormat={}{0:0.#} ms, TargetNullValue=—, Mode=OneWay}" />
+                                                    <Run Text="  ·  max " /><Run Text="{Binding MaxMs, StringFormat={}{0:0.#} ms, TargetNullValue=—, Mode=OneWay}" />
                                                     <Run Text="  ·  loss " /><Run Text="{Binding LossPercent, StringFormat={}{0:0.#}%, Mode=OneWay}" />
                                                 </TextBlock>
                                             </Grid>
