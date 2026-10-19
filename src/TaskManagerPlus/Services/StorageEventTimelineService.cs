@@ -97,15 +97,17 @@ public static class StorageEventTimelineService
     private static StorageTimelineEvent FromNtfsCorruption(NtfsCorruptionEvent e) => new()
     {
         TimeCreated = e.TimeCreated,
-        Provider = "Ntfs",
+        // 55/130 come from the legacy "Ntfs" provider, 98/140 from "Microsoft-Windows-Ntfs" - see
+        // NtfsCorruptionEventService's remarks.
+        Provider = e.EventId is 98 or 140 ? "Microsoft-Windows-Ntfs" : "Ntfs",
         EventId = e.EventId,
         DeviceText = e.VolumeText,
         Category = e.EventId switch
         {
             55 => "Corruption detected",
-            98 => "Transaction log unwritable",
-            130 or 137 => "Volume resource exhaustion",
-            140 or 142 => "Volume no longer writable",
+            98 => "Volume needs repair",
+            130 => "Repaired",
+            140 => "Transaction log flush failed",
             _ => "Ntfs event",
         },
         Message = e.Message,

@@ -94,6 +94,24 @@ public static class VssService
 
     private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
 
+    /// <summary>A vssadmin read that parsed nothing is only a real "none" when vssadmin answered
+    /// without an "Error:" line (e.g. "No items found that satisfy the query.") - no output at all
+    /// (timeout/launch failure) or an error line (access denied, service unavailable) is recorded
+    /// in <paramref name="errors"/> so the caller can show Unknown instead of an empty list.</summary>
+    private static void NoteReadFailure(ICollection<string>? errors, string command, string output, int parsedCount)
+    {
+        if (errors is null || parsedCount > 0) return;
+        if (output.Length == 0)
+        {
+            errors.Add($"vssadmin {command}: no output (timed out or couldn't start)");
+            return;
+        }
+        var errorLine = output.Split('\n')
+            .Select(l => l.Trim())
+            .FirstOrDefault(l => l.StartsWith("Error:", StringComparison.OrdinalIgnoreCase));
+        if (errorLine is not null) errors.Add($"vssadmin {command}: {Truncate(errorLine, 200)}");
+    }
+
     // ================================================================================
     // #394: VSS writer health - `vssadmin list writers`. Blocks look like:
     //   Writer name: 'Task Scheduler Writer'
@@ -108,11 +126,11 @@ public static class VssService
     private static readonly Regex WriterStateRegex = new(@"State:\s*\[(\d+)\]\s*(.+)", RegexOptions.Compiled);
     private static readonly Regex WriterLastErrorRegex = new(@"Last error:\s*(.+)", RegexOptions.Compiled);
 
-    public static async Task<List<VssWriterInfo>> ReadWritersAsync()
+    public static async Task<List<VssWriterInfo>> ReadWritersAsync(ICollection<string>? errors = null)
     {
         var result = new List<VssWriterInfo>();
         string output = await RunVssAdminAsync("list writers");
-        if (output.Length == 0) return result;
+        if (output.Length == 0) { NoteReadFailure(errors, "list writers", output, 0); return result; }
 
         VssWriterInfo? current = null;
         foreach (var rawLine in output.Split('\n'))
@@ -150,6 +168,7 @@ public static class VssService
         }
         if (current is not null) result.Add(current);
 
+        NoteReadFailure(errors, "list writers", output, result.Count);
         return result;
     }
 
@@ -259,11 +278,11 @@ public static class VssService
     private static readonly Regex ServiceMachineRegex = new(@"Service Machine:\s*(.+)", RegexOptions.Compiled);
     private static readonly Regex ShadowProviderRegex = new(@"Provider:\s*'([^']*)'", RegexOptions.Compiled);
 
-    public static async Task<List<VssShadowCopyInfo>> ReadShadowCopiesAsync()
+    public static async Task<List<VssShadowCopyInfo>> ReadShadowCopiesAsync(ICollection<string>? errors = null)
     {
         var result = new List<VssShadowCopyInfo>();
         string output = await RunVssAdminAsync("list shadows");
-        if (output.Length == 0) return result;
+        if (output.Length == 0) { NoteReadFailure(errors, "list shadows", output, 0); return result; }
 
         string? currentSetId = null;
         DateTime? currentCreationTime = null;
@@ -316,6 +335,7 @@ public static class VssService
         }
         if (current is not null) result.Add(current);
 
+        NoteReadFailure(errors, "list shadows", output, result.Count);
         // Grouped by volume (per this item's brief), most-recent-first within each volume.
         return result
             .OrderBy(s => s.Volume, StringComparer.OrdinalIgnoreCase)
@@ -344,11 +364,11 @@ public static class VssService
     /// <summary>The one and only `vssadmin list shadowstorage` shell-out in the app -
     /// VolumeDiagnosticsService.ReadShadowCopyUsageByVolumeAsync delegates here for its
     /// used-bytes-only projection rather than running this command a second time.</summary>
-    public static async Task<List<VssShadowStorageInfo>> ReadShadowStorageAsync()
+    public static async Task<List<VssShadowStorageInfo>> ReadShadowStorageAsync(ICollection<string>? errors = null)
     {
         var result = new List<VssShadowStorageInfo>();
         string output = await RunVssAdminAsync("list shadowstorage");
-        if (output.Length == 0) return result;
+        if (output.Length == 0) { NoteReadFailure(errors, "list shadowstorage", output, 0); return result; }
 
         VssShadowStorageInfo? current = null;
         foreach (var rawLine in output.Split('\n'))
@@ -395,6 +415,7 @@ public static class VssService
         }
         if (current is not null) result.Add(current);
 
+        NoteReadFailure(errors, "list shadowstorage", output, result.Count);
         return result;
     }
 
@@ -427,7 +448,11 @@ public static class VssService
     // ================================================================================
     // #398: restore points - WMI SystemRestore (root\default).
     // ================================================================================
-    public static List<RestorePointInfo> ReadRestorePoints()
+    public static List<RestorePointInfo> ReadRestorePoints() => ReadRestorePoints(null);
+
+    /// <summary>Same read; a failed query is also recorded in <paramref name="errors"/> so the
+    /// caller can tell "couldn't read" apart from "no restore points".</summary>
+    public static List<RestorePointInfo> ReadRestorePoints(ICollection<string>? errors)
     {
         var result = new List<RestorePointInfo>();
         try
@@ -457,12 +482,13 @@ public static class VssService
                 finally { rp.Dispose(); }
             }
         }
-        catch
+        catch (Exception ex)
         {
             // root\default\SystemRestore unavailable - System Protection is off system-wide, this
             // Windows edition doesn't expose the class, or WMI access is denied. Degrades to an
             // empty list, same tier as every other WMI read in this app; an empty list on a drive
             // the user believes is protected is itself the finding, per this item's brief.
+            errors?.Add($"SystemRestore WMI query: {ex.Message}");
         }
         return result.OrderByDescending(r => r.CreationTime ?? DateTime.MinValue).ToList();
     }
@@ -655,11 +681,11 @@ public static class VssService
     private static readonly Regex ProviderIdRegex = new(@"Provider Id:\s*(\{[0-9a-fA-F-]+\})", RegexOptions.Compiled);
     private static readonly Regex ProviderVersionRegex = new(@"Version:\s*(.+)", RegexOptions.Compiled);
 
-    public static async Task<List<VssProviderInfo>> ReadProvidersAsync()
+    public static async Task<List<VssProviderInfo>> ReadProvidersAsync(ICollection<string>? errors = null)
     {
         var result = new List<VssProviderInfo>();
         string output = await RunVssAdminAsync("list providers");
-        if (output.Length == 0) return result;
+        if (output.Length == 0) { NoteReadFailure(errors, "list providers", output, 0); return result; }
 
         VssProviderInfo? current = null;
         foreach (var rawLine in output.Split('\n'))
@@ -686,6 +712,7 @@ public static class VssService
         }
         if (current is not null) result.Add(current);
 
+        NoteReadFailure(errors, "list providers", output, result.Count);
         return result;
     }
 }

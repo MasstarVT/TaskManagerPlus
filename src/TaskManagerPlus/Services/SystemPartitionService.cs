@@ -100,10 +100,12 @@ public static class SystemPartitionService
     {
         var result = new List<DiskPartitionInfo>();
         using var searcher = new ManagementObjectSearcher(StorageNamespace,
-            $"SELECT DiskNumber, PartitionNumber, DriveLetter, Size, Offset, GptType, Type, IsBoot, IsHidden, IsActive FROM MSFT_Partition WHERE DiskNumber={diskNumber}");
+            $"SELECT DiskNumber, PartitionNumber, DriveLetter, Size, Offset, GptType, MbrType, IsBoot, IsHidden, IsActive FROM MSFT_Partition WHERE DiskNumber={diskNumber}");
         foreach (ManagementObject mo in searcher.Get())
         {
             char? letter = mo["DriveLetter"] is char c && c != '\0' ? c : null;
+            string gptType = (mo["GptType"] as string ?? string.Empty).Trim();
+            int? mbrType = mo["MbrType"] is null ? null : TryInt(mo["MbrType"]);
 
             result.Add(new DiskPartitionInfo
             {
@@ -112,14 +114,47 @@ public static class SystemPartitionService
                 DriveLetter = letter,
                 SizeBytes = TryLong(mo["Size"]),
                 OffsetBytes = TryLong(mo["Offset"]),
-                GptType = (mo["GptType"] as string ?? string.Empty).Trim(),
-                TypeFriendlyName = (mo["Type"] as string ?? string.Empty).Trim(),
+                GptType = gptType,
+                TypeFriendlyName = PartitionTypeName(gptType, mbrType),
                 IsBoot = mo["IsBoot"] is bool b && b,
                 IsHidden = mo["IsHidden"] is bool h && h,
                 IsActive = mo["IsActive"] is bool a && a,
             });
         }
         return result;
+    }
+
+    /// <summary>MSFT_Partition has no friendly Type property (Get-Partition's "Type" column is
+    /// computed by PowerShell), so the label is derived from GptType/MbrType here - the same
+    /// names Get-Partition shows. Empty for a type not in this short list (the role label then
+    /// reads "Unknown").</summary>
+    private static string PartitionTypeName(string gptType, int? mbrType)
+    {
+        if (gptType.Length > 0)
+        {
+            return gptType.ToLowerInvariant() switch
+            {
+                DiskPartitionInfo.EspGptType => "System",
+                DiskPartitionInfo.MsrGptType => "Reserved",
+                DiskPartitionInfo.BasicDataGptType => "Basic",
+                DiskPartitionInfo.RecoveryGptType => "Recovery",
+                "{e75caf8f-f680-4cee-afa3-b001e56efc2d}" => "Storage Spaces",
+                "{5808c8aa-7e8f-42e0-85d2-e1e90434cfb3}" => "LDM metadata",
+                "{af9b60a0-1431-4f62-bc68-3311714a69ad}" => "LDM data",
+                _ => string.Empty,
+            };
+        }
+
+        return mbrType switch
+        {
+            0x07 => "IFS",
+            0x0B or 0x0C => "FAT32",
+            0x01 or 0x04 or 0x06 or 0x0E => "FAT",
+            0x05 or 0x0F => "Extended",
+            0x27 => "Recovery",
+            0x42 => "Dynamic",
+            _ => string.Empty,
+        };
     }
 
     private static int TryInt(object? v) { try { return Convert.ToInt32(v ?? 0); } catch { return 0; } }
@@ -173,7 +208,7 @@ public static class SystemPartitionService
             {
                 string objectId = (string)part["ObjectId"];
                 using var volSearcher = new ManagementObjectSearcher(StorageNamespace,
-                    $"ASSOCIATORS OF {{MSFT_Partition.ObjectId='{EscapeWmiPath(objectId)}'}} WHERE AssocClass=MSFT_PartitionToVolume");
+                    $"ASSOCIATORS OF {{MSFT_Partition.ObjectId={QuoteWmiKey(objectId)}}} WHERE AssocClass=MSFT_PartitionToVolume");
                 foreach (ManagementObject vol in volSearcher.Get())
                 {
                     if (vol["Path"] is string path && !string.IsNullOrWhiteSpace(path)) return path;
@@ -184,7 +219,9 @@ public static class SystemPartitionService
         return null;
     }
 
-    private static string EscapeWmiPath(string objectId) => objectId.Replace(@"\", @"\\").Replace("\"", "\\\"");
+    // MSFT ObjectIds embed double quotes, so the key must be double-quoted (as in the object's own
+    // __RELPATH) - a single-quoted key fails with "Invalid query".
+    private static string QuoteWmiKey(string objectId) => "\"" + objectId.Replace(@"\", @"\\").Replace("\"", "\\\"") + "\"";
 
     /// <summary>Picks an unused drive letter (Z downward, to avoid colliding with letters already
     /// in everyday use), mounts via <paramref name="buildMountArgs"/>, measures free space, and

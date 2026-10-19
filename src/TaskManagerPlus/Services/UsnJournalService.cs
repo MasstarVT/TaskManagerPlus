@@ -157,18 +157,81 @@ public static class UsnJournalService
         // below it. Starting under FirstUsn fails the read (ERROR_JOURNAL_ENTRY_DELETED), so floor
         // at whichever of the two is higher.
         ulong lowest = Math.Max(status.FirstUsn ?? 0, status.LowestValidUsn ?? 0);
-        ulong startUsn = nextUsn > lowest + HotSpotLookbackBytes ? nextUsn - HotSpotLookbackBytes : lowest;
+        // startUsn has to be the start of a record - an arbitrary mid-journal value fails the whole
+        // read with "Error 87: The parameter is incorrect". NTFS packs records into 4 KB journal
+        // pages, so a page boundary is tried first; if that read still fails without a single
+        // record, it's retried from the oldest record (slower, but always a valid start).
+        ulong startUsn = nextUsn > lowest + HotSpotLookbackBytes
+            ? Math.Max(lowest, (nextUsn - HotSpotLookbackBytes) & ~0xFFFUL)
+            : lowest;
 
         var cutoff = DateTime.Now.AddMinutes(-Math.Max(1, minutes));
-        var byFile = new Dictionary<string, HotSpotAccumulator>(StringComparer.OrdinalIgnoreCase);
-        int parsedRecords = 0;
-        int unparsedTimestamps = 0;
-        int inWindow = 0;
-        bool timedOut = false;
-        bool capped = false;
+        var read = await ReadJournalWindowAsync(driveLetter, startUsn, cutoff);
+        if (read.ParsedRecords == 0 && !read.TimedOut && startUsn > lowest)
+            read = await ReadJournalWindowAsync(driveLetter, lowest, cutoff);
+
+        if (read.ParsedRecords == 0)
+        {
+            string detail = read.ErrorText;
+            if (detail.Length > 0 || read.ExitCode is not (null or 0))
+                return new UsnHotSpotResult { StatusText = detail.Length > 0 ? $"Failed: {detail}" : $"Failed: fsutil exited with code {read.ExitCode}." };
+        }
+
+        if (read.InWindow == 0 && read.UnparsedTimestamps > 0)
+            return new UsnHotSpotResult { StatusText = $"Read {read.ParsedRecords:N0} USN record(s) on {driveLetter}: but couldn't interpret {read.UnparsedTimestamps:N0} of their timestamps in this system's date format, so the {minutes}-minute window couldn't be applied." };
+
+        var top = read.ByFile.Values
+            .OrderByDescending(a => a.Count)
+            .Take(HotSpotTopN)
+            .Select(a => new UsnHotSpotRow
+            {
+                FileName = a.FileName,
+                ChangeCount = a.Count,
+                ParentFrnText = $"Folder ref 0x{a.ParentFrn:X16}",
+                ReasonBreakdownText = a.BreakdownText(),
+            })
+            .ToList();
+
+        string note = read.TimedOut
+            ? $" (stopped after {HotSpotReadTimeoutMs / 1000}s to bound the read - this reflects a partial scan, not the full window)"
+            : read.Capped
+                ? $" (stopped tallying after the window's first {HotSpotMaxRecordsScanned:N0} records to bound memory use - this reflects a partial scan, not the full window)"
+                : string.Empty;
+
+        return new UsnHotSpotResult
+        {
+            Rows = top,
+            StatusText = top.Count == 0
+                ? $"No USN activity found on {driveLetter}: in the last {minutes} minute(s){note}."
+                : $"{read.InWindow:N0} change record(s) in the last {minutes} minute(s) - top {top.Count} file(s) by change count shown{note}.",
+        };
+    }
+
+    /// <summary>Tallies from one `fsutil usn readjournal` pass.</summary>
+    private sealed class HotSpotRead
+    {
+        public readonly Dictionary<string, HotSpotAccumulator> ByFile = new(StringComparer.OrdinalIgnoreCase);
+        public int ParsedRecords;
+        public int UnparsedTimestamps;
+        public int InWindow;
+        public bool TimedOut;
+        public bool Capped;
+        public int? ExitCode;
+        /// <summary>stderr, else fsutil's own "Error N: ..." lines, else the last few other
+        /// non-record lines - empty when nothing looked like an error.</summary>
+        public string ErrorText = string.Empty;
+    }
+
+    private static async Task<HotSpotRead> ReadJournalWindowAsync(string driveLetter, ulong startUsn, DateTime cutoff)
+    {
+        var read = new HotSpotRead();
+        var byFile = read.ByFile;
         var errorBuilder = new StringBuilder();
-        // fsutil reports failures ("Error 5: Access is denied.") on stdout, not stderr.
-        var nonRecordLines = new List<string>();
+        // fsutil reports failures ("Error 5: Access is denied.") on stdout, not stderr - after its
+        // six-line "USN Journal ID / First USN / ..." header, so error lines are kept apart from
+        // the header lines rather than sharing one small cap with them.
+        var errorLines = new List<string>();
+        var otherLines = new Queue<string>();
 
         var psi = new ProcessStartInfo("fsutil.exe", $"usn readjournal {driveLetter}: csv startUsn=0x{startUsn:X}")
         {
@@ -183,7 +246,7 @@ public static class UsnJournalService
         void HandleOutput(object? sender, DataReceivedEventArgs e)
         {
             if (e.Data is null) return;
-            if (capped) return;
+            if (read.Capped) return;
 
             var rec = ParseCsvLine(e.Data);
             if (rec is null)
@@ -191,21 +254,31 @@ public static class UsnJournalService
                 // Header row, a record shape without a file name, or an error message. Only the
                 // last kind doesn't start with a USN number.
                 string text = e.Data.Trim();
-                if (text.Length > 0 && !char.IsDigit(text[0]) && !text.StartsWith("Usn,", StringComparison.OrdinalIgnoreCase) && nonRecordLines.Count < 3)
-                    nonRecordLines.Add(text);
+                if (text.Length > 0 && !char.IsDigit(text[0]) && !text.StartsWith("Usn,", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (text.StartsWith("Error", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (errorLines.Count < 3) errorLines.Add(text);
+                    }
+                    else
+                    {
+                        otherLines.Enqueue(text);
+                        if (otherLines.Count > 3) otherLines.Dequeue();
+                    }
+                }
                 return;
             }
-            parsedRecords++;
+            read.ParsedRecords++;
 
             // A record whose time can't be read can't be placed in the window - counted, not
             // silently treated as recent.
-            if (rec.Value.Timestamp is not { } ts) { unparsedTimestamps++; return; }
+            if (rec.Value.Timestamp is not { } ts) { read.UnparsedTimestamps++; return; }
 
             // The journal reads oldest-first, so the in-window records are the last ones out;
             // only those count against the cap, or a long pre-window run would use it all up.
             if (ts < cutoff) return; // outside the requested window
-            if (inWindow >= HotSpotMaxRecordsScanned) { capped = true; return; }
-            inWindow++;
+            if (read.InWindow >= HotSpotMaxRecordsScanned) { read.Capped = true; return; }
+            read.InWindow++;
 
             if (!byFile.TryGetValue(rec.Value.FileName, out var acc))
                 byFile[rec.Value.FileName] = acc = new HotSpotAccumulator { FileName = rec.Value.FileName };
@@ -218,7 +291,10 @@ public static class UsnJournalService
         proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) errorBuilder.AppendLine(e.Data); };
 
         if (!proc.Start())
-            return new UsnHotSpotResult { StatusText = "Couldn't start fsutil.exe." };
+        {
+            read.ErrorText = "Couldn't start fsutil.exe.";
+            return read;
+        }
 
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
@@ -230,7 +306,7 @@ public static class UsnJournalService
         }
         catch (OperationCanceledException)
         {
-            timedOut = true;
+            read.TimedOut = true;
         }
         finally
         {
@@ -241,12 +317,12 @@ public static class UsnJournalService
         }
 
         // #1044: after a timeout Kill, the async OutputDataReceived callbacks are still draining
-        // already-buffered lines - and mutating byFile - so enumerating it below would race them
-        // (InvalidOperationException, or silently corrupted tallies) on exactly the large-journal
-        // busy-volume case the timeout exists for. A second, short-bounded WaitForExitAsync on the
-        // now-killed process also awaits the redirected streams' EOF, i.e. every pending callback
-        // has been raised by the time it completes; if even that doesn't finish, cancel the async
-        // reads outright as a last resort before touching byFile.
+        // already-buffered lines - and mutating byFile - so enumerating it afterwards would race
+        // them (InvalidOperationException, or silently corrupted tallies) on exactly the
+        // large-journal busy-volume case the timeout exists for. A second, short-bounded
+        // WaitForExitAsync on the now-killed process also awaits the redirected streams' EOF, i.e.
+        // every pending callback has been raised by the time it completes; if even that doesn't
+        // finish, cancel the async reads outright as a last resort before touching byFile.
         try
         {
             using var drainCts = new CancellationTokenSource(5000);
@@ -258,44 +334,13 @@ public static class UsnJournalService
             try { proc.CancelErrorRead(); } catch { /* best-effort */ }
         }
 
-        if (parsedRecords == 0)
-        {
-            string detail = errorBuilder.ToString().Trim();
-            if (detail.Length == 0) detail = string.Join(" ", nonRecordLines);
-            int? exitCode = null;
-            if (!timedOut) { try { exitCode = proc.ExitCode; } catch { /* leave null */ } }
-            if (detail.Length > 0 || exitCode is not (null or 0))
-                return new UsnHotSpotResult { StatusText = detail.Length > 0 ? $"Failed: {detail}" : $"Failed: fsutil exited with code {exitCode}." };
-        }
+        if (!read.TimedOut) { try { read.ExitCode = proc.ExitCode; } catch { /* leave null */ } }
 
-        if (inWindow == 0 && unparsedTimestamps > 0)
-            return new UsnHotSpotResult { StatusText = $"Read {parsedRecords:N0} USN record(s) on {driveLetter}: but couldn't interpret {unparsedTimestamps:N0} of their timestamps in this system's date format, so the {minutes}-minute window couldn't be applied." };
-
-        var top = byFile.Values
-            .OrderByDescending(a => a.Count)
-            .Take(HotSpotTopN)
-            .Select(a => new UsnHotSpotRow
-            {
-                FileName = a.FileName,
-                ChangeCount = a.Count,
-                ParentFrnText = $"Folder ref 0x{a.ParentFrn:X16}",
-                ReasonBreakdownText = a.BreakdownText(),
-            })
-            .ToList();
-
-        string note = timedOut
-            ? $" (stopped after {HotSpotReadTimeoutMs / 1000}s to bound the read - this reflects a partial scan, not the full window)"
-            : capped
-                ? $" (stopped tallying after the window's first {HotSpotMaxRecordsScanned:N0} records to bound memory use - this reflects a partial scan, not the full window)"
-                : string.Empty;
-
-        return new UsnHotSpotResult
-        {
-            Rows = top,
-            StatusText = top.Count == 0
-                ? $"No USN activity found on {driveLetter}: in the last {minutes} minute(s){note}."
-                : $"{inWindow:N0} change record(s) in the last {minutes} minute(s) - top {top.Count} file(s) by change count shown{note}.",
-        };
+        string detail = errorBuilder.ToString().Trim();
+        if (detail.Length == 0) detail = string.Join(" ", errorLines);
+        if (detail.Length == 0 && read.ExitCode is not (null or 0)) detail = string.Join(" ", otherLines);
+        read.ErrorText = detail;
+        return read;
     }
 
     /// <summary>One row's running tally across a #347 read. FileName is the changed file's own name

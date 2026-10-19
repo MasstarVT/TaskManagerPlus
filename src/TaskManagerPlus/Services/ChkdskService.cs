@@ -33,8 +33,10 @@ public static class ChkdskService
     /// cancelling <paramref name="token"/> kills the process rather than waiting for it to finish.
     /// <paramref name="onLine"/> is invoked on a background thread-pool thread (the Process class's
     /// own async-read callback thread), same as SurfaceScanService/FileVerificationService's
-    /// progress callbacks - the caller (StorageViewModel) marshals to the UI thread itself.</summary>
-    public static async Task<(bool ProblemsFound, string Verdict)> RunOnlineScanAsync(string driveLetter, Action<string> onLine, CancellationToken token)
+    /// progress callbacks - the caller (StorageViewModel) marshals to the UI thread itself.
+    /// Completed is false when chkdsk exited non-zero without a recognizable verdict (a non-NTFS
+    /// volume, access denied, a volume it couldn't lock) - that's a failed run, not a clean scan.</summary>
+    public static async Task<(bool Completed, bool ProblemsFound, string Verdict)> RunOnlineScanAsync(string driveLetter, Action<string> onLine, CancellationToken token)
     {
         var psi = new ProcessStartInfo("chkdsk.exe", $"{driveLetter}: /scan")
         {
@@ -58,7 +60,7 @@ public static class ChkdskService
         proc.ErrorDataReceived += Handle;
 
         if (!proc.Start())
-            return (false, "Couldn't start chkdsk.exe.");
+            return (false, false, "Couldn't start chkdsk.exe.");
 
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
@@ -76,7 +78,9 @@ public static class ChkdskService
             throw;
         }
 
-        return ParseScanVerdict(buffer.ToString());
+        int exitCode;
+        try { exitCode = proc.ExitCode; } catch { exitCode = -1; }
+        return ParseScanVerdict(buffer.ToString(), exitCode);
     }
 
     private static readonly Regex ScanBadSectorsKbRegex = new(@"(\d[\d,]*)\s*KB in bad sectors", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -84,23 +88,29 @@ public static class ChkdskService
     /// <summary>chkdsk's own console wording for a clean /scan varies slightly across Windows
     /// versions ("found no problems" / "found no further problems") - checked first since it's the
     /// unambiguous common case; a bad-sectors KB figure or "found problems" wording otherwise marks
-    /// a real finding. Falls back to a stated "no clear verdict text found" rather than guessing
-    /// either way when neither pattern matches.</summary>
-    private static (bool ProblemsFound, string Verdict) ParseScanVerdict(string output)
+    /// a real finding. With neither, chkdsk's documented exit code decides: 0 (no errors) and 1
+    /// (errors found and fixed) are completed scans; anything else is reported as a failed run,
+    /// never as a clean one.</summary>
+    private static (bool Completed, bool ProblemsFound, string Verdict) ParseScanVerdict(string output, int exitCode)
     {
         if (output.Contains("found no problems", StringComparison.OrdinalIgnoreCase) ||
             output.Contains("found no further problems", StringComparison.OrdinalIgnoreCase))
-            return (false, "Windows scanned the file system and found no problems.");
+            return (true, false, "Windows scanned the file system and found no problems.");
 
         var kbMatch = ScanBadSectorsKbRegex.Match(output);
         if (kbMatch.Success)
-            return (true, $"Problems found - {kbMatch.Groups[1].Value} KB in bad sectors (see the log above for detail).");
+            return (true, true, $"Problems found - {kbMatch.Groups[1].Value} KB in bad sectors (see the log above for detail).");
 
         if (output.Contains("found problems", StringComparison.OrdinalIgnoreCase) ||
             output.Contains("has made corrections", StringComparison.OrdinalIgnoreCase))
-            return (true, "Problems found - see the log above for detail.");
+            return (true, true, "Problems found - see the log above for detail.");
 
-        return (false, "Scan completed - no clear verdict text was found in the output; see the log above.");
+        return exitCode switch
+        {
+            0 => (true, false, "Scan completed (chkdsk exit code 0: no errors found) - no verdict line was recognized in the output; see the log above."),
+            1 => (true, true, "Scan completed (chkdsk exit code 1: errors were found and fixed) - see the log above."),
+            _ => (false, false, $"chkdsk exited with code {exitCode} without a scan verdict - the volume couldn't be checked (/scan only supports NTFS); see the log above."),
+        };
     }
 
     // ================================================================================
@@ -120,7 +130,24 @@ public static class ChkdskService
             {
                 var json = File.ReadAllText(HistoryPath);
                 var entries = JsonSerializer.Deserialize<List<ChkdskScanRecord>>(json);
-                if (entries is not null) return entries;
+                // Valid JSON can still carry null rows or null strings (explicit nulls replace
+                // the initializers) - drop/normalize them so no consumer dereferences a null.
+                if (entries is not null)
+                {
+                    return entries
+                        .Where(e => e is not null && !string.IsNullOrWhiteSpace(e.DriveLetter))
+                        .Select(e => e.Source is null || e.Summary is null
+                            ? new ChkdskScanRecord
+                            {
+                                DriveLetter = e.DriveLetter,
+                                Timestamp = e.Timestamp,
+                                Source = e.Source ?? string.Empty,
+                                ProblemsFound = e.ProblemsFound,
+                                Summary = e.Summary ?? string.Empty,
+                            }
+                            : e)
+                        .ToList();
+                }
             }
         }
         catch

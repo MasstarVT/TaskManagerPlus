@@ -150,7 +150,7 @@ public static class StorageSpacesService
     {
         try
         {
-            using var vdisk = new ManagementObject(@"root\Microsoft\Windows\Storage", $"MSFT_VirtualDisk.ObjectId='{EscapeWmiPath(virtualDiskObjectId)}'", null);
+            using var vdisk = new ManagementObject(@"root\Microsoft\Windows\Storage", $"MSFT_VirtualDisk.ObjectId={QuoteWmiKey(virtualDiskObjectId)}", null);
             vdisk.Get();
 
             var inParams = vdisk.GetMethodParameters("Repair");
@@ -196,7 +196,7 @@ public static class StorageSpacesService
         {
             using var searcher = new ManagementObjectSearcher(
                 @"root\Microsoft\Windows\Storage",
-                $"ASSOCIATORS OF {{MSFT_StoragePool.ObjectId='{EscapeWmiPath(poolObjectId)}'}} WHERE AssocClass=MSFT_StoragePoolToPhysicalDisk");
+                $"ASSOCIATORS OF {{MSFT_StoragePool.ObjectId={QuoteWmiKey(poolObjectId)}}} WHERE AssocClass=MSFT_StoragePoolToPhysicalDisk");
             foreach (ManagementObject phys in searcher.Get())
             {
                 string name = (phys["FriendlyName"] as string ?? "Physical disk").Trim();
@@ -240,7 +240,7 @@ public static class StorageSpacesService
         {
             using var searcher = new ManagementObjectSearcher(
                 @"root\Microsoft\Windows\Storage",
-                $"ASSOCIATORS OF {{MSFT_VirtualDisk.ObjectId='{EscapeWmiPath(vdiskObjectId)}'}} WHERE AssocClass=MSFT_StorageJobToAffectedStorageObject");
+                $"ASSOCIATORS OF {{MSFT_VirtualDisk.ObjectId={QuoteWmiKey(vdiskObjectId)}}} WHERE AssocClass=MSFT_StorageJobToAffectedStorageObject");
             foreach (ManagementObject job in searcher.Get())
             {
                 string name = (job["Name"] as string ?? "Storage job").Trim();
@@ -285,7 +285,7 @@ public static class StorageSpacesService
     {
         try
         {
-            using var pool = new ManagementObject(@"root\Microsoft\Windows\Storage", $"MSFT_StoragePool.ObjectId='{EscapeWmiPath(poolObjectId)}'", null);
+            using var pool = new ManagementObject(@"root\Microsoft\Windows\Storage", $"MSFT_StoragePool.ObjectId={QuoteWmiKey(poolObjectId)}", null);
             pool.Get();
             long size = 0, allocated = 0;
             try { size = Convert.ToInt64(pool["Size"] ?? 0L); } catch { /* leave 0 */ }
@@ -333,7 +333,7 @@ public static class StorageSpacesService
         {
             using var pools = new ManagementObjectSearcher(
                 @"root\Microsoft\Windows\Storage",
-                $"ASSOCIATORS OF {{MSFT_VirtualDisk.ObjectId='{EscapeWmiPath((string)vdisk["ObjectId"])}'}} WHERE AssocClass=MSFT_StoragePoolToVirtualDisk");
+                $"ASSOCIATORS OF {{MSFT_VirtualDisk.ObjectId={QuoteWmiKey((string)vdisk["ObjectId"])}}} WHERE AssocClass=MSFT_StoragePoolToVirtualDisk");
             foreach (ManagementObject pool in pools.Get())
                 return (pool["FriendlyName"] as string ?? string.Empty).Trim();
         }
@@ -347,7 +347,7 @@ public static class StorageSpacesService
         {
             using var pools = new ManagementObjectSearcher(
                 @"root\Microsoft\Windows\Storage",
-                $"ASSOCIATORS OF {{MSFT_VirtualDisk.ObjectId='{EscapeWmiPath((string)vdisk["ObjectId"])}'}} WHERE AssocClass=MSFT_StoragePoolToVirtualDisk");
+                $"ASSOCIATORS OF {{MSFT_VirtualDisk.ObjectId={QuoteWmiKey((string)vdisk["ObjectId"])}}} WHERE AssocClass=MSFT_StoragePoolToVirtualDisk");
             foreach (ManagementObject pool in pools.Get())
                 return pool["ObjectId"] as string;
         }
@@ -355,7 +355,9 @@ public static class StorageSpacesService
         return null;
     }
 
-    private static string EscapeWmiPath(string objectId) => objectId.Replace(@"\", @"\\").Replace("\"", "\\\"");
+    // MSFT ObjectIds embed double quotes, so the key must be double-quoted (as in the object's own
+    // __RELPATH) - a single-quoted key fails with "Invalid query"/"Invalid parameter".
+    private static string QuoteWmiKey(string objectId) => "\"" + objectId.Replace(@"\", @"\\").Replace("\"", "\\\"") + "\"";
 
     // MSFT_VirtualDisk.HealthStatus / MSFT_StoragePool.HealthStatus documented enum (Storage
     // Management API) - both classes share the same 0/1/2/5 value map.

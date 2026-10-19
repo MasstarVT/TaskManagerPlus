@@ -27,7 +27,10 @@ public static class SmartHistoryService
             {
                 var json = File.ReadAllText(SettingsPath);
                 var entries = JsonSerializer.Deserialize<List<SmartHistoryEntry>>(json);
-                if (entries is not null) return entries;
+                // Valid JSON can still carry null rows or a null DiskKey (explicit null replaces
+                // the initializer) - drop them so the DiskKey lookups below can't throw.
+                if (entries is not null)
+                    return entries.Where(e => e is not null && !string.IsNullOrWhiteSpace(e.DiskKey)).ToList();
             }
         }
         catch
@@ -113,8 +116,8 @@ public static class SmartHistoryService
         string description = history.Count < 2
             ? $"{last.UdmaCrcErrors} UDMA CRC error(s) recorded - only one snapshot exists so far, so a rising-vs-static trend can't be judged yet. A static historical count usually doesn't indicate an active problem; a count that keeps climbing on future snapshots would."
             : rising
-                ? $"{last.UdmaCrcErrors} UDMA CRC error(s), up from {history[baselineIndex].UdmaCrcErrors} over the last {RecentCrcWindow.TotalDays:0} days of snapshots - a rising CRC count usually means the SATA cable/connector is failing right now, worth reseating or replacing the cable."
-                : $"{last.UdmaCrcErrors} UDMA CRC error(s), but this count hasn't risen over the last {RecentCrcWindow.TotalDays:0} days of snapshots (non-zero, not currently rising) - a static historical count usually doesn't indicate an active cable/connector problem, unlike a rising one.";
+                ? $"{last.UdmaCrcErrors} UDMA CRC error(s), up from {history[baselineIndex].UdmaCrcErrors} in the snapshot of {history[baselineIndex].Timestamp:d} - a rising CRC count usually means the SATA cable/connector is failing right now, worth reseating or replacing the cable."
+                : $"{last.UdmaCrcErrors} UDMA CRC error(s), but this count hasn't risen since the snapshot of {history[baselineIndex].Timestamp:d} (non-zero, not currently rising) - a static historical count usually doesn't indicate an active cable/connector problem, unlike a rising one.";
 
         return (true, rising, description);
     }

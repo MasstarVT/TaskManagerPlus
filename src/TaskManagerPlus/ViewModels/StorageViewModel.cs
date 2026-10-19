@@ -720,6 +720,12 @@ public sealed class StorageViewModel : ObservableObject
     // grows/shrinks on an actual transition, so it doesn't flicker every tick.
     public ObservableCollection<HealthIssue> DriveFailureAlerts { get; } = new();
     private readonly Dictionary<int, bool> _lastPredictFailure = new();
+    // Standing alert per disk index - keyed by index, not model text, so two disks of the same
+    // model don't clear each other's alert.
+    private readonly Dictionary<int, HealthIssue> _driveFailureAlertByIndex = new();
+    // False until the first failure-flag read (startup seed or first watch result) has recorded
+    // each disk's state - that read only records, it never toasts.
+    private bool _failureWatchSeeded;
     private int _failureWatchTickCounter;
     private bool _failureWatchRunning;
 
@@ -734,6 +740,7 @@ public sealed class StorageViewModel : ObservableObject
     private readonly ObservableCollection<double> _reallocatedHistory = new();
     private readonly ObservableCollection<double> _pendingHistory = new();
     public ISeries[] SmartTrendSeries { get; private set; } = Array.Empty<ISeries>();
+    public Axis[] SmartTrendHiddenXAxes { get; }
 
     private bool _showSmartTrendChart;
     public bool ShowSmartTrendChart { get => _showSmartTrendChart; private set => SetProperty(ref _showSmartTrendChart, value); }
@@ -1413,6 +1420,21 @@ public sealed class StorageViewModel : ObservableObject
     private string _vssStatusText = "Loading...";
     public string VssStatusText { get => _vssStatusText; private set => SetProperty(ref _vssStatusText, value); }
 
+    // True only once the matching read has completed and actually answered - the view shows a
+    // section's "none" line only then, never while loading or after a failed read.
+    private bool _vssEventsKnown;
+    public bool VssEventsKnown { get => _vssEventsKnown; private set => SetProperty(ref _vssEventsKnown, value); }
+    private bool _vssWritersKnown;
+    public bool VssWritersKnown { get => _vssWritersKnown; private set => SetProperty(ref _vssWritersKnown, value); }
+    private bool _vssShadowCopiesKnown;
+    public bool VssShadowCopiesKnown { get => _vssShadowCopiesKnown; private set => SetProperty(ref _vssShadowCopiesKnown, value); }
+    private bool _vssShadowStorageKnown;
+    public bool VssShadowStorageKnown { get => _vssShadowStorageKnown; private set => SetProperty(ref _vssShadowStorageKnown, value); }
+    private bool _vssProvidersKnown;
+    public bool VssProvidersKnown { get => _vssProvidersKnown; private set => SetProperty(ref _vssProvidersKnown, value); }
+    private bool _restorePointsKnown;
+    public bool RestorePointsKnown { get => _restorePointsKnown; private set => SetProperty(ref _restorePointsKnown, value); }
+
     public AsyncRelayCommand RefreshVssCommand { get; }
 
     // #397
@@ -1449,6 +1471,9 @@ public sealed class StorageViewModel : ObservableObject
         // history buffers) since this chart's series length is however many daily points are on
         // disk, not a fixed HistoryLength.
         FreeSpaceHiddenXAxes = new[] { new Axis { IsVisible = false, ShowSeparatorLines = false } };
+        // Same reason for the SMART trend chart: one point per recorded snapshot (up to 200), so
+        // it needs an auto-ranged axis, not Performance.HiddenXAxes' fixed 0..HistoryLength-1.
+        SmartTrendHiddenXAxes = new[] { new Axis { IsVisible = false, ShowSeparatorLines = false } };
 
         CheckFragmentationCommand = new AsyncRelayCommand(param => CheckFragmentationAsync(param as FragmentationRow));
         ReadSmartDetailsCommand = new AsyncRelayCommand(ReadSmartDetailsAsync, () => SelectedSmartDisk is not null);
@@ -1663,8 +1688,9 @@ public sealed class StorageViewModel : ObservableObject
                     var verdict = new DriveHealthVerdict { Index = index, Model = model };
                     ApplyBaseVerdictFacts(verdict, flag, poolsForVerdict);
                     DriveHealthVerdicts.Add(verdict);
-                    if (flag is not null) _lastPredictFailure[index] = flag.PredictFailure == true;
+                    if (flag is not null) _lastPredictFailure[index] = IsDriveFailing(flag);
                 }
+                _failureWatchSeeded = true;
             });
         });
 
@@ -1753,30 +1779,42 @@ public sealed class StorageViewModel : ObservableObject
         });
     }
 
+    // The one "is this disk failing" predicate - shared by the startup seed and the live watch so
+    // the seed never records "fine" for a disk the watch then sees as failing.
+    private static bool IsDriveFailing(DiskFailureFlag flag) =>
+        flag.PredictFailure == true || string.Equals(flag.DriverHealthStatus, "Unhealthy", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>#324: on a false->true transition, fires a tray toast and adds a persistent
     /// Summary-tab HealthIssue; on a true->false transition (recovered, or the drive was replaced),
     /// clears any standing alert for that disk so the Summary tab doesn't keep showing a resolved
     /// warning forever.</summary>
     private void ApplyFailureWatch(List<DiskFailureFlag> flags)
     {
+        // A watch result that lands before the startup seed is the first observation, not a
+        // transition - record it silently, same as the seed would.
+        bool seeding = !_failureWatchSeeded;
+        _failureWatchSeeded = true;
+
         foreach (var flag in flags)
         {
-            bool nowFailing = flag.PredictFailure == true || string.Equals(flag.DriverHealthStatus, "Unhealthy", StringComparison.OrdinalIgnoreCase);
+            bool nowFailing = IsDriveFailing(flag);
             bool wasFailing = _lastPredictFailure.TryGetValue(flag.Index, out var prev) && prev;
             _lastPredictFailure[flag.Index] = nowFailing;
 
             string model = SmartDiskOptions.FirstOrDefault(d => d.Index == flag.Index)?.Model ?? $"Disk {flag.Index}";
 
-            if (nowFailing && !wasFailing)
+            if (nowFailing && !wasFailing && !seeding)
             {
                 string message = $"{model} now shows a SMART failure prediction - back up its data soon.";
                 ToastService.Show("Drive failure predicted", message, isCritical: true);
-                DriveFailureAlerts.Add(new HealthIssue { Message = message, IsCritical = true });
+                if (_driveFailureAlertByIndex.Remove(flag.Index, out var stale)) DriveFailureAlerts.Remove(stale);
+                var alert = new HealthIssue { Message = message, IsCritical = true };
+                _driveFailureAlertByIndex[flag.Index] = alert;
+                DriveFailureAlerts.Add(alert);
             }
             else if (!nowFailing && wasFailing)
             {
-                var toRemove = DriveFailureAlerts.Where(i => i.Message.StartsWith(model, StringComparison.Ordinal)).ToList();
-                foreach (var i in toRemove) DriveFailureAlerts.Remove(i);
+                if (_driveFailureAlertByIndex.Remove(flag.Index, out var resolved)) DriveFailureAlerts.Remove(resolved);
             }
 
             // Keep the #328 verdict list's predicted-failure reason in sync with this same live watch.
@@ -2218,6 +2256,7 @@ public sealed class StorageViewModel : ObservableObject
         try
         {
             var (started, _, message) = await Task.Run(() => StorageSpacesService.RepairVirtualDisk(row.VirtualDiskObjectId));
+            JournalOneShotRun(row.VirtualDiskName, "Started a virtual disk repair", $"MSFT_VirtualDisk.Repair on '{row.VirtualDiskName}' (pool '{row.PoolName}')", started);
 
             if (started)
             {
@@ -2941,6 +2980,10 @@ public sealed class StorageViewModel : ObservableObject
 
         if (last.NvmePercentageUsed is { } usedNow && first.NvmePercentageUsed is { } usedFirst)
         {
+            // Percentage Used legitimately exceeds 100 (the NVMe spec allows up to 255) - there's
+            // no future date to project once the rated endurance is already used up.
+            if (usedNow >= 100)
+                return $"This drive reports {usedNow}% Percentage Used - already at or past its rated write endurance, so there's no future wear-out date to project. It can keep working past 100%, but keep backups current.";
             double usedPerDay = (usedNow - usedFirst) / days;
             if (usedPerDay <= 0)
                 return "NVMe percentage-used hasn't increased across the recorded history - no meaningful wear-out date to project yet.";
@@ -2951,6 +2994,8 @@ public sealed class StorageViewModel : ObservableObject
 
         if (last.SataLifeLeftPercent is { } lifeNow && first.SataLifeLeftPercent is { } lifeFirst)
         {
+            if (lifeNow <= 0)
+                return "This drive reports 0% life left - already at its rated write endurance, so there's no future wear-out date to project. Keep backups current.";
             double lifePerDay = (lifeFirst - lifeNow) / days;
             if (lifePerDay <= 0)
                 return "SATA SSD life-left percentage hasn't decreased across the recorded history - no meaningful wear-out date to project yet.";
@@ -3017,16 +3062,18 @@ public sealed class StorageViewModel : ObservableObject
             int? pending = Find(SmartRawAttributes, 0xC5) is { } pa ? (int)pa.RawValue : null;
             int? offlineUncorr = Find(SmartRawAttributes, 0xC6) is { } oa ? (int)oa.RawValue : null;
 
-            var (chkdskKb, chkdskDate) = await Task.Run(() => BadSectorService.ReadLatestChkdskBadSectors());
-
-            // $BadClus is a volume-level figure - resolve the first fixed volume physically hosted
-            // on this disk, the same association ClusterMappingService's #335 lookup uses.
+            // chkdsk reports and $BadClus are both volume-level figures - resolve the first fixed
+            // volume physically hosted on this disk, the same association ClusterMappingService's
+            // #335 lookup uses, so another volume's chkdsk report is never shown for this disk.
             var volume = await Task.Run(() => ClusterMappingService.ResolveVolumeForDisk(disk.Index));
+            long? chkdskKb = null;
+            DateTime? chkdskDate = null;
             long? badClusBytes = null;
             string? badClusVolume = null;
             if (volume is { } v)
             {
-                badClusBytes = await BadSectorService.ReadBadClusAllocatedBytesAsync(v.DriveLetter);
+                (chkdskKb, chkdskDate) = await Task.Run(() => BadSectorService.ReadLatestChkdskBadSectors(v.DriveLetter));
+                badClusBytes = await BadSectorService.ReadBadClusAllocatedBytesAsync(v.DriveLetter, v.BytesPerCluster);
                 badClusVolume = $"{v.DriveLetter}:";
             }
 
@@ -3043,7 +3090,7 @@ public sealed class StorageViewModel : ObservableObject
             BadSectorSummary = summary;
 
             BadSectorStatusText = !summary.HasAnySource
-                ? "None of the three sources reported anything for this disk (SMART attributes weren't read yet, chkdsk has never logged a report, and $BadClus couldn't be read)."
+                ? "None of the three sources reported anything for this disk (SMART attributes weren't read yet, chkdsk has never logged a report for its volume, and $BadClus couldn't be read)."
                 : summary.SourcesDisagree
                     ? "These sources disagree about whether this disk/volume has bad sectors - shown as-is below, not silently reconciled."
                     : "All available sources checked.";
@@ -3400,6 +3447,7 @@ public sealed class StorageViewModel : ObservableObject
         {
             var (success, message) = await NtfsFilesystemService.ScheduleBootCheckAsync(row.DriveLetter);
             row.BootCheckActionStatusText = message;
+            JournalOneShotRun($"{row.DriveLetter}:", "Scheduled a boot-time chkdsk /f /r", $"chkdsk {row.DriveLetter}: /f /r", success);
             if (success) await RefreshRowBootCheckStatusAsync(row);
         }
         catch (Exception ex)
@@ -3423,6 +3471,7 @@ public sealed class StorageViewModel : ObservableObject
         {
             var (success, message) = await NtfsFilesystemService.CancelBootCheckAsync(row.DriveLetter);
             row.BootCheckActionStatusText = message;
+            JournalOneShotRun($"{row.DriveLetter}:", "Excluded the volume from the boot-time check", $"chkntfs /x {row.DriveLetter}:", success);
             if (success) await RefreshRowBootCheckStatusAsync(row);
         }
         catch (Exception ex)
@@ -3452,6 +3501,15 @@ public sealed class StorageViewModel : ObservableObject
         string? drive = SelectedChkdskVolume;
         if (drive is null || IsChkdskScanning) return;
 
+        // /scan is NTFS-only - chkdsk refuses it on FAT32/exFAT/ReFS, so don't run it there.
+        string? fileSystem = null;
+        try { fileSystem = new DriveInfo($"{drive}:").DriveFormat; } catch { /* not ready - let chkdsk report it */ }
+        if (fileSystem is not null && !fileSystem.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
+        {
+            ChkdskScanStatusText = $"chkdsk /scan only works on NTFS volumes - {drive}: is {fileSystem}. Nothing was run.";
+            return;
+        }
+
         _chkdskScanCts = new CancellationTokenSource();
         var token = _chkdskScanCts.Token;
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
@@ -3462,7 +3520,7 @@ public sealed class StorageViewModel : ObservableObject
         var logBuilder = new System.Text.StringBuilder();
         try
         {
-            var (problemsFound, verdict) = await ChkdskService.RunOnlineScanAsync(drive, line =>
+            var (completed, problemsFound, verdict) = await ChkdskService.RunOnlineScanAsync(drive, line =>
             {
                 dispatcher?.Invoke(() =>
                 {
@@ -3473,16 +3531,21 @@ public sealed class StorageViewModel : ObservableObject
 
             ChkdskScanStatusText = verdict;
 
-            ChkdskService.AppendScanRecord(new ChkdskScanRecord
+            // A run that couldn't check the volume isn't a scan result - recording it would show
+            // up as "no problems found" in the last-scanned line.
+            if (completed)
             {
-                DriveLetter = drive,
-                Timestamp = DateTime.Now,
-                Source = "Online scan (/scan)",
-                ProblemsFound = problemsFound,
-                Summary = verdict,
-            });
-            UpdateChkdskLastScanText(drive);
-            JournalOneShotRun($"{drive}:", "Ran chkdsk /scan (online repair)", $"chkdsk {drive}: /scan", success: true);
+                ChkdskService.AppendScanRecord(new ChkdskScanRecord
+                {
+                    DriveLetter = drive,
+                    Timestamp = DateTime.Now,
+                    Source = "Online scan (/scan)",
+                    ProblemsFound = problemsFound,
+                    Summary = verdict,
+                });
+                UpdateChkdskLastScanText(drive);
+            }
+            JournalOneShotRun($"{drive}:", "Ran chkdsk /scan (online repair)", $"chkdsk {drive}: /scan", success: completed);
         }
         catch (OperationCanceledException)
         {
@@ -3762,7 +3825,7 @@ public sealed class StorageViewModel : ObservableObject
             {
                 var stats = await NtfsFilesystemService.ReadMetadataStatisticsAsync(drive);
                 var now = DateTime.UtcNow;
-                System.Windows.Application.Current?.Dispatcher.Invoke(() => ApplyNtfsActivitySample(stats, now));
+                System.Windows.Application.Current?.Dispatcher.Invoke(() => ApplyNtfsActivitySample(drive, stats, now));
             }
             finally
             {
@@ -3771,8 +3834,12 @@ public sealed class StorageViewModel : ObservableObject
         });
     }
 
-    private void ApplyNtfsActivitySample(NtfsMetadataStatistics stats, DateTime now)
+    private void ApplyNtfsActivitySample(string drive, NtfsMetadataStatistics stats, DateTime now)
     {
+        // A read that was in flight when the drive picker changed belongs to the old drive - using
+        // it as the new drive's baseline would produce one bogus rate.
+        if (!string.Equals(drive, SelectedNtfsActivityDrive, StringComparison.OrdinalIgnoreCase)) return;
+
         if (!stats.Available)
         {
             NtfsActivityStatusText = $"Unavailable: {stats.UnavailableReason}";
@@ -4590,14 +4657,20 @@ public sealed class StorageViewModel : ObservableObject
     private async Task LoadVssAsync()
     {
         VssStatusText = "Loading...";
+        VssEventsKnown = VssWritersKnown = VssShadowCopiesKnown = VssShadowStorageKnown = VssProvidersKnown = RestorePointsKnown = false;
         try
         {
-            var writers = await VssService.ReadWritersAsync();
-            var shadows = await VssService.ReadShadowCopiesAsync();
-            var shadowStorage = await VssService.ReadShadowStorageAsync();
-            var providers = await VssService.ReadProvidersAsync();
+            var writerErrors = new List<string>();
+            var shadowErrors = new List<string>();
+            var storageErrors = new List<string>();
+            var providerErrors = new List<string>();
+            var restorePointErrors = new List<string>();
+            var writers = await VssService.ReadWritersAsync(writerErrors);
+            var shadows = await VssService.ReadShadowCopiesAsync(shadowErrors);
+            var shadowStorage = await VssService.ReadShadowStorageAsync(storageErrors);
+            var providers = await VssService.ReadProvidersAsync(providerErrors);
             var events = await Task.Run(VssService.ReadRelatedEvents);
-            var restorePoints = await Task.Run(VssService.ReadRestorePoints);
+            var restorePoints = await Task.Run(() => VssService.ReadRestorePoints(restorePointErrors));
             var systemProtection = await Task.Run(() => VssService.ReadSystemProtectionStatus(shadowStorage));
 
             VssWriters.Clear();
@@ -4621,9 +4694,18 @@ public sealed class StorageViewModel : ObservableObject
             SystemProtectionStatuses.Clear();
             foreach (var s in systemProtection) SystemProtectionStatuses.Add(s);
 
+            VssEventsKnown = true;
+            VssWritersKnown = writerErrors.Count == 0;
+            VssShadowCopiesKnown = shadowErrors.Count == 0;
+            VssShadowStorageKnown = storageErrors.Count == 0;
+            VssProvidersKnown = providerErrors.Count == 0;
+            RestorePointsKnown = restorePointErrors.Count == 0;
+
             int unhealthyWriters = writers.Count(w => !w.IsHealthy);
+            var readErrors = writerErrors.Concat(shadowErrors).Concat(storageErrors).Concat(providerErrors).Concat(restorePointErrors).ToList();
             VssStatusText = $"{writers.Count} writer(s) ({unhealthyWriters} not healthy) · {shadows.Count} shadow copy(ies) · " +
-                $"{providers.Count} provider(s) · {restorePoints.Count} restore point(s).";
+                $"{providers.Count} provider(s) · {restorePoints.Count} restore point(s)." +
+                (readErrors.Count > 0 ? $" Couldn't read (shown as unknown, not none): {string.Join("; ", readErrors)}" : string.Empty);
         }
         catch (Exception ex)
         {
@@ -4681,9 +4763,11 @@ public sealed class StorageViewModel : ObservableObject
             row.ResizeStatusText = message;
             if (success)
             {
-                var refreshed = await VssService.ReadShadowStorageAsync();
+                var refreshErrors = new List<string>();
+                var refreshed = await VssService.ReadShadowStorageAsync(refreshErrors);
                 VssShadowStorage.Clear();
                 foreach (var s in refreshed) VssShadowStorage.Add(s);
+                VssShadowStorageKnown = refreshErrors.Count == 0;
             }
         }
         catch (Exception ex)
@@ -4709,9 +4793,11 @@ public sealed class StorageViewModel : ObservableObject
             int before = RestorePoints.Count;
             var (success, message) = await VssService.CreateRestorePointAsync(NewRestorePointDescription);
 
-            var refreshed = await Task.Run(VssService.ReadRestorePoints);
+            var refreshErrors = new List<string>();
+            var refreshed = await Task.Run(() => VssService.ReadRestorePoints(refreshErrors));
             RestorePoints.Clear();
             foreach (var r in refreshed) RestorePoints.Add(r);
+            RestorePointsKnown = refreshErrors.Count == 0;
 
             CreateRestorePointStatusText = success && refreshed.Count <= before
                 ? message + " No new restore point appeared in the list - Windows only allows one restore point per 24 hours by default " +

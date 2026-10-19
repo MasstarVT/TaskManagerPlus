@@ -49,7 +49,7 @@ public static class DiskLayoutService
             long partitionedBytes = 0;
             using var partSearcher = new ManagementObjectSearcher(
                 @"root\Microsoft\Windows\Storage",
-                $"ASSOCIATORS OF {{MSFT_Disk.ObjectId='{EscapeWmiPath(objectId)}'}} WHERE AssocClass=MSFT_DiskToPartition");
+                $"ASSOCIATORS OF {{MSFT_Disk.ObjectId={QuoteWmiKey(objectId)}}} WHERE AssocClass=MSFT_DiskToPartition");
             foreach (ManagementObject part in partSearcher.Get())
             {
                 int partNumber = part["PartitionNumber"] is null ? 0 : Convert.ToInt32(part["PartitionNumber"]);
@@ -68,7 +68,7 @@ public static class DiskLayoutService
                 });
             }
 
-            bool isSsd = ReadIsSsd(objectId);
+            bool isSsd = number >= 0 && ReadIsSsd(number);
 
             return new DiskLayoutInfo
             {
@@ -87,16 +87,17 @@ public static class DiskLayoutService
         }
     }
 
-    /// <summary>Same MSFT_Disk -&gt; MSFT_PhysicalDisk associator chain DiskFragmentationService
-    /// already uses for a drive letter - here starting from the disk's ObjectId directly since
-    /// #385 already has the MSFT_Disk row in hand.</summary>
-    private static bool ReadIsSsd(string diskObjectId)
+    /// <summary>There is no MSFT_Disk -&gt; MSFT_PhysicalDisk association class, so this goes by
+    /// number: MSFT_Disk.Number is the PhysicalDriveN index, which MSFT_PhysicalDisk exposes as
+    /// DeviceId (same lookup DiskFragmentationService uses for a drive letter). False when it
+    /// can't be read - the model labels that "HDD/Unknown", not "HDD".</summary>
+    private static bool ReadIsSsd(int diskNumber)
     {
         try
         {
             using var physSearcher = new ManagementObjectSearcher(
                 @"root\Microsoft\Windows\Storage",
-                $"ASSOCIATORS OF {{MSFT_Disk.ObjectId='{EscapeWmiPath(diskObjectId)}'}} WHERE AssocClass=MSFT_DiskToPhysicalDisk");
+                $"SELECT MediaType FROM MSFT_PhysicalDisk WHERE DeviceId = '{diskNumber}'");
             foreach (ManagementObject phys in physSearcher.Get())
             {
                 if (phys["MediaType"] is null) continue;
@@ -107,5 +108,7 @@ public static class DiskLayoutService
         return false;
     }
 
-    private static string EscapeWmiPath(string objectId) => objectId.Replace(@"\", @"\\").Replace("\"", "\\\"");
+    // MSFT ObjectIds embed double quotes, so the key must be double-quoted (as in the object's own
+    // __RELPATH) - a single-quoted key fails with "Invalid query".
+    private static string QuoteWmiKey(string objectId) => "\"" + objectId.Replace(@"\", @"\\").Replace("\"", "\\\"") + "\"";
 }

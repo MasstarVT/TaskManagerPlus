@@ -18,7 +18,8 @@ public sealed class BadSectorSummary
     public long? BadClusAllocatedBytes { get; init; }
     public string? BadClusVolume { get; init; }
 
-    public bool HasAnySource => SmartReallocated.HasValue || SmartPending.HasValue || ChkdskBadSectorsKb.HasValue || BadClusAllocatedBytes.HasValue;
+    public bool HasAnySource => SmartReallocated.HasValue || SmartPending.HasValue || SmartOfflineUncorrectable.HasValue
+        || ChkdskBadSectorsKb.HasValue || BadClusAllocatedBytes.HasValue;
 
     /// <summary>True when at least two of the available sources disagree about "is there a problem
     /// at all" (one reports zero, another reports non-zero) - surfaced as a plain fact in the UI
@@ -28,8 +29,8 @@ public sealed class BadSectorSummary
         get
         {
             var verdicts = new List<bool>();
-            if (SmartReallocated.HasValue || SmartPending.HasValue)
-                verdicts.Add((SmartReallocated ?? 0) > 0 || (SmartPending ?? 0) > 0);
+            if (SmartReallocated.HasValue || SmartPending.HasValue || SmartOfflineUncorrectable.HasValue)
+                verdicts.Add((SmartReallocated ?? 0) > 0 || (SmartPending ?? 0) > 0 || (SmartOfflineUncorrectable ?? 0) > 0);
             if (ChkdskBadSectorsKb.HasValue) verdicts.Add(ChkdskBadSectorsKb.Value > 0);
             if (BadClusAllocatedBytes.HasValue) verdicts.Add(BadClusAllocatedBytes.Value > 0);
             return verdicts.Count >= 2 && verdicts.Distinct().Count() > 1;

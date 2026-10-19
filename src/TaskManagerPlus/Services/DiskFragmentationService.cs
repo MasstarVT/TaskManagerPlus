@@ -7,9 +7,8 @@ namespace TaskManagerPlus.Services;
 /// <summary>
 /// HDD fragmentation indicator (#86) - not relevant for SSDs (which don't fragment in any way
 /// that matters, and defrag.exe itself just runs a TRIM/optimize pass on one instead), so this is
-/// scoped to spinning-disk volumes only, detected via the same MSFT_Volume -&gt; MSFT_Partition -&gt;
-/// MSFT_Disk -&gt; MSFT_PhysicalDisk.MediaType associator chain SystemSpecsService.ReadPageFileLocation
-/// already uses for a different drive letter. Shells out to defrag.exe /A /V (analyze only - never
+/// scoped to spinning-disk volumes only, detected via MSFT_PhysicalDisk.MediaType for the disk
+/// number the volume's MSFT_Partition sits on. Shells out to defrag.exe /A /V (analyze only - never
 /// moves data) rather than parsing NTFS's own fragmentation bitmap via native interop, the same
 /// "known Windows tool, not raw struct interop" tradeoff ScheduledTaskService and
 /// ServiceControlService's recovery-actions reader already take. On-demand only (a button click) -
@@ -36,9 +35,7 @@ public static class DiskFragmentationService
     private static readonly Regex LargestFreeExtentRegex = new(
         @"largest\s+free\s+space\s+(?:size|extent)\s*[:=]\s*([\d.,]+)\s*(B|KB|MB|GB|TB)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// <summary>Media type for one drive letter ("C", no colon) - "HDD"/"SSD"/"SCM"/"Unknown".
-    /// Same associator chain as SystemSpecsService.ReadPageFileLocation, generalized to any
-    /// drive letter rather than just the page file's.</summary>
+    /// <summary>Media type for one drive letter ("C", no colon) - "HDD"/"SSD"/"SCM"/"Unknown".</summary>
     public static string GetMediaType(string driveLetter)
     {
         var (mediaType, _) = FindPhysicalDiskFacts(driveLetter);
@@ -62,48 +59,40 @@ public static class DiskFragmentationService
         return sectorSize;
     }
 
-    /// <summary>Shared associator walk (MSFT_Volume -&gt; MSFT_Partition -&gt; MSFT_Disk -&gt;
-    /// MSFT_PhysicalDisk) behind GetMediaType/GetPhysicalSectorSizeBytes - extracted so #345 doesn't
-    /// duplicate the four-level ASSOCIATORS OF chain a second time in a different file. Returns
+    /// <summary>Shared lookup (MSFT_Partition.DiskNumber -&gt; MSFT_PhysicalDisk) behind
+    /// GetMediaType/GetPhysicalSectorSizeBytes - extracted so #345 doesn't duplicate it a second
+    /// time in a different file. Returns
     /// primitive values (not the ManagementObject itself) so the caller never has to reason about a
     /// COM object outliving the `using` searchers that produced it.</summary>
     private static (int? MediaType, uint? PhysicalSectorSizeBytes) FindPhysicalDiskFacts(string driveLetter)
     {
         try
         {
-            using var volSearcher = new ManagementObjectSearcher(
+            // There is no MSFT_PartitionToDisk or MSFT_Disk -> MSFT_PhysicalDisk association class,
+            // so go by number instead: the partition's DiskNumber is the PhysicalDriveN index,
+            // which MSFT_PhysicalDisk exposes as DeviceId.
+            using var partSearcher = new ManagementObjectSearcher(
                 @"root\Microsoft\Windows\Storage",
-                $"SELECT ObjectId FROM MSFT_Volume WHERE DriveLetter = '{driveLetter[0]}'");
-            foreach (ManagementObject vol in volSearcher.Get())
+                $"SELECT DiskNumber FROM MSFT_Partition WHERE DriveLetter = '{driveLetter[0]}'");
+            foreach (ManagementObject partition in partSearcher.Get())
             {
-                using var partitions = new ManagementObjectSearcher(
+                if (partition["DiskNumber"] is null) continue;
+                uint diskNumber = Convert.ToUInt32(partition["DiskNumber"]);
+
+                using var physicalDisks = new ManagementObjectSearcher(
                     @"root\Microsoft\Windows\Storage",
-                    $"ASSOCIATORS OF {{MSFT_Volume.ObjectId='{EscapeWmiPath((string)vol["ObjectId"])}'}} WHERE AssocClass=MSFT_PartitionToVolume");
-                foreach (ManagementObject partition in partitions.Get())
+                    $"SELECT MediaType, PhysicalSectorSize FROM MSFT_PhysicalDisk WHERE DeviceId = '{diskNumber}'");
+                foreach (ManagementObject phys in physicalDisks.Get())
                 {
-                    using var disks = new ManagementObjectSearcher(
-                        @"root\Microsoft\Windows\Storage",
-                        $"ASSOCIATORS OF {{MSFT_Partition.ObjectId='{EscapeWmiPath((string)partition["ObjectId"])}'}} WHERE AssocClass=MSFT_PartitionToDisk");
-                    foreach (ManagementObject disk in disks.Get())
-                    {
-                        using var physicalDisks = new ManagementObjectSearcher(
-                            @"root\Microsoft\Windows\Storage",
-                            $"ASSOCIATORS OF {{MSFT_Disk.ObjectId='{EscapeWmiPath((string)disk["ObjectId"])}'}} WHERE AssocClass=MSFT_DiskToPhysicalDisk");
-                        foreach (ManagementObject phys in physicalDisks.Get())
-                        {
-                            int? mediaType = phys["MediaType"] is null ? null : Convert.ToInt32(phys["MediaType"]);
-                            uint? sectorSize = phys["PhysicalSectorSize"] is null ? null : Convert.ToUInt32(phys["PhysicalSectorSize"]);
-                            return (mediaType, sectorSize);
-                        }
-                    }
+                    int? mediaType = phys["MediaType"] is null ? null : Convert.ToInt32(phys["MediaType"]);
+                    uint? sectorSize = phys["PhysicalSectorSize"] is null ? null : Convert.ToUInt32(phys["PhysicalSectorSize"]);
+                    return (mediaType, sectorSize);
                 }
             }
         }
         catch { /* fall through */ }
         return (null, null);
     }
-
-    private static string EscapeWmiPath(string objectId) => objectId.Replace(@"\", @"\\").Replace("\"", "\\\"");
 
     /// <summary>Runs an analyze-only defrag pass and extracts the "Total fragmentation" percentage,
     /// the MFT size/record/fragment counts (#353), and the largest free-space extent (#354) from

@@ -1,13 +1,18 @@
 using System.Diagnostics.Eventing.Reader;
+using System.Globalization;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
 
 /// <summary>
-/// Round 15, #344: the System log's "Ntfs" provider corruption/resource-exhaustion signals - 55
-/// (corruption detected), 98 (unable to write to the transaction log), 130/137 (volume resource
-/// exhaustion / transaction log full), 140/142 (volume no longer writable). A sibling to
-/// DiskDiagnosisEventService rather than an extension of it (different provider/event family).
+/// Round 15, #344: the System log's NTFS corruption signals. Event IDs are per provider - checked
+/// against both providers' manifests (`Get-WinEvent -ListProvider`): the legacy "Ntfs" provider
+/// defines only 55 (corruption detected) and 130 (structure repaired); 98 (volume health) and 140
+/// (failed to flush the transaction log - corruption may occur) belong to "Microsoft-Windows-Ntfs".
+/// 98 is logged for every healthy volume at every mount ("is healthy. No action is needed."), so
+/// only a 98 that says anything else is kept; Microsoft-Windows-Ntfs 142 is a routine free-space
+/// summary and isn't read at all. A sibling to DiskDiagnosisEventService rather than an extension
+/// of it (different provider/event family).
 /// Round 18, #370 folds this list into a broader unified storage event timeline
 /// (StorageEventTimelineService) rather than replacing it - this stays its own simple,
 /// per-volume-grouped list, and the drive-letter resolver it needs is now shared (see
@@ -18,8 +23,18 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class NtfsCorruptionEventService
 {
-    private const string NtfsProviderName = "Ntfs";
-    private static readonly int[] EventIds = { 55, 98, 130, 137, 140, 142 };
+    private const string LegacyNtfsProvider = "Ntfs";
+    private const string NtfsProvider = "Microsoft-Windows-Ntfs";
+    private const int VolumeHealthEventId = 98;
+
+    private static readonly (string Provider, int EventId)[] Sources =
+    {
+        (LegacyNtfsProvider, 55),
+        (LegacyNtfsProvider, 130),
+        (NtfsProvider, VolumeHealthEventId),
+        (NtfsProvider, 140),
+    };
+
     private const int LookbackDays = 60;
     private const int MaxEvents = 100;
 
@@ -30,8 +45,8 @@ public static class NtfsCorruptionEventService
     {
         var deviceToLetter = DevicePathResolver.BuildDeviceToLetterMap();
         var events = new List<NtfsCorruptionEvent>();
-        foreach (int eventId in EventIds)
-            ReadFromProviderEventId(events, eventId, deviceToLetter);
+        foreach (var (provider, eventId) in Sources)
+            ReadFromProviderEventId(events, provider, eventId, deviceToLetter);
 
         return events
             .OrderBy(e => e.VolumeText, StringComparer.OrdinalIgnoreCase)
@@ -40,13 +55,13 @@ public static class NtfsCorruptionEventService
             .ToList();
     }
 
-    private static void ReadFromProviderEventId(List<NtfsCorruptionEvent> into, int eventId, Dictionary<string, string> deviceToLetter)
+    private static void ReadFromProviderEventId(List<NtfsCorruptionEvent> into, string provider, int eventId, Dictionary<string, string> deviceToLetter)
     {
         try
         {
             long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
             var query = new EventLogQuery("System", PathType.LogName,
-                $"*[System[Provider[@Name='{NtfsProviderName}'] and EventID={eventId} and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+                $"*[System[Provider[@Name='{provider}'] and EventID={eventId} and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
             { ReverseDirection = true };
 
             using var reader = new EventLogReader(query);
@@ -55,11 +70,14 @@ public static class NtfsCorruptionEventService
             {
                 using (record)
                 {
-                    count++;
                     string message;
                     try { message = record.FormatDescription() ?? string.Empty; }
                     catch { message = string.Empty; } // provider's message file isn't registered - a known, common gap
 
+                    if (eventId == VolumeHealthEventId && !IsUnhealthyVolumeReport(record, message))
+                        continue;
+
+                    count++;
                     into.Add(new NtfsCorruptionEvent
                     {
                         TimeCreated = record.TimeCreated ?? DateTime.MinValue,
@@ -75,6 +93,23 @@ public static class NtfsCorruptionEventService
             // Provider/event unavailable, or (the common case) this event has simply never fired -
             // contribute nothing for this ID.
         }
+    }
+
+    /// <summary>98's third property is a health-state code that the message maps to text - 0 is
+    /// "is healthy. No action is needed.", logged on every routine mount. The code is checked
+    /// first (language-independent), then the formatted text; unreadable either way = skipped,
+    /// since nothing says the volume is unhealthy.</summary>
+    private static bool IsUnhealthyVolumeReport(EventRecord record, string message)
+    {
+        try
+        {
+            if (record.Properties.Count > 2 && record.Properties[2].Value is { } state
+                && long.TryParse(Convert.ToString(state, CultureInfo.InvariantCulture), NumberStyles.Integer, CultureInfo.InvariantCulture, out long code))
+                return code != 0;
+        }
+        catch { /* fall back to the message text */ }
+
+        return message.Trim().Length > 0 && !message.Contains("is healthy", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
