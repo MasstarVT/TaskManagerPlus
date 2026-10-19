@@ -9,7 +9,8 @@ namespace TaskManagerPlus.Services;
 /// is false only when the registry key couldn't be opened at all - individual missing values fall
 /// back to the same defaults NCSI itself ships with (a documented Windows default, not a guess).</summary>
 public sealed record NcsiProbeConfig(
-    bool ActiveProbingEnabled, string WebProbeHost, string WebProbePath, string WebProbeExpectedContent, string DnsProbeHost, bool ConfigReadable);
+    bool ActiveProbingEnabled, string WebProbeHost, string WebProbePath, string WebProbeExpectedContent, string DnsProbeHost, bool ConfigReadable,
+    string DnsProbeExpectedContent = "131.107.255.255", string DnsProbeExpectedContentV6 = "fd3e:4f5a:5b81::1");
 
 /// <summary>#593's full explainer - which of the three checks NCSI itself runs (DNS probe, HTTP/web
 /// probe, and the NlaSvc service simply being up) is actually failing right now, live, rather than
@@ -54,6 +55,9 @@ public static class NcsiDiagnosticsService
     private const string DefaultWebProbePath = "connecttest.txt";
     private const string DefaultWebProbeExpectedBody = "Microsoft Connect Test";
     private const string DefaultDnsProbeHost = "dns.msftncsi.com";
+    // NCSI's DNS probe passes only when the name resolves to this exact address, not to any answer.
+    private const string DefaultDnsProbeContent = "131.107.255.255";
+    private const string DefaultDnsProbeContentV6 = "fd3e:4f5a:5b81::1";
 
     private static readonly HttpClient ProbeHttpClient = new(new HttpClientHandler
     {
@@ -74,11 +78,14 @@ public static class NcsiDiagnosticsService
             // the same key - comparing a private probe's reply to Microsoft's text always "fails".
             string webContent = (key?.GetValue("ActiveWebProbeContent") as string)?.Trim() is { Length: > 0 } wc ? wc : DefaultWebProbeExpectedBody;
             string dnsHost = (key?.GetValue("ActiveDnsProbeHost") as string)?.Trim() is { Length: > 0 } dh ? dh : DefaultDnsProbeHost;
-            return new NcsiProbeConfig(active, webHost, webPath, webContent, dnsHost, key is not null);
+            string dnsContent = (key?.GetValue("ActiveDnsProbeContent") as string)?.Trim() is { Length: > 0 } dc ? dc : DefaultDnsProbeContent;
+            string dnsContentV6 = (key?.GetValue("ActiveDnsProbeContentV6") as string)?.Trim() is { Length: > 0 } dc6 ? dc6 : DefaultDnsProbeContentV6;
+            return new NcsiProbeConfig(active, webHost, webPath, webContent, dnsHost, key is not null, dnsContent, dnsContentV6);
         }
         catch
         {
-            return new NcsiProbeConfig(true, DefaultWebProbeHost, DefaultWebProbePath, DefaultWebProbeExpectedBody, DefaultDnsProbeHost, false);
+            return new NcsiProbeConfig(true, DefaultWebProbeHost, DefaultWebProbePath, DefaultWebProbeExpectedBody, DefaultDnsProbeHost, false,
+                DefaultDnsProbeContent, DefaultDnsProbeContentV6);
         }
     }
 
@@ -87,7 +94,7 @@ public static class NcsiDiagnosticsService
         var config = ReadConfig();
         var (nlaText, nlaRunning) = ReadNlaSvcState();
 
-        var dnsTask = ProbeDnsAsync(config.DnsProbeHost);
+        var dnsTask = ProbeDnsAsync(config.DnsProbeHost, config.DnsProbeExpectedContent, config.DnsProbeExpectedContentV6);
         var webTask = ProbeWebAsync(config.WebProbeHost, config.WebProbePath, config.WebProbeExpectedContent);
         await Task.WhenAll(dnsTask, webTask);
 
@@ -135,13 +142,23 @@ public static class NcsiDiagnosticsService
         }
     }
 
-    private static async Task<(bool? Ok, string? Detail)> ProbeDnsAsync(string host)
+    private static async Task<(bool? Ok, string? Detail)> ProbeDnsAsync(string host, string expected, string expectedV6)
     {
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
             var addresses = await Dns.GetHostAddressesAsync(host, cts.Token);
-            return addresses.Length > 0 ? (true, $"{host} resolved ({addresses.Length} address(es))") : (false, $"{host} returned no addresses");
+            if (addresses.Length == 0) return (false, $"{host} returned no addresses");
+
+            // Compared as addresses, not strings; an unparseable expected value just never matches.
+            var expectedAddresses = new[] { expected, expectedV6 }
+                .Select(e => IPAddress.TryParse(e, out var a) ? a : null)
+                .OfType<IPAddress>()
+                .ToList();
+            if (addresses.Any(a => expectedAddresses.Any(e => e.Equals(a))))
+                return (true, $"{host} resolved to the expected {string.Join(" / ", expectedAddresses)}");
+
+            return (false, $"{host} resolved to {string.Join(", ", addresses.Take(4).Select(a => a.ToString()))}, expected {expected} - NCSI treats any other answer as a failed probe (a DNS filter, hijacking resolver or captive portal answering for it)");
         }
         catch (Exception ex)
         {

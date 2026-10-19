@@ -1,4 +1,5 @@
 using System.Diagnostics.Eventing.Reader;
+using System.Net;
 using System.Text.RegularExpressions;
 
 namespace TaskManagerPlus.Services;
@@ -9,17 +10,22 @@ public sealed record DnsFailureEvent(DateTime TimeUtc, string Source, string Que
 /// <summary>One grouped bucket - by queried name or by resolver - for #524's results table.</summary>
 public sealed record DnsFailureGroup(string Key, int Count, DateTime LastSeenUtc);
 
-/// <summary>#524's full scan result. <see cref="OperationalChannelAvailable"/> is false when the
-/// Microsoft-Windows-DNS-Client/Operational channel couldn't be read at all - it ships disabled by
-/// default on a stock Windows install (an administrator has to turn it on via Event Viewer's "Show
-/// Analytic and Debug Logs" or `wevtutil sl ... /e:true`), which is the single most common reason
-/// this scan comes back empty, not a bug.</summary>
+/// <summary>#524's full scan result. <see cref="SystemLogAvailable"/> is false when the System log
+/// couldn't be queried for the DNS-Client timeout events at all (access denied, log service
+/// unavailable) - distinct from a successful scan that simply found nothing.</summary>
 public sealed record DnsFailureScanResult(
-    List<DnsFailureEvent> Events, List<DnsFailureGroup> ByName, List<DnsFailureGroup> ByResolver, bool OperationalChannelAvailable);
+    List<DnsFailureEvent> Events, List<DnsFailureGroup> ByName, List<DnsFailureGroup> ByResolver, bool SystemLogAvailable)
+{
+    /// <summary>Old name, still read by NetworkEventTimelineService - same meaning as
+    /// <see cref="SystemLogAvailable"/> (the Operational channel is no longer read).</summary>
+    public bool OperationalChannelAvailable => SystemLogAvailable;
+}
 
 /// <summary>
-/// Item #524: scans Microsoft-Windows-DNS-Client/Operational for resolution-timeout events, plus
-/// the System log's own Dnscache provider entries, over a caller-chosen lookback window - grouped
+/// Item #524: scans the System log for Microsoft-Windows-DNS-Client resolution-timeout events (ID
+/// 1014 is defined for the System channel only - the DNS-Client/Operational channel never carries
+/// it, and ships disabled anyway), plus the System log's own Dnscache provider entries, over a
+/// caller-chosen lookback window - grouped
 /// by queried name and (best-effort) by resolver, so a resolver that's intermittently failing
 /// shows up as a count instead of needing to be inferred from a wall of individual log lines.
 ///
@@ -29,34 +35,35 @@ public sealed record DnsFailureScanResult(
 /// different event IDs, not more of what that class already covers. On-demand only, behind an
 /// explicit "Scan" button (the CLAUDE.md on-demand-for-event-log-scans convention), never a timer.
 ///
-/// The DNS-Client Operational log's own timeout event (ID 1014) reports the queried name reliably
-/// but its formatted message doesn't reliably name the specific resolver that failed to answer -
-/// this app makes no attempt to guess one from the message text. Where a resolver's IP genuinely
-/// appears in the raw event's own XML payload, it's used as-is; otherwise the event is grouped
+/// The timeout event (ID 1014) carries the queried name in its QueryName field, and the resolver
+/// as a raw SOCKADDR in its Address field (hex in the event XML) - decoded here, never guessed from
+/// the message text (a PTR query's reversed-octet name would look like an IP to a text regex).
+/// Where no decodable address is present, the event is grouped
 /// under an honestly-labeled "(resolver not identified in event data)" bucket rather than a
 /// fabricated one - CLAUDE.md's "degrade, never fabricate" convention applied to event-log
 /// resolver attribution.
 /// </summary>
 public static class DnsEventLogService
 {
-    private const string OperationalChannel = "Microsoft-Windows-DNS-Client/Operational";
+    private const string DnsClientProvider = "Microsoft-Windows-DNS-Client";
     private const int TimeoutEventId = 1014; // "Name resolution for the name %1 timed out after none of the configured DNS servers responded"
     private const int MaxEvents = 2000;
     private const string UnidentifiedResolverLabel = "(resolver not identified in event data)";
 
     private static readonly Regex QueriedNameFromMessageRegex = new(@"name\s+([^\s]+)\s+timed out", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex Ipv4Regex = new(@"\b(?:\d{1,3}\.){3}\d{1,3}\b", RegexOptions.Compiled);
+    private static readonly Regex QueryNameDataRegex = new(@"<Data Name=['""]QueryName['""]>([^<]*)</Data>", RegexOptions.Compiled);
+    private static readonly Regex AddressDataRegex = new(@"<Data Name=['""]Address['""]>([0-9A-Fa-f]+)</Data>", RegexOptions.Compiled);
 
     public static DnsFailureScanResult Scan(TimeSpan window)
     {
         var events = new List<DnsFailureEvent>();
-        bool operationalAvailable = true;
+        bool systemAvailable = true;
         long maxAgeMs = (long)Math.Max(1, window.TotalMilliseconds);
 
         try
         {
-            var query = new EventLogQuery(OperationalChannel, PathType.LogName,
-                $"*[System[TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[Provider[@Name='{DnsClientProvider}'] and EventID={TimeoutEventId} and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
             { ReverseDirection = true };
 
             using var reader = new EventLogReader(query);
@@ -66,24 +73,27 @@ public static class DnsEventLogService
                 using (record)
                 {
                     count++;
-                    if (record.Id != TimeoutEventId) continue;
-
                     string message;
                     try { message = record.FormatDescription() ?? string.Empty; }
                     catch { message = string.Empty; } // provider's message file isn't registered locally - a known, common gap
 
-                    string queriedName = ExtractQueriedName(message);
-                    string? resolverIp = ExtractResolverIp(record);
+                    string xml;
+                    try { xml = record.ToXml(); }
+                    catch { xml = string.Empty; }
+
+                    var nameMatch = QueryNameDataRegex.Match(xml);
+                    string queriedName = nameMatch.Success && nameMatch.Groups[1].Value.Trim().Length > 0
+                        ? nameMatch.Groups[1].Value.Trim().TrimEnd('.')
+                        : ExtractQueriedName(message);
                     events.Add(new DnsFailureEvent(
-                        record.TimeCreated ?? DateTime.MinValue, "DNS-Client timeout", queriedName, resolverIp, Truncate(message, 200)));
+                        record.TimeCreated ?? DateTime.MinValue, "DNS-Client timeout", queriedName, DecodeResolverAddress(xml), Truncate(message, 200)));
                 }
             }
         }
         catch
         {
-            // Channel disabled (the common case - it's an analytic log, off by default), access
-            // denied, or absent entirely - all real, expected conditions, not a bug.
-            operationalAvailable = false;
+            // Access denied or the event log service unavailable - degrade to empty.
+            systemAvailable = false;
         }
 
         try
@@ -104,14 +114,18 @@ public static class DnsEventLogService
                     try { message = record.FormatDescription() ?? string.Empty; }
                     catch { message = string.Empty; }
 
+                    string xml;
+                    try { xml = record.ToXml(); }
+                    catch { xml = string.Empty; }
+
                     events.Add(new DnsFailureEvent(
-                        record.TimeCreated ?? DateTime.MinValue, "System log (Dnscache)", "(not name-specific)", ExtractResolverIp(record), Truncate(message, 200)));
+                        record.TimeCreated ?? DateTime.MinValue, "System log (Dnscache)", "(not name-specific)", DecodeResolverAddress(xml), Truncate(message, 200)));
                 }
             }
         }
         catch
         {
-            // Best-effort - the Operational-channel results above still stand on their own.
+            // Best-effort - the DNS-Client timeout results above still stand on their own.
         }
 
         var byName = events
@@ -128,7 +142,7 @@ public static class DnsEventLogService
             .ToList();
 
         return new DnsFailureScanResult(
-            events.OrderByDescending(e => e.TimeUtc).ToList(), byName, byResolver, operationalAvailable);
+            events.OrderByDescending(e => e.TimeUtc).ToList(), byName, byResolver, systemAvailable);
     }
 
     private static string ExtractQueriedName(string message)
@@ -137,16 +151,27 @@ public static class DnsEventLogService
         return match.Success ? match.Groups[1].Value.TrimEnd('.') : "(unknown)";
     }
 
-    /// <summary>Pulls the first IPv4-shaped token out of the raw event's own XML payload, if any -
-    /// see this class's remarks for why this is a best-effort extraction from real event data
-    /// rather than a documented field lookup.</summary>
-    private static string? ExtractResolverIp(EventRecord record)
+    /// <summary>Decodes the first SOCKADDR in the event's Address field (hex in the event XML):
+    /// family 2 (AF_INET) carries the IPv4 address at bytes 4-7, family 23 (AF_INET6) the IPv6
+    /// address at bytes 8-23. Anything else, or an all-zero address, is null - never guessed.</summary>
+    private static string? DecodeResolverAddress(string xml)
     {
         try
         {
-            string xml = record.ToXml();
-            var match = Ipv4Regex.Match(xml);
-            return match.Success ? match.Value : null;
+            var match = AddressDataRegex.Match(xml);
+            if (!match.Success || match.Groups[1].Value.Length % 2 != 0) return null;
+            byte[] bytes = Convert.FromHexString(match.Groups[1].Value);
+            if (bytes.Length < 2) return null;
+
+            int family = bytes[0] | (bytes[1] << 8); // little-endian sa_family
+            IPAddress? address = family switch
+            {
+                2 when bytes.Length >= 8 => new IPAddress(bytes.AsSpan(4, 4)),
+                23 when bytes.Length >= 24 => new IPAddress(bytes.AsSpan(8, 16)),
+                _ => null,
+            };
+            if (address is null || address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any)) return null;
+            return address.ToString();
         }
         catch
         {

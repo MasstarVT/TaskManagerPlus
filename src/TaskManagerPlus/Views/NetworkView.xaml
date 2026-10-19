@@ -61,7 +61,7 @@
 
                             <!-- #585: adapter-throughput reconciliation flag - hidden when nothing on a
                                  non-primary adapter looks like a meaningful share of current traffic. -->
-                            <Border Background="{DynamicResource WarningBrush}" Opacity="0.15" CornerRadius="4" Padding="10,8" Margin="0,12,0,0"
+                            <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}" BorderThickness="1" CornerRadius="4" Padding="10,8" Margin="0,12,0,0"
                                     Visibility="{Binding AdapterTrafficFlagText, Converter={StaticResource NullToVisibilityConverter}}">
                                 <TextBlock Text="{Binding AdapterTrafficFlagText}" Style="{StaticResource SubStat}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" />
                             </Border>
@@ -1669,7 +1669,7 @@
                                     <DataGridTextColumn Header="Event" Binding="{Binding Kind}" Width="1.1*" />
                                     <DataGridTextColumn Header="SSID" Binding="{Binding Ssid, TargetNullValue=''}" Width="1.1*" />
                                     <DataGridTextColumn Header="BSSID" Binding="{Binding Bssid, TargetNullValue=''}" Width="1.2*" />
-                                    <DataGridTextColumn Header="Duration" Binding="{Binding Duration, TargetNullValue='', StringFormat={}{0:hh\:mm\:ss}}" Width="0.9*" />
+                                    <DataGridTextColumn Header="Duration" Binding="{Binding Duration, TargetNullValue='', StringFormat={}{0:hh\\:mm\\:ss}}" Width="0.9*" />
                                     <!-- #542: decoded reason/status text attached to each row. -->
                                     <DataGridTextColumn Header="Reason" Binding="{Binding ReasonText, TargetNullValue=''}" Width="2.2*" />
                                 </DataGrid.Columns>
@@ -1954,9 +1954,9 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="Active check: sends a live ARP request for the selected adapter's own address and flags any other host that answers for it - a duplicate-address-detection probe, same idea as a gratuitous ARP. Quick flag, not a verdict."
+                                <TextBlock Grid.Column="0" Text="Current check: reads Windows' own duplicate-address-detection result for the selected adapter's address - the gratuitous-ARP check Windows runs when the address is assigned. Not a live probe: Windows answers an ARP request for its own address itself, so nothing can be re-sent from here. Quick flag, not a verdict."
                                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Opacity="0.85" VerticalAlignment="Center" Margin="0,0,10,0" />
-                                <Button Grid.Column="1" Content="Probe now" Padding="10,4" Command="{Binding ProbeGratuitousArpCommand}" />
+                                <Button Grid.Column="1" Content="Check now" Padding="10,4" Command="{Binding ProbeGratuitousArpCommand}" />
                             </Grid>
                             <TextBlock Text="{Binding GratuitousArpResultText}" Style="{StaticResource SubStat}" Margin="0,6,0,0" TextWrapping="Wrap" />
                         </StackPanel>
@@ -3140,7 +3140,7 @@
                                        Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
 
                             <!-- Explicit "capture running" note, per this item's own text. -->
-                            <Border Background="{DynamicResource DangerBrush}" Opacity="0.15" CornerRadius="4" Padding="10,6" Margin="0,0,0,8"
+                            <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}" BorderThickness="1" CornerRadius="4" Padding="10,6" Margin="0,0,0,8"
                                     Visibility="{Binding IsEtwCapturing, Converter={StaticResource BoolToVisibilityConverter}}">
                                 <TextBlock Text="{Binding EtwCaptureStatusText}" Style="{StaticResource SubStat}" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" />
                             </Border>
@@ -3258,24 +3258,25 @@
                                             <DataTemplate>
                                                 <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
                                                     <Run Text="{Binding ProcessName, Mode=OneWay}" /><Run Text=": " />
-                                                    <Run Text="{Binding ConnectionCountTotal, Mode=OneWay}">
+                                                    <Run>
                                                         <Run.Style>
                                                             <Style TargetType="Run">
+                                                                <Setter Property="Text" Value="{Binding ConnectionCountTotal, Mode=OneWay}" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding HasByteData}" Value="True">
-                                                                        <Setter Property="Text" Value="{Binding BytesSentTotal, Converter={StaticResource BytesToReadableConverter}, StringFormat='↑{0}'}" />
+                                                                        <Setter Property="Text" Value="{Binding BytesSentTotal, Converter={StaticResource BytesToReadableConverter}, StringFormat='↑{0}', Mode=OneWay}" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
                                                         </Run.Style>
                                                     </Run>
-                                                    <Run Text=" ↓" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                    <Run Foreground="{DynamicResource TextSecondaryBrush}">
                                                         <Run.Style>
                                                             <Style TargetType="Run">
                                                                 <Setter Property="Text" Value="" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding HasByteData}" Value="True">
-                                                                        <Setter Property="Text" Value="{Binding BytesReceivedTotal, Converter={StaticResource BytesToReadableConverter}, StringFormat=' ↓{0}'}" />
+                                                                        <Setter Property="Text" Value="{Binding BytesReceivedTotal, Converter={StaticResource BytesToReadableConverter}, StringFormat=' ↓{0}', Mode=OneWay}" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
@@ -3293,24 +3294,25 @@
                                             <DataTemplate>
                                                 <TextBlock Style="{StaticResource SubStat}" Margin="0,0,0,3">
                                                     <Run Text="{Binding ProcessName, Mode=OneWay}" /><Run Text=": " />
-                                                    <Run Text="{Binding ConnectionCountTotal, Mode=OneWay}">
+                                                    <Run>
                                                         <Run.Style>
                                                             <Style TargetType="Run">
+                                                                <Setter Property="Text" Value="{Binding ConnectionCountTotal, Mode=OneWay}" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding HasByteData}" Value="True">
-                                                                        <Setter Property="Text" Value="{Binding BytesSentTotal, Converter={StaticResource BytesToReadableConverter}, StringFormat='↑{0}'}" />
+                                                                        <Setter Property="Text" Value="{Binding BytesSentTotal, Converter={StaticResource BytesToReadableConverter}, StringFormat='↑{0}', Mode=OneWay}" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
                                                         </Run.Style>
                                                     </Run>
-                                                    <Run Text="" Foreground="{DynamicResource TextSecondaryBrush}">
+                                                    <Run Foreground="{DynamicResource TextSecondaryBrush}">
                                                         <Run.Style>
                                                             <Style TargetType="Run">
                                                                 <Setter Property="Text" Value="" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding HasByteData}" Value="True">
-                                                                        <Setter Property="Text" Value="{Binding BytesReceivedTotal, Converter={StaticResource BytesToReadableConverter}, StringFormat=' ↓{0}'}" />
+                                                                        <Setter Property="Text" Value="{Binding BytesReceivedTotal, Converter={StaticResource BytesToReadableConverter}, StringFormat=' ↓{0}', Mode=OneWay}" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
@@ -4158,9 +4160,10 @@
                                         </Style>
                                     </TextBlock.Style>
                                     <Run Text="Service: " FontWeight="SemiBold" />
-                                    <Run Text="Stopped">
+                                    <Run>
                                         <Run.Style>
                                             <Style TargetType="Run">
+                                                <Setter Property="Text" Value="Stopped" />
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding OfflineFiles.ServiceRunning}" Value="True">
                                                         <Setter Property="Text" Value="Running" />
@@ -4249,7 +4252,7 @@
                                         </Style.Triggers>
                                     </Style>
                                 </StackPanel.Style>
-                                <Border Background="{DynamicResource WarningBrush}" Opacity="0.15" CornerRadius="4" Padding="10,8">
+                                <Border Background="{DynamicResource BgElevatedBrush}" BorderBrush="{DynamicResource WarningBrush}" BorderThickness="1" CornerRadius="4" Padding="10,8">
                                     <StackPanel>
                                         <TextBlock Text="Possible post-sleep networking issue" FontWeight="Bold" FontSize="{StaticResource FontStrong}" Foreground="{DynamicResource WarningBrush}" />
                                         <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Margin="0,4,0,6" Foreground="{DynamicResource TextPrimaryBrush}">

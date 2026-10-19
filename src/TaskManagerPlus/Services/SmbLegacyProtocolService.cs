@@ -60,7 +60,7 @@ public static class SmbLegacyProtocolService
         int? llmnr = ReadDword(Registry.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows NT\DNSClient", "EnableMulticast");
         rows.Add(new Row(
             "LLMNR",
-            llmnr == 0 ? "Disabled" : "On (default - this policy value isn't configured; absence means LLMNR is on)",
+            MulticastPolicyText(llmnr, "LLMNR"),
             "LLMNR (Link-Local Multicast Name Resolution) answers name lookups your DNS server couldn't - a well-known spoofing/credential-relay vector (Responder-style attacks) on any network with an untrusted device present.",
             "PowerShell one-liner: New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\DNSClient' -Name EnableMulticast -PropertyType DWord -Value 0 -Force"));
 
@@ -74,7 +74,7 @@ public static class SmbLegacyProtocolService
         int? mdns = ReadDword(Registry.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows NT\DNSClient", "EnableMDNS");
         rows.Add(new Row(
             "mDNS",
-            mdns == 0 ? "Disabled" : "On (default - this policy value isn't configured; absence means mDNS is on)",
+            MulticastPolicyText(mdns, "mDNS"),
             "Multicast DNS (mDNS, used by AirPlay/Chromecast/some IoT device discovery) broadcasts this machine's presence on the local network segment - low risk on a trusted home LAN, more relevant on a shared/public network.",
             "PowerShell one-liner: New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\DNSClient' -Name EnableMDNS -PropertyType DWord -Value 0 -Force"));
 
@@ -82,6 +82,15 @@ public static class SmbLegacyProtocolService
     }
 
     private static string OnOff(int? v) => v switch { null => "Not set", 0 => "Off", _ => "On" };
+
+    /// <summary>LLMNR/mDNS policy value: absent means the protocol's default (on), 0 disables it,
+    /// anything else is an explicit enable - not "not configured".</summary>
+    private static string MulticastPolicyText(int? v, string protocol) => v switch
+    {
+        null => $"On (default - this policy value isn't configured; absence means {protocol} is on)",
+        0 => "Disabled",
+        _ => $"Enabled (policy explicitly set to {v})",
+    };
 
     private static string LmLevelText(int? level) => level switch
     {

@@ -48,12 +48,22 @@ public static class VpnTunnelCheckService
 
         string? defaultRouteAdapterName = bestDefault is not null ? FindAdapterByLocalIp(bestDefault.InterfaceLabel) : null;
 
+        // OpenVPN-style "redirect-gateway def1": 0.0.0.0/1 + 128.0.0.0/1 on the VPN cover every
+        // address and beat the untouched 0.0.0.0/0 by prefix length - a full tunnel, not a split one.
+        string? halfRoutesVpnAdapter = hasVpn ? FindVpnHalfDefaultRoutePair(routes, vpnNames) : null;
+
         bool? vpnHoldsDefault;
         string routeExplanation;
         if (!hasVpn)
         {
             vpnHoldsDefault = null;
             routeExplanation = "No VPN-looking adapter is currently active.";
+        }
+        else if (halfRoutesVpnAdapter is not null)
+        {
+            vpnHoldsDefault = true;
+            defaultRouteAdapterName = halfRoutesVpnAdapter;
+            routeExplanation = $"\"{halfRoutesVpnAdapter}\" (VPN) holds 0.0.0.0/1 and 128.0.0.0/1 - together they cover every address and win over the ordinary default route by being more specific (the OpenVPN \"def1\" style). Looks like a full tunnel: traffic with no more specific route goes through the VPN.";
         }
         else if (bestDefault is null || defaultRouteAdapterName is null)
         {
@@ -99,6 +109,21 @@ public static class VpnTunnelCheckService
 
         return new VpnTunnelCheckResult(hasVpn, vpnAdapterName, defaultRouteAdapterName, vpnHoldsDefault, routeExplanation,
             TestHostname, resolverIp, resolverOutsideVpn, dnsExplanation);
+    }
+
+    /// <summary>The VPN adapter name holding both IPv4 /1 halves (0.0.0.0 and 128.0.0.0, netmask
+    /// 128.0.0.0) on one interface, or null when no VPN adapter holds the pair.</summary>
+    private static string? FindVpnHalfDefaultRoutePair(List<RouteEntry> routes, IReadOnlyCollection<string> vpnNames)
+    {
+        var halves = routes.Where(r => r.AddressFamily == "IPv4" && r.Netmask == "128.0.0.0"
+            && (r.Destination == "0.0.0.0" || r.Destination == "128.0.0.0"));
+        foreach (var group in halves.GroupBy(r => r.InterfaceLabel))
+        {
+            if (group.Select(r => r.Destination).Distinct().Count() < 2) continue;
+            string? adapter = FindAdapterByLocalIp(group.Key);
+            if (adapter is not null && vpnNames.Contains(adapter, StringComparer.OrdinalIgnoreCase)) return adapter;
+        }
+        return null;
     }
 
     private static string? FindAdapterByLocalIp(string ip)

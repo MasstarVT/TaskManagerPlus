@@ -1,7 +1,11 @@
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
+
 namespace TaskManagerPlus.Services;
 
-/// <summary>One adapter's routing metric (#535), from `netsh interface ipv4/ipv6 show interfaces`.</summary>
-public sealed record InterfaceMetricInfo(string AddressFamily, int Index, int Metric, string State, string InterfaceName);
+/// <summary>One adapter's routing metric (#535), from `netsh interface ipv4/ipv6 show interfaces`.
+/// <see cref="HasDefaultRoute"/>: the interface has a default gateway for this address family.</summary>
+public sealed record InterfaceMetricInfo(string AddressFamily, int Index, int Metric, string State, string InterfaceName, bool HasDefaultRoute = false);
 
 /// <summary>
 /// Item #535: parses each adapter's routing metric out of `netsh interface ipv4 show interfaces`
@@ -38,6 +42,7 @@ public static class InterfaceMetricService
             var (output, _) = await ToolRunner.RunCapturedAsync("netsh.exe", $"interface {family} show interfaces", 10000, includeStderr: false);
 
             string af = family == "ipv4" ? "IPv4" : "IPv6";
+            var defaultRouteIndexes = ReadDefaultGatewayInterfaceIndexes(family == "ipv4");
             foreach (var rawLine in output.Split('\n'))
             {
                 string line = rawLine.TrimEnd('\r').Trim();
@@ -54,7 +59,7 @@ public static class InterfaceMetricService
 
                 string state = tokens[3];
                 string name = string.Join(' ', tokens.Skip(4));
-                results.Add(new InterfaceMetricInfo(af, idx, metric, state, name));
+                results.Add(new InterfaceMetricInfo(af, idx, metric, state, name, defaultRouteIndexes.Contains(idx)));
             }
         }
         catch
@@ -64,16 +69,48 @@ public static class InterfaceMetricService
         return results;
     }
 
-    /// <summary>#535: "which adapter wins" - the lowest-metric *connected* interface per address
-    /// family is the one Windows actually prefers for outbound traffic of that family, regardless of
-    /// which other adapters are merely up. A tie is reported honestly as a tie rather than guessed at
+    /// <summary>Interface indexes (the same Idx netsh prints) of non-loopback adapters that have a
+    /// default gateway for the family - only those can carry outbound traffic by default.</summary>
+    private static HashSet<int> ReadDefaultGatewayInterfaceIndexes(bool ipv4)
+    {
+        var indexes = new HashSet<int>();
+        try
+        {
+            var family = ipv4 ? AddressFamily.InterNetwork : AddressFamily.InterNetworkV6;
+            foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                try
+                {
+                    var props = ni.GetIPProperties();
+                    if (!props.GatewayAddresses.Any(g => g.Address.AddressFamily == family)) continue;
+                    int? index = ipv4 ? props.GetIPv4Properties()?.Index : props.GetIPv6Properties()?.Index;
+                    if (index is int i) indexes.Add(i);
+                }
+                catch
+                {
+                    // This family isn't configured on this adapter - nothing to add.
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort - an empty set means no adapter is reported as carrying the default route.
+        }
+        return indexes;
+    }
+
+    /// <summary>#535: "which adapter wins" - the lowest-metric *connected* interface with a default
+    /// gateway per address family is the one Windows actually prefers for outbound traffic of that
+    /// family. Loopback and gateway-less adapters (host-only/virtual switches) never carry it. A tie is reported honestly as a tie rather than guessed at
     /// - Windows' own tie-break in that case isn't something this app claims to predict.</summary>
     public static string DescribeWinner(IReadOnlyList<InterfaceMetricInfo> interfaces)
     {
         var lines = new List<string>();
         foreach (var af in new[] { "IPv4", "IPv6" })
         {
-            var connected = interfaces.Where(i => i.AddressFamily == af && i.State.Equals("connected", StringComparison.OrdinalIgnoreCase)).ToList();
+            var connected = interfaces.Where(i => i.AddressFamily == af && i.HasDefaultRoute
+                && i.State.Equals("connected", StringComparison.OrdinalIgnoreCase)).ToList();
             if (connected.Count == 0) continue;
 
             int minMetric = connected.Min(i => i.Metric);
@@ -94,6 +131,6 @@ public static class InterfaceMetricService
             }
             lines.Add(line);
         }
-        return lines.Count == 0 ? "No connected interfaces with a metric were found." : string.Join(" ", lines);
+        return lines.Count == 0 ? "No connected interface with a default gateway was found." : string.Join(" ", lines);
     }
 }

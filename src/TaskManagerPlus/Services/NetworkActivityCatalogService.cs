@@ -19,11 +19,15 @@ namespace TaskManagerPlus.Services;
 ///     no network connection there at all, the browser does, exactly like clicking any other link
 ///     anywhere in Windows. Also: the offline explainer files are 100% local, so most "Read more"
 ///     clicks touch no network regardless of this toggle.
-///   - NetworkDiagnosticsService's gateway/DNS-resolver/captive-portal checks, which power the
-///     Troubleshoot tab's "No internet" symptom branch - the entire point of that branch is to test
-///     whether the network works, so gating it behind an "I'm offline" switch would make the one
-///     tool built to diagnose "no internet" refuse to run while offline. It's still exactly as
-///     on-demand/user-triggered as everything else here (only runs when that symptom is picked).
+///   - NetworkDiagnosticsService's gateway/DNS-resolver/captive-portal checks. The Network tab runs
+///     them automatically (once at startup, then every 15s while the app is open - that tab's
+///     connectivity panel), and the Troubleshoot tab's "No internet" symptom branch runs them on
+///     demand. The entire point of both is to test whether the network works, so gating them
+///     behind an "I'm offline" switch would make the tools built to diagnose "no internet" refuse
+///     to run while offline. The catalog says so plainly rather than calling them "never automatic".
+///   - The Network tab's other diagnostics (speed/bufferbloat tests, latency and DNS-response
+///     monitors, hop monitor, jitter and path-MTU tests, the NCSI check, DNS comparisons). Each
+///     runs only from its own button or toggle.
 /// </summary>
 public static class NetworkActivityCatalogService
 {
@@ -53,8 +57,43 @@ public static class NetworkActivityCatalogService
         new()
         {
             Name = "Connectivity check (gateway/DNS/captive portal)",
-            Trigger = "Troubleshoot tab → \"No internet\" symptom (never automatic)",
-            Destination = "Your default gateway, 1.1.1.1 (ICMP), and http://www.msftconnecttest.com/connecttest.txt",
+            Trigger = "Automatic: once at app startup, then every 15 seconds while the app is open (Network tab's connectivity panel). Also Troubleshoot tab → \"No internet\" symptom",
+            Destination = "Your default gateway and 1.1.1.1 (ICMP), a DNS lookup of www.msftconnecttest.com, and http://www.msftconnecttest.com/connecttest.txt",
+            GatedByOfflineMode = false,
+        },
+        new()
+        {
+            Name = "Speed and bufferbloat tests",
+            Trigger = "Network tab → download / upload / bufferbloat test buttons (never automatic)",
+            Destination = "The URLs in the test fields (default https://speed.cloudflare.com), plus ICMP to the bufferbloat ping host (default 1.1.1.1)",
+            GatedByOfflineMode = false,
+        },
+        new()
+        {
+            Name = "Latency and DNS-response monitor",
+            Trigger = "Network tab → latency monitor Start toggle; runs until you stop it (never automatic)",
+            Destination = "ICMP to this PC's adapter, your gateway, the first hop past it and 1.1.1.1, plus DNS queries to your configured resolvers and 1.1.1.1 / 8.8.8.8 / 9.9.9.9",
+            GatedByOfflineMode = false,
+        },
+        new()
+        {
+            Name = "Hop monitor, jitter and path MTU tests",
+            Trigger = "Network tab → hop monitor Start toggle, jitter test and path MTU buttons (never automatic)",
+            Destination = "The host you type in (default 1.1.1.1), via ICMP",
+            GatedByOfflineMode = false,
+        },
+        new()
+        {
+            Name = "NCSI check",
+            Trigger = "Network tab → NCSI check button (never automatic)",
+            Destination = "The probe hosts Windows' own connectivity indicator uses (default a DNS lookup of dns.msftncsi.com and http://www.msftconnecttest.com/connecttest.txt)",
+            GatedByOfflineMode = false,
+        },
+        new()
+        {
+            Name = "DNS resolver comparison and VPN DNS-leak check",
+            Trigger = "Network tab → DNS compare and VPN tunnel check buttons (never automatic)",
+            Destination = "nslookup queries to your configured resolvers and 1.1.1.1 / 8.8.8.8 / 9.9.9.9, and to your default resolver for www.msftconnecttest.com",
             GatedByOfflineMode = false,
         },
         new()

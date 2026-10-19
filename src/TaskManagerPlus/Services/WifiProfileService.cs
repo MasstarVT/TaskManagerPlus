@@ -32,11 +32,9 @@ public static class WifiProfileService
     public static async Task<List<WifiProfileAudit>> ListProfilesAsync()
     {
         string listOutput = await RunNetshAsync("wlan show profiles");
-        string? interfaceName = ExtractInterfaceName(listOutput);
-        var names = ExtractProfileNames(listOutput);
 
         var results = new List<WifiProfileAudit>();
-        foreach (var name in names)
+        foreach (var (interfaceName, name) in ExtractProfiles(listOutput))
         {
             string detailArgs = interfaceName is null
                 ? $"wlan show profile name=\"{EscapeArg(name)}\""
@@ -83,24 +81,35 @@ public static class WifiProfileService
 
     // ---- netsh output parsing ----------------------------------------------------------------
 
-    private static readonly Regex InterfaceHeaderRegex = new(@"^Profile(?:s)? on interface (.+):$", RegexOptions.Compiled | RegexOptions.Multiline);
-    private static readonly Regex ProfileNameRegex = new(@"^\s*(?:All User Profile|Group Policy Profile|Per user Profile)\s*:\s*(.+)$", RegexOptions.Compiled | RegexOptions.Multiline);
+    // Matched per line with the CR already stripped - netsh output is CRLF, and a Multiline '$'
+    // only matches before '\n', so a whole-output ":$" never matched a header at all.
+    private static readonly Regex InterfaceHeaderRegex = new(@"^Profile(?:s)? on interface (.+):\s*$", RegexOptions.Compiled);
+    private static readonly Regex ProfileNameRegex = new(@"^\s*(?:All User Profile|Group Policy Profile|Per user Profile)\s*:\s*(.+)$", RegexOptions.Compiled);
 
-    private static string? ExtractInterfaceName(string output)
+    /// <summary>Each profile paired with the interface whose "Profiles on interface X:" section
+    /// lists it - on a machine with two wireless NICs each section is scoped to its own adapter, so
+    /// a later delete targets only that one. A profile before any recognised header (e.g. a
+    /// non-English netsh) gets a null interface, which netsh treats as every interface.</summary>
+    private static List<(string? InterfaceName, string Name)> ExtractProfiles(string output)
     {
-        var m = InterfaceHeaderRegex.Match(output);
-        return m.Success ? m.Groups[1].Value.Trim() : null;
-    }
-
-    private static List<string> ExtractProfileNames(string output)
-    {
-        var names = new List<string>();
-        foreach (Match m in ProfileNameRegex.Matches(output))
+        var results = new List<(string? InterfaceName, string Name)>();
+        string? currentInterface = null;
+        foreach (var rawLine in output.Split('\n'))
         {
+            string line = rawLine.TrimEnd('\r');
+            var header = InterfaceHeaderRegex.Match(line);
+            if (header.Success)
+            {
+                currentInterface = header.Groups[1].Value.Trim();
+                continue;
+            }
+
+            var m = ProfileNameRegex.Match(line);
+            if (!m.Success) continue;
             string name = m.Groups[1].Value.Trim();
-            if (name.Length > 0 && name != "<none>") names.Add(name);
+            if (name.Length > 0 && name != "<none>") results.Add((currentInterface, name));
         }
-        return names;
+        return results;
     }
 
     private static WifiProfileAudit ParseProfileDetail(string name, string? interfaceName, string detail)

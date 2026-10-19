@@ -1,7 +1,7 @@
 using System.Diagnostics.Eventing.Reader;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
+using System.Net.NetworkInformation;
 using System.Text.RegularExpressions;
 
 namespace TaskManagerPlus.Services;
@@ -16,23 +16,20 @@ public sealed record IpConflictScanResult(List<IpConflictLogEntry> Events, bool 
 /// conflict...") with the machine's current adapter addresses, surfacing the conflicting MAC when
 /// the event text carries it - a passive, historical view.
 ///
-/// Paired with an *active* check: a gratuitous-ARP-style probe of the machine's own address via the
-/// documented IP Helper <c>SendARP</c> function. There's no shell tool for originating a live ARP
-/// request on demand (arp.exe only manages the local cache; it can't send a packet), so this is one
-/// of the few places in this app that P/Invokes directly - per CLAUDE.md's convention, reserved for
-/// exactly this "no tool or WMI class available at all" case, and run on an abandoned background
-/// thread with a strict timeout the same defensive way HandleInspectionService's NtQueryObject calls
-/// are, since SendARP can block if the local network stack is in an odd state.
+/// Paired with a read of Windows' own duplicate-address-detection (DAD) result for the address -
+/// the gratuitous-ARP check the OS runs when an address is assigned. There is no live re-probe:
+/// SendARP for a local address is answered by the local stack with the machine's own MAC (nothing
+/// goes on the wire), and no shell tool or managed API can send a raw ARP request, so a "probe"
+/// built on it could only ever report "looks clear".
 ///
 /// Both halves carry the standard heuristic caveat: a logged conflict event proves something
-/// happened in the past, not that it's still true now; a clean probe proves nothing answered in the
-/// few seconds it ran, not that nothing ever will. Quick flag, not a verdict.
+/// happened in the past, not that it's still true now; a clean DAD result covers the moment the
+/// address was assigned, not a conflict that started later. Quick flag, not a verdict.
 /// </summary>
 public static class IpConflictService
 {
     private static readonly Regex Ipv4Regex = new(@"\b(?:\d{1,3}\.){3}\d{1,3}\b", RegexOptions.Compiled);
     private static readonly Regex MacRegex = new(@"\b([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b", RegexOptions.Compiled);
-    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(3);
 
     public static IpConflictScanResult ScanSystemLog(TimeSpan window, IReadOnlyCollection<string> currentIpAddresses)
     {
@@ -75,56 +72,40 @@ public static class IpConflictService
         return new IpConflictScanResult(events.OrderByDescending(e => e.TimeUtc).ToList(), available);
     }
 
-    /// <summary>#531's active check: issues a live ARP request for <paramref name="ipAddress"/> (this
-    /// machine's own address) and reports whether some *other* MAC answered for it - the same
-    /// address-conflict-detection technique (RFC 5227) an OS runs before binding a DHCP lease.
-    /// Bounded by <see cref="ProbeTimeout"/> on an abandoned background thread - see the class
-    /// remarks for why SendARP isn't trusted to always return promptly.</summary>
-    public static async Task<(bool ConflictFound, string Message)> ProbeOwnAddressAsync(string ipAddress, string? ownMacAddress)
+    /// <summary>#531's active check: Windows' own duplicate-address-detection state for
+    /// <paramref name="ipAddress"/> (one of this machine's addresses) - see the class remarks for why
+    /// this reads the OS's result instead of sending an ARP request itself.</summary>
+    public static Task<(bool ConflictFound, string Message)> CheckDuplicateAddressStateAsync(string ipAddress) => Task.Run(() =>
     {
         if (!IPAddress.TryParse(ipAddress, out var ip) || ip.AddressFamily != AddressFamily.InterNetwork)
-            return (false, "Only IPv4 addresses can be probed this way.");
+            return (false, "Only IPv4 addresses can be checked this way.");
 
-        var (found, mac) = await Task.Run(() => SendArpProbeWithTimeout(ip));
-        if (!found) return (false, "No other host answered for this address on the wire - looks clear right now.");
-
-        bool isSelf = !string.IsNullOrEmpty(ownMacAddress) && mac.Equals(ownMacAddress.Replace(':', '-'), StringComparison.OrdinalIgnoreCase);
-        return isSelf
-            ? (false, $"Only this machine ({mac}) answered - looks clear right now.")
-            : (true, $"Another host at {mac} answered for this machine's own address ({ipAddress}) - a live IP conflict. Quick flag, not a verdict.");
-    }
-
-    private static (bool Found, string Mac) SendArpProbeWithTimeout(IPAddress ip)
-    {
-        (bool Found, string Mac) result = (false, string.Empty);
-        var worker = new Thread(() =>
+        DuplicateAddressDetectionState? state = null;
+        try
         {
-            try
+            foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
             {
-                uint destIp = BitConverter.ToUInt32(ip.GetAddressBytes(), 0);
-                var macBytes = new byte[6];
-                uint macLen = (uint)macBytes.Length;
-                int status = SendARP(destIp, 0, macBytes, ref macLen);
-                if (status == 0 && macLen > 0)
-                {
-                    string mac = string.Join("-", macBytes.Take((int)macLen).Select(b => b.ToString("X2")));
-                    result = (true, mac);
-                }
+                var match = ni.GetIPProperties().UnicastAddresses.FirstOrDefault(u => u.Address.Equals(ip));
+                if (match is null) continue;
+                state = match.DuplicateAddressDetectionState;
+                break;
             }
-            catch
-            {
-                // leave result as "not found"
-            }
-        })
-        { IsBackground = true };
+        }
+        catch
+        {
+            return (false, "Couldn't read this address's duplicate-address-detection state.");
+        }
 
-        worker.Start();
-        worker.Join(ProbeTimeout); // never joined past the timeout - a hung call is simply abandoned
-        return result;
-    }
+        const string notLive = " This is the check Windows ran when the address was assigned, not a live probe - a conflict that started later shows up only in the event history above.";
+        return state switch
+        {
+            null => (false, $"{ipAddress} isn't assigned to any adapter right now - refresh Addressing first."),
+            DuplicateAddressDetectionState.Duplicate => (true, $"Windows' duplicate-address detection marked {ipAddress} as a duplicate - another host answered for this address when it was assigned. Likely a live IP conflict. Quick flag, not a verdict."),
+            DuplicateAddressDetectionState.Preferred => (false, $"Windows' duplicate-address detection found no other host using {ipAddress} (state: Preferred).{notLive}"),
+            DuplicateAddressDetectionState.Tentative => (false, $"Windows hasn't finished checking {ipAddress} yet (state: Tentative) - or the adapter has no link. Check again in a few seconds."),
+            var other => (false, $"Windows reports {ipAddress} as {other} - it isn't in normal use on this adapter.{notLive}"),
+        };
+    });
 
     private static string Truncate(string s, int maxLen) => s.Length <= maxLen ? s : s[..maxLen] + "…";
-
-    [DllImport("iphlpapi.dll", ExactSpelling = true)]
-    private static extern int SendARP(uint destIp, uint srcIp, byte[] macAddr, ref uint physAddrLen);
 }

@@ -1,4 +1,6 @@
+using System.Net;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text.RegularExpressions;
 
 namespace TaskManagerPlus.Services;
@@ -60,8 +62,36 @@ public static class PathMtuService
         var log = new List<string>();
         try
         {
+            // IPv4 only: the DF bit and the 28-byte IPv4+ICMP header math below don't exist in IPv6
+            // (the sending host fragments, the header is 48 bytes), and a host name can resolve to
+            // IPv6 first - so resolve to one IPv4 address and probe that for the whole sweep.
+            IPAddress target;
+            if (IPAddress.TryParse(host, out var literal))
+            {
+                if (literal.AddressFamily != AddressFamily.InterNetwork)
+                    return PathMtuResult.Failed(host, "Path MTU discovery here is IPv4-only (it relies on the IPv4 Don't Fragment bit) - enter an IPv4 address, or a host name that has one.");
+                target = literal;
+            }
+            else
+            {
+                IPAddress[] v4;
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    v4 = await Dns.GetHostAddressesAsync(host, AddressFamily.InterNetwork, cts.Token);
+                }
+                catch
+                {
+                    v4 = Array.Empty<IPAddress>();
+                }
+                if (v4.Length == 0)
+                    return PathMtuResult.Failed(host, $"{host} didn't resolve to an IPv4 address - path MTU discovery here is IPv4-only.");
+                target = v4[0];
+                log.Add($"{host} -> {target}");
+            }
+
             // Baseline: a tiny DF probe has to succeed before the rest of the sweep means anything.
-            var baseline = await ProbeAsync(host, MinPayload);
+            var baseline = await ProbeAsync(target, MinPayload);
             log.Add($"{MinPayload}-byte payload -> {DescribeStatus(baseline)}");
             if (baseline is not { Status: IPStatus.Success })
                 return PathMtuResult.Failed(host,
@@ -70,7 +100,7 @@ public static class PathMtuService
             // #512: probe the standard payload size first, both because it answers "is the full
             // path MTU already fine" in one round trip, and because comparing it against the
             // baseline above is exactly the black-hole signature this item exists to catch.
-            var maxProbe = await ProbeAsync(host, MaxPayload);
+            var maxProbe = await ProbeAsync(target, MaxPayload);
             log.Add($"{MaxPayload}-byte payload -> {DescribeStatus(maxProbe)}");
             bool blackHoleSuspected = maxProbe is not null
                 && maxProbe.Status != IPStatus.Success
@@ -89,7 +119,7 @@ public static class PathMtuService
                 while (lo <= hi)
                 {
                     int mid = (lo + hi) / 2;
-                    var reply = await ProbeAsync(host, mid);
+                    var reply = await ProbeAsync(target, mid);
                     log.Add($"{mid}-byte payload -> {DescribeStatus(reply)}");
                     if (reply is { Status: IPStatus.Success }) { best = mid; lo = mid + 1; }
                     else { hi = mid - 1; }
@@ -117,7 +147,7 @@ public static class PathMtuService
         }
     }
 
-    private static async Task<PingReply?> ProbeAsync(string host, int payloadSize)
+    private static async Task<PingReply?> ProbeAsync(IPAddress host, int payloadSize)
     {
         try
         {

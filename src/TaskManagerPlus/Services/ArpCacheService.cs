@@ -115,11 +115,13 @@ public static class ArpCacheService
         foreach (var group in entries.Where(e => e.MacAddress.Length > 0 && !IsBroadcastOrMulticast(e.MacAddress)).GroupBy(e => e.MacAddress))
         {
             var rows = group.ToList();
-            if (rows.Count <= 1) continue;
+            // Distinct IPs, not rows: one neighbour cached on two interfaces is two rows, one IP.
+            int ipCount = rows.Select(r => r.IpAddress).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            if (ipCount <= 1) continue;
             foreach (var r in rows)
             {
                 r.IsFlagged = true;
-                r.FlagReason = $"{rows.Count} IP addresses resolve to this same MAC ({r.MacAddress}) - could be a NAT gateway/proxy-ARP setup serving multiple virtual IPs, or ARP spoofing. Quick flag, not a verdict.";
+                r.FlagReason = $"{ipCount} IP addresses resolve to this same MAC ({r.MacAddress}) - could be a NAT gateway/proxy-ARP setup serving multiple virtual IPs, or ARP spoofing. Quick flag, not a verdict.";
             }
         }
 

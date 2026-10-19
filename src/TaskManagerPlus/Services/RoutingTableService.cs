@@ -200,9 +200,10 @@ public static class RoutingTableService
 
     /// <summary>#514: routes that survive a reboot, read directly from the registry per the
     /// item's own spec - HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\PersistentRoutes
-    /// for IPv4, the Tcpip6 equivalent for IPv6. Each REG_MULTI_SZ line is
-    /// "&lt;destination&gt;,&lt;netmask&gt;,&lt;gateway&gt;,&lt;metric&gt;"; a line that doesn't
-    /// split into exactly that shape is still shown (as <see cref="PersistentRouteEntry.Raw"/>)
+    /// for IPv4, the Tcpip6 equivalent for IPv6. PersistentRoutes is a subkey: `route -p add`
+    /// stores each route as a value NAME "&lt;destination&gt;,&lt;netmask&gt;,&lt;gateway&gt;,&lt;metric&gt;"
+    /// with empty data. A legacy REG_MULTI_SZ value of the same name is still read too. A line
+    /// that doesn't split into exactly that shape is still shown (as <see cref="PersistentRouteEntry.Raw"/>)
     /// rather than dropped - degrade to showing the raw value, never fabricate structure.</summary>
     public static List<PersistentRouteEntry> ReadPersistentRoutes()
     {
@@ -217,16 +218,24 @@ public static class RoutingTableService
         var results = new List<PersistentRouteEntry>();
         try
         {
-            using var key = Registry.LocalMachine.OpenSubKey(keyPath);
-            if (key?.GetValue("PersistentRoutes") is string[] lines)
+            var lines = new List<string>();
+            using (var routesKey = Registry.LocalMachine.OpenSubKey(keyPath + @"\PersistentRoutes"))
             {
-                foreach (var line in lines)
-                {
-                    var parts = line.Split(',');
-                    results.Add(parts.Length >= 4
-                        ? new PersistentRouteEntry(addressFamily, parts[0].Trim(), parts[1].Trim(), parts[2].Trim(), parts[3].Trim(), line)
-                        : new PersistentRouteEntry(addressFamily, line, string.Empty, string.Empty, string.Empty, line));
-                }
+                if (routesKey is not null)
+                    lines.AddRange(routesKey.GetValueNames().Where(n => !string.IsNullOrWhiteSpace(n)));
+            }
+            using (var key = Registry.LocalMachine.OpenSubKey(keyPath))
+            {
+                if (key?.GetValue("PersistentRoutes") is string[] multi)
+                    lines.AddRange(multi.Where(l => !string.IsNullOrWhiteSpace(l)));
+            }
+
+            foreach (var line in lines.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var parts = line.Split(',');
+                results.Add(parts.Length >= 4
+                    ? new PersistentRouteEntry(addressFamily, parts[0].Trim(), parts[1].Trim(), parts[2].Trim(), parts[3].Trim(), line)
+                    : new PersistentRouteEntry(addressFamily, line, string.Empty, string.Empty, string.Empty, line));
             }
         }
         catch

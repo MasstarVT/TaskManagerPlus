@@ -207,6 +207,9 @@ public static class NetworkFilterService
             hasEntry = false;
         }
 
+        // The catalog's provider entries are followed by "Name Space Provider Entry" blocks, which
+        // carry their own Description lines - skipped, or they'd overwrite the last provider's.
+        bool inNameSpaceBlock = false;
         foreach (var rawLine in output.Replace("\r\n", "\n").Split('\n'))
         {
             string line = rawLine.TrimEnd();
@@ -214,8 +217,16 @@ public static class NetworkFilterService
             {
                 Flush();
                 hasEntry = true;
+                inNameSpaceBlock = false;
                 continue;
             }
+            if (line.Contains("Name Space Provider Entry", StringComparison.OrdinalIgnoreCase))
+            {
+                Flush();
+                inNameSpaceBlock = true;
+                continue;
+            }
+            if (inNameSpaceBlock) continue;
 
             var match = CatalogFieldRegex.Match(line);
             if (!match.Success) continue;

@@ -95,7 +95,9 @@ public static class HostsFileService
                 }
             }
 
-            foreach (var group in entries.GroupBy(e => e.Hostname, StringComparer.OrdinalIgnoreCase))
+            // Per address family: an IPv4 plus an IPv6 line for one name (127.0.0.1 and ::1 localhost)
+            // is the normal shape, not a duplicate. IPv6 text always contains ':', IPv4 never does.
+            foreach (var group in entries.GroupBy(e => (Host: e.Hostname.ToUpperInvariant(), IsV6: e.IpAddress.Contains(':'))))
             {
                 if (group.Count() <= 1) continue;
                 foreach (var e in group) e.IsDuplicate = true;

@@ -599,7 +599,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     private bool _isProbingGratuitousArp;
     public bool IsProbingGratuitousArp { get => _isProbingGratuitousArp; private set => SetProperty(ref _isProbingGratuitousArp, value); }
 
-    private string _gratuitousArpResultText = "Not probed yet.";
+    private string _gratuitousArpResultText = "Not checked yet.";
     public string GratuitousArpResultText { get => _gratuitousArpResultText; private set => SetProperty(ref _gratuitousArpResultText, value); }
 
     public AsyncRelayCommand ProbeGratuitousArpCommand { get; }
@@ -1646,19 +1646,19 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         ResetIpStackCommand = new RelayCommand(_ => RunStackResetAction(
             "Reset TCP/IP stack",
             "Resets the TCP/IP stack to its installation defaults (`netsh int ip reset`). Fixes a corrupted Winsock/TCP-IP registry configuration, but wipes any custom IP settings, static routes, and some third-party network filter registrations. A restart is recommended afterward.",
-            NetworkStackResetService.ResetIpStackAsync), _ => !ReadOnlyModeService.IsReadOnly);
+            "netsh int ip reset", NetworkStackResetService.ResetIpStackAsync), _ => !ReadOnlyModeService.IsReadOnly);
         FlushDnsResolverCacheCommand = new RelayCommand(_ => RunStackResetAction(
             "Flush DNS resolver cache",
             "Clears the local DNS resolver cache (`ipconfig /flushdns`). Safe and low-impact - the next lookup for any host is just slightly slower while the cache refills. Fixes a stale/poisoned cached DNS record.",
-            NetworkStackResetService.FlushDnsAsync), _ => !ReadOnlyModeService.IsReadOnly);
+            "ipconfig /flushdns", NetworkStackResetService.FlushDnsAsync), _ => !ReadOnlyModeService.IsReadOnly);
         ClearArpCacheCommand = new RelayCommand(_ => RunStackResetAction(
             "Clear ARP cache",
             "Clears the cached IP-to-MAC address mappings for the local network (`arp -d *`). Safe - Windows rebuilds it automatically as needed, with a brief delay on the next connection to each host. Fixes a stale ARP entry (e.g. after a device's network card was replaced).",
-            NetworkStackResetService.ClearArpCacheAsync), _ => !ReadOnlyModeService.IsReadOnly);
+            "arp -d *", NetworkStackResetService.ClearArpCacheAsync), _ => !ReadOnlyModeService.IsReadOnly);
         ResetNetBiosCacheCommand = new RelayCommand(_ => RunStackResetAction(
             "Reset NetBIOS name cache",
             "Purges and reloads the NetBIOS name cache (`nbtstat -R`). Safe - only affects NetBIOS name resolution (mostly legacy Windows file-sharing/`\\\\computername` lookups), rebuilt automatically. Fixes a stale cached NetBIOS name-to-address mapping.",
-            NetworkStackResetService.ResetNetBiosCacheAsync), _ => !ReadOnlyModeService.IsReadOnly);
+            "nbtstat -R", NetworkStackResetService.ResetNetBiosCacheAsync), _ => !ReadOnlyModeService.IsReadOnly);
 
         // #577: VPN default-route / DNS-leak check wiring.
         RunVpnTunnelCheckCommand = new AsyncRelayCommand(RunVpnTunnelCheckAsync, () => !IsCheckingVpnTunnel);
@@ -2642,8 +2642,9 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Fired on MtrService's own background probe-loop thread - marshal to the UI thread
-    /// before touching any bound collection, same pattern OnLatencyCycleCompleted already uses.</summary>
-    private void OnMtrCycleCompleted() => System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+    /// before touching any bound collection. InvokeAsync, not Invoke: the probe loop must never
+    /// block on the UI thread (see MtrService.Stop).</summary>
+    private void OnMtrCycleCompleted() => System.Windows.Application.Current?.Dispatcher.InvokeAsync(() =>
     {
         var snapshot = _mtr.GetSnapshot();
         MtrHops.Clear();
@@ -2958,6 +2959,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         {
             bool ok = await DnsCacheService.FlushAsync();
             DnsCacheStatusText = ok ? "Cache flushed." : "Flush may not have succeeded - check the cache below.";
+            JournalOneShotRun("Flush DNS resolver cache", "ipconfig /flushdns", ok);
         }
         catch (Exception ex)
         {
@@ -3013,7 +3015,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>#524: scans the DNS-Client Operational + System/Dnscache logs over the chosen
+    /// <summary>#524: scans the System log's DNS-Client timeout + Dnscache events over the chosen
     /// lookback window - shelled off the UI thread via Task.Run since EventLogReader is
     /// synchronous, same pattern this app's other event-log reads already take.</summary>
     private async Task ScanDnsFailuresAsync()
@@ -3031,8 +3033,8 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             DnsFailuresByResolver.Clear();
             foreach (var g in result.ByResolver) DnsFailuresByResolver.Add(g);
 
-            DnsScanStatusText = !result.OperationalChannelAvailable
-                ? $"DNS-Client Operational log unavailable (it's disabled by default - enable it in Event Viewer's \"Show Analytic and Debug Logs\" to get full results). Found {result.Events.Count} event(s) from the System log only."
+            DnsScanStatusText = !result.SystemLogAvailable
+                ? "Couldn't read the System log's DNS-Client events (access denied or the event log service is unavailable)."
                 : result.Events.Count == 0
                     ? $"No DNS timeout/failure events in the last {DnsScanWindowHours:0.#}h."
                     : $"{result.Events.Count} event(s) in the last {DnsScanWindowHours:0.#}h across {result.ByName.Count} name(s) and {result.ByResolver.Count} resolver bucket(s).";
@@ -3208,28 +3210,28 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>#531's active check: a gratuitous-ARP-style probe of the selected adapter's own
-    /// address - see IpConflictService.ProbeOwnAddressAsync's remarks.</summary>
+    /// <summary>#531's active check: Windows' own duplicate-address-detection result for the
+    /// selected adapter's address - see IpConflictService's remarks for why it isn't a live probe.</summary>
     private async Task ProbeGratuitousArpAsync()
     {
         if (IsProbingGratuitousArp) return;
         var target = SelectedAddressingAdapter ?? Addressing.FirstOrDefault();
         if (target is null)
         {
-            GratuitousArpResultText = "No adapter with an IPv4 address to probe - refresh Addressing first.";
+            GratuitousArpResultText = "No adapter with an IPv4 address to check - refresh Addressing first.";
             return;
         }
 
         IsProbingGratuitousArp = true;
-        GratuitousArpResultText = $"Probing {target.IpAddress}...";
+        GratuitousArpResultText = $"Checking {target.IpAddress}...";
         try
         {
-            var (_, message) = await IpConflictService.ProbeOwnAddressAsync(target.IpAddress, target.MacAddress);
+            var (_, message) = await IpConflictService.CheckDuplicateAddressStateAsync(target.IpAddress);
             GratuitousArpResultText = message;
         }
         catch (Exception ex)
         {
-            GratuitousArpResultText = $"Probe failed: {ex.Message}";
+            GratuitousArpResultText = $"Check failed: {ex.Message}";
         }
         finally
         {
@@ -3682,7 +3684,9 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         StackInventoryStatusText = "Loading...";
         try
         {
-            var result = await NetworkStackInventoryService.ReadAsync();
+            // Task.Run: the multi-MB WFP XML parse, the Services registry sweep and the per-driver
+            // FileVersionInfo reads would otherwise resume on the UI thread after the netsh await.
+            var result = await Task.Run(NetworkStackInventoryService.ReadAsync);
 
             WfpProviders.Clear();
             foreach (var p in result.Providers) WfpProviders.Add(p);
@@ -3865,9 +3869,14 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     {
         IsResettingWinsock = true;
         WinsockResetStatusText = "Resetting...";
+        bool success = false;
         try
         {
-            WinsockResetStatusText = await WinsockService.ResetAsync();
+            string text = await WinsockService.ResetAsync();
+            // ResetAsync reports only text; its two failure messages are the only ones starting this way.
+            success = !text.StartsWith("Winsock reset failed", StringComparison.Ordinal)
+                && !text.StartsWith("Winsock reset timed out", StringComparison.Ordinal);
+            WinsockResetStatusText = text;
         }
         catch (Exception ex)
         {
@@ -3877,6 +3886,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         {
             IsResettingWinsock = false;
         }
+        JournalOneShotRun("Reset Winsock catalog", "netsh winsock reset", success);
     }
 
     // ---- #576 helper (reset toolkit) ---------------------------------------------------------
@@ -3885,24 +3895,27 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     /// <paramref name="warningText"/> (the plain-English "what it does and what it will break"
     /// description) behind an explicit Yes/No confirm, same MessageBox.Show pattern used throughout
     /// this ViewModel, then runs <paramref name="action"/> and reports its result. Each action logs
-    /// itself via NetworkStackResetService's own AppendToActionLog, not duplicated here.</summary>
-    private void RunStackResetAction(string actionName, string warningText, Func<Task<StackResetActionResult>> action)
+    /// itself via NetworkStackResetService's own AppendToActionLog, and is also recorded in the
+    /// app-wide change journal as a one-shot run of <paramref name="commandLine"/>.</summary>
+    private void RunStackResetAction(string actionName, string warningText, string commandLine, Func<Task<StackResetActionResult>> action)
     {
         if (IsRunningStackReset) return;
 
         var confirm = MessageBox.Show($"{warningText}\n\nRun this now?", actionName, MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
-        _ = RunStackResetActionAsync(actionName, action);
+        _ = RunStackResetActionAsync(actionName, commandLine, action);
     }
 
-    private async Task RunStackResetActionAsync(string actionName, Func<Task<StackResetActionResult>> action)
+    private async Task RunStackResetActionAsync(string actionName, string commandLine, Func<Task<StackResetActionResult>> action)
     {
         IsRunningStackReset = true;
         StackResetStatusText = $"Running \"{actionName}\"...";
+        bool success = false;
         try
         {
             var result = await action();
+            success = result.Success;
             StackResetStatusText = $"{result.ActionName}: {(result.Success ? "done" : "failed")} — {result.Output}";
         }
         catch (Exception ex)
@@ -3913,6 +3926,24 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         {
             IsRunningStackReset = false;
         }
+        JournalOneShotRun(actionName, commandLine, success);
+    }
+
+    /// <summary>Records a network-stack command in the change journal, like every other mutating
+    /// action. Nothing here has a machine-reversible inverse, so the entry is never undoable.</summary>
+    private static void JournalOneShotRun(string actionName, string commandLine, bool success)
+    {
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.OneShotToolRun,
+            Target = actionName,
+            ActionDescription = $"Ran {commandLine}",
+            AfterValue = commandLine,
+            TriggeredBy = "Network tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "One-shot tool run - nothing to reverse.",
+        });
     }
 
     // ---- #577 helper (VPN tunnel/DNS-leak check) -----------------------------------------------

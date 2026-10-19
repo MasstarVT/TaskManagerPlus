@@ -31,9 +31,13 @@ public static class SpeedTestService
     public const string DefaultDownloadUrl = "https://speed.cloudflare.com/__down?bytes=25000000";
     public const string DefaultUploadUrl = "https://speed.cloudflare.com/__up";
 
+    private const int TimeoutSeconds = 60;
+    private static readonly string TimeoutMessage =
+        $"Timed out after {TimeoutSeconds} s - the link is too slow (or the endpoint too unresponsive) to finish this test in time.";
+
     private static readonly HttpClient Http = new(new HttpClientHandler { UseProxy = true })
     {
-        Timeout = TimeSpan.FromSeconds(60),
+        Timeout = TimeSpan.FromSeconds(TimeoutSeconds),
     };
 
     /// <summary>Streams a GET response to completion, timing sustained throughput. Reads into a
@@ -60,9 +64,14 @@ public static class SpeedTestService
             double mbps = total * 8.0 / seconds / 1_000_000.0;
             return new SpeedTestResult(startedAt, "Download", url, mbps, total, seconds, null);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             return new SpeedTestResult(startedAt, "Download", url, 0, 0, 0, "Cancelled.");
+        }
+        catch (OperationCanceledException)
+        {
+            // Not the caller's token: HttpClient.Timeout expired.
+            return new SpeedTestResult(startedAt, "Download", url, 0, 0, 0, TimeoutMessage);
         }
         catch (Exception ex)
         {
@@ -91,9 +100,13 @@ public static class SpeedTestService
             string? error = response.IsSuccessStatusCode ? null : $"Server returned {(int)response.StatusCode} {response.ReasonPhrase}";
             return new SpeedTestResult(startedAt, "Upload", url, mbps, bytes.Length, seconds, error);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             return new SpeedTestResult(startedAt, "Upload", url, 0, 0, 0, "Cancelled.");
+        }
+        catch (OperationCanceledException)
+        {
+            return new SpeedTestResult(startedAt, "Upload", url, 0, 0, 0, TimeoutMessage);
         }
         catch (Exception ex)
         {

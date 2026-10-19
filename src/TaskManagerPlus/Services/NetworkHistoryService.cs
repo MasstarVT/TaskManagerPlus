@@ -46,7 +46,13 @@ public static class NetworkHistoryService
     // Round 12, #87: routed through AppPaths so portable mode redirects this next to the exe.
     private static string HistoryPath => AppPaths.GetPath("network-history.json");
 
+    private static string CorruptPath => AppPaths.GetPath("network-history.corrupt.json");
+
     private const int MaxDays = 180;
+
+    // RecordSample runs on a pool thread every 15s while RecordCaptureSample and the readers run on
+    // the UI thread - every load/modify/save goes through this lock so neither sees a half-written file.
+    private static readonly object FileLock = new();
 
     /// <summary>Adds one sample's connection counts to today's running per-process totals and
     /// persists the result. Called once per NetworkViewModel connectivity-check tick (the existing
@@ -55,32 +61,35 @@ public static class NetworkHistoryService
     /// at that cadence.</summary>
     public static void RecordSample(IEnumerable<NetworkProcessUsage> usages)
     {
-        try
+        lock (FileLock)
         {
-            var entries = Load();
-            string today = DateTime.Now.ToString("yyyy-MM-dd");
-
-            foreach (var usage in usages)
+            try
             {
-                var existing = entries.FirstOrDefault(e => e.Date == today &&
-                    e.ProcessName.Equals(usage.ProcessName, StringComparison.OrdinalIgnoreCase));
-                if (existing is null)
+                if (!TryLoad(out var entries)) return;
+                string today = DateTime.Now.ToString("yyyy-MM-dd");
+
+                foreach (var usage in usages)
                 {
-                    existing = new NetworkHistoryEntry { Date = today, ProcessName = usage.ProcessName };
-                    entries.Add(existing);
+                    var existing = entries.FirstOrDefault(e => e.Date == today &&
+                        e.ProcessName.Equals(usage.ProcessName, StringComparison.OrdinalIgnoreCase));
+                    if (existing is null)
+                    {
+                        existing = new NetworkHistoryEntry { Date = today, ProcessName = usage.ProcessName };
+                        entries.Add(existing);
+                    }
+                    existing.ConnectionCountTotal += usage.ConnectionCount;
+                    existing.SampleCount++;
                 }
-                existing.ConnectionCountTotal += usage.ConnectionCount;
-                existing.SampleCount++;
+
+                var cutoff = DateTime.Now.AddDays(-MaxDays);
+                entries = entries.Where(e => DateTime.TryParse(e.Date, out var d) && d >= cutoff).ToList();
+
+                Save(entries);
             }
-
-            var cutoff = DateTime.Now.AddDays(-MaxDays);
-            entries = entries.Where(e => DateTime.TryParse(e.Date, out var d) && d >= cutoff).ToList();
-
-            Save(entries);
-        }
-        catch
-        {
-            // Best-effort - a failed write shouldn't disrupt the connectivity-check tick it rides on.
+            catch
+            {
+                // Best-effort - a failed write shouldn't disrupt the connectivity-check tick it rides on.
+            }
         }
     }
 
@@ -90,33 +99,36 @@ public static class NetworkHistoryService
     /// timer - a capture is explicitly user-initiated, per CLAUDE.md's on-demand convention).</summary>
     public static void RecordCaptureSample(IEnumerable<EtwProcessBandwidth> capture)
     {
-        try
+        lock (FileLock)
         {
-            var entries = Load();
-            string today = DateTime.Now.ToString("yyyy-MM-dd");
-
-            foreach (var proc in capture)
+            try
             {
-                var existing = entries.FirstOrDefault(e => e.Date == today &&
-                    e.ProcessName.Equals(proc.ProcessName, StringComparison.OrdinalIgnoreCase));
-                if (existing is null)
+                if (!TryLoad(out var entries)) return;
+                string today = DateTime.Now.ToString("yyyy-MM-dd");
+
+                foreach (var proc in capture)
                 {
-                    existing = new NetworkHistoryEntry { Date = today, ProcessName = proc.ProcessName };
-                    entries.Add(existing);
+                    var existing = entries.FirstOrDefault(e => e.Date == today &&
+                        e.ProcessName.Equals(proc.ProcessName, StringComparison.OrdinalIgnoreCase));
+                    if (existing is null)
+                    {
+                        existing = new NetworkHistoryEntry { Date = today, ProcessName = proc.ProcessName };
+                        entries.Add(existing);
+                    }
+                    existing.BytesSentTotal += proc.BytesSent;
+                    existing.BytesReceivedTotal += proc.BytesReceived;
+                    existing.CaptureCount++;
                 }
-                existing.BytesSentTotal += proc.BytesSent;
-                existing.BytesReceivedTotal += proc.BytesReceived;
-                existing.CaptureCount++;
+
+                var cutoff = DateTime.Now.AddDays(-MaxDays);
+                entries = entries.Where(e => DateTime.TryParse(e.Date, out var d) && d >= cutoff).ToList();
+
+                Save(entries);
             }
-
-            var cutoff = DateTime.Now.AddDays(-MaxDays);
-            entries = entries.Where(e => DateTime.TryParse(e.Date, out var d) && d >= cutoff).ToList();
-
-            Save(entries);
-        }
-        catch
-        {
-            // Best-effort - a failed write shouldn't stop the capture result from being shown live.
+            catch
+            {
+                // Best-effort - a failed write shouldn't stop the capture result from being shown live.
+            }
         }
     }
 
@@ -155,28 +167,60 @@ public static class NetworkHistoryService
             .ToList();
     }
 
+    /// <summary>Read-only callers: whatever loads, or an empty list.</summary>
     private static List<NetworkHistoryEntry> Load()
     {
+        lock (FileLock)
+        {
+            TryLoad(out var entries);
+            return entries;
+        }
+    }
+
+    /// <summary>False only when the file exists but can't be read right now (sharing violation,
+    /// access denied) - writers then skip this save rather than overwrite up to 180 days of history
+    /// with a single sample. A file that reads but doesn't parse is copied to
+    /// network-history.corrupt.json and treated as empty, so recording resumes instead of stopping
+    /// for good.</summary>
+    private static bool TryLoad(out List<NetworkHistoryEntry> entries)
+    {
+        entries = new List<NetworkHistoryEntry>();
+        string json;
         try
         {
-            if (File.Exists(HistoryPath))
-            {
-                var json = File.ReadAllText(HistoryPath);
-                var entries = JsonSerializer.Deserialize<List<NetworkHistoryEntry>>(json);
-                if (entries is not null) return entries;
-            }
+            if (!File.Exists(HistoryPath)) return true;
+            json = File.ReadAllText(HistoryPath);
         }
         catch
         {
-            // Corrupt/unreadable file - start fresh rather than blocking on it.
+            return false;
         }
-        return new List<NetworkHistoryEntry>();
+
+        try
+        {
+            entries = JsonSerializer.Deserialize<List<NetworkHistoryEntry>>(json) ?? new List<NetworkHistoryEntry>();
+            return true;
+        }
+        catch (JsonException)
+        {
+            try { File.Copy(HistoryPath, CorruptPath, overwrite: true); }
+            catch { return false; } // couldn't preserve it - don't overwrite it either
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
+    /// <summary>Write to a temp file and swap it in, so a reader (or a crash mid-write) never sees
+    /// a truncated file.</summary>
     private static void Save(List<NetworkHistoryEntry> entries)
     {
         var dir = Path.GetDirectoryName(HistoryPath)!;
         Directory.CreateDirectory(dir);
-        File.WriteAllText(HistoryPath, JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true }));
+        string tmp = HistoryPath + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true }));
+        File.Move(tmp, HistoryPath, overwrite: true);
     }
 }

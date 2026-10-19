@@ -27,7 +27,7 @@ public sealed record WifiRadioSnapshot(
     /// <summary>#540: 802.11n/ac/ax/... radio type decoded from DOT11_PHY_TYPE.</summary>
     string PhyType,
     /// <summary>#540: negotiated receive rate in Mbps (WLAN_ASSOCIATION_ATTRIBUTES.ulRxRate is in
-    /// units of 100 Kbps).</summary>
+    /// Kbps - stated in wlanapi.h's comment on that struct; the online reference gives no unit).</summary>
     double? RxRateMbps,
     double? TxRateMbps)
 {
@@ -102,8 +102,8 @@ public sealed class WlanNativeService : IDisposable
                     assoc.wlanSignalQuality,
                     channel,
                     PhyTypeName((Dot11PhyType)assoc.dot11PhyType),
-                    assoc.ulRxRate == 0 ? null : assoc.ulRxRate / 10.0,
-                    assoc.ulTxRate == 0 ? null : assoc.ulTxRate / 10.0);
+                    assoc.ulRxRate == 0 ? null : assoc.ulRxRate / 1000.0,
+                    assoc.ulTxRate == 0 ? null : assoc.ulTxRate / 1000.0);
             }
             catch
             {

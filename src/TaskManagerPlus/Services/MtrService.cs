@@ -49,7 +49,6 @@ public sealed class MtrService : IDisposable
     private readonly object _lock = new();
     private readonly Dictionary<int, HopTracker> _hops = new();
     private CancellationTokenSource? _cts;
-    private Task? _loopTask;
 
     // Once a cycle's probe at some TTL comes back as the destination itself (IPStatus.Success),
     // there's no point probing further hops on later cycles either - this narrows to that count.
@@ -63,20 +62,30 @@ public sealed class MtrService : IDisposable
     {
         Stop();
         Target = host;
-        lock (_lock) _hops.Clear();
-        _knownHopCount = MaxHops;
+        lock (_lock)
+        {
+            _hops.Clear();
+            _knownHopCount = MaxHops;
+        }
 
-        _cts = new CancellationTokenSource();
+        var cts = new CancellationTokenSource();
+        _cts = cts;
         IsRunning = true;
-        _loopTask = Task.Run(() => RunLoopAsync(host, intervalSeconds, _cts.Token));
+        _ = Task.Run(async () =>
+        {
+            try { await RunLoopAsync(host, intervalSeconds, cts.Token); }
+            finally { cts.Dispose(); }
+        });
     }
 
+    /// <summary>Cancel-only: never waits for the loop. Stop is called from the UI thread while the
+    /// loop's in-flight ping can take up to <see cref="TimeoutMs"/> to return, and the loop's
+    /// CycleCompleted handler marshals onto that same thread. A cancelled loop records nothing
+    /// further (checked under the lock), so a quick Stop+Start can't mix two runs' stats.</summary>
     public void Stop()
     {
         if (!IsRunning && _cts is null) return;
         try { _cts?.Cancel(); } catch { /* best-effort */ }
-        try { _loopTask?.Wait(TimeSpan.FromSeconds(2)); } catch { /* best-effort - don't block the UI thread indefinitely on a stuck probe */ }
-        _cts?.Dispose();
         _cts = null;
         IsRunning = false;
     }
@@ -126,6 +135,7 @@ public sealed class MtrService : IDisposable
 
             lock (_lock)
             {
+                if (ct.IsCancellationRequested) return;
                 if (!_hops.TryGetValue(ttl, out var tracker))
                 {
                     tracker = new HopTracker { Hop = ttl };
