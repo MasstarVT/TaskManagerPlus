@@ -207,7 +207,7 @@ public static class BaselineService
         string fileName = $"Baseline-{baseline.CapturedAt:yyyyMMdd_HHmmss}-{Guid.NewGuid():N}"[..40] + ".json";
         string path = Path.Combine(BaselinesDirectory, fileName);
         var json = JsonSerializer.Serialize(baseline, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(path, json);
+        AppPaths.WriteAllTextAtomic(path, json);
     }
 
     /// <summary>Every baseline currently on disk, oldest first (chronological - what #951's
@@ -247,14 +247,19 @@ public static class BaselineService
         if (max <= 0) return;
         try
         {
+            // Only files that read back as baselines are counted or pruned: anything else (a
+            // damaged baseline, a file that isn't one) would otherwise sort oldest and go first.
             var files = Directory.GetFiles(BaselinesDirectory, "*.json")
-                .Select(f => (Path: f, Time: SafeCapturedAt(f)))
+                .Select(f => (Path: f, Time: TryReadCapturedAt(f)))
+                .Where(f => f.Time is not null)
                 .OrderBy(f => f.Time)
                 .ToList();
 
             int excess = files.Count - max;
             for (int i = 0; i < excess; i++)
             {
+                // A junction/link in the settings folder would point this elevated delete elsewhere.
+                if (AppPaths.FindRedirectedOutput(files[i].Path) is not null) continue;
                 try { File.Delete(files[i].Path); } catch { /* best-effort - a locked/missing file just stays */ }
             }
         }
@@ -264,16 +269,16 @@ public static class BaselineService
         }
     }
 
-    private static DateTime SafeCapturedAt(string path)
+    private static DateTime? TryReadCapturedAt(string path)
     {
         try
         {
             var json = File.ReadAllText(path);
             var baseline = JsonSerializer.Deserialize<PerformanceBaseline>(json);
-            if (baseline is not null) return baseline.CapturedAt;
+            if (baseline is not null && baseline.CapturedAt != default) return baseline.CapturedAt;
         }
-        catch { /* fall through to file time below */ }
-        try { return File.GetCreationTime(path); } catch { return DateTime.MinValue; }
+        catch { /* not a readable baseline */ }
+        return null;
     }
 
     /// <summary>#951/#955/#956: the shared set of performance-metric comparison rows between two

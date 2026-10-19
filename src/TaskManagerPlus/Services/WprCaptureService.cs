@@ -85,7 +85,10 @@ public static class WprCaptureService
         @"Time since start\s*:\s*(?:(?<d>\d+)[.:](?=\d+:\d+:\d+))?(?<h>\d+):(?<m>\d{1,2}):(?<s>\d{1,2})",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    private static bool IsFileCaptureRunning { get; set; }
+    /// <summary>True from just before CaptureAsync's `-start` until its session is stopped or
+    /// cancelled (not during the tracerpt report step) - the exit-time CancelBlocking keys off
+    /// this, so it never cancels a recording some other tool started after this app's ended.</summary>
+    public static bool IsFileCaptureRunning { get; private set; }
 
     private static void WriteArmedMarker(DateTime startRequestedUtc)
     {
@@ -165,6 +168,14 @@ public static class WprCaptureService
         if (!IsCircularCaptureRunning)
             return (false, "No circular capture is currently running.", null);
 
+        // The elevated wpr writes the file; refuse a path a junction could redirect. The session is
+        // cancelled rather than left running, since callers treat this call as the end of it.
+        if (AppPaths.FindRedirectedOutput(etlPath) is { } redirected)
+        {
+            await CancelCircularAsync();
+            return (false, $"Refused to save the circular capture: {redirected}.", null);
+        }
+
         try { Directory.CreateDirectory(Path.GetDirectoryName(etlPath)!); } catch { /* best-effort */ }
 
         var (stopOk, stopMsg) = await RunAsync(WprPath, $"-stop \"{etlPath}\"", TimeSpan.FromSeconds(60), CancellationToken.None);
@@ -205,11 +216,16 @@ public static class WprCaptureService
             return (false, "wpr.exe/tracerpt.exe weren't found on this system - offline capture isn't available.", null, null);
 
         string dir = Path.Combine(AppPaths.SettingsDirectory, "WprCaptures");
-        try { Directory.CreateDirectory(dir); }
-        catch { return (false, "Couldn't create a folder for the capture.", null, null); }
-
         string etl = Path.Combine(dir, $"capture_{DateTime.Now:yyyyMMdd_HHmmss}.etl");
         string report = Path.ChangeExtension(etl, ".report.html");
+
+        // The elevated wpr/tracerpt write these user-opened files into the settings folder, so a
+        // junction on the way there is refused - before the folder is created (CreateDirectory
+        // would follow it) and again right before each write.
+        if (AppPaths.FindRedirectedOutput(etl) is { } redirected)
+            return (false, $"Refused to start the WPR capture: {redirected}.", null, null);
+        try { Directory.CreateDirectory(dir); }
+        catch { return (false, "Couldn't create a folder for the capture.", null, null); }
 
         // Cancel first only a stale session this app's own crashed/killed run left behind (the
         // marker, checked against `wpr -status`) - a blind `wpr -cancel` would also end the ETW
@@ -217,12 +233,17 @@ public static class WprCaptureService
         // makes -start below fail instead.
         if (!IsCircularCaptureRunning) await CancelLeakedRecordingAsync();
 
+        // Set before -start: a start still in flight when the app closes can leave the session
+        // running, and the exit-time cancel keys off this flag.
+        IsFileCaptureRunning = true;
         DateTime startRequestedUtc = DateTime.UtcNow;
         var (startOk, startMsg) = await RunAsync(WprPath, "-start GeneralProfile -filemode", TimeSpan.FromSeconds(30), ct);
         if (!startOk)
+        {
+            IsFileCaptureRunning = false;
             return (false, $"Couldn't start the WPR capture: {startMsg}", null, null);
+        }
 
-        IsFileCaptureRunning = true;
         WriteArmedMarker(startRequestedUtc);
 
         try
@@ -237,12 +258,22 @@ public static class WprCaptureService
             throw;
         }
 
+        if (AppPaths.FindRedirectedOutput(etl) is { } redirectedAtStop)
+        {
+            await RunAsync(WprPath, "-cancel", TimeSpan.FromSeconds(10), CancellationToken.None, ignoreExitCode: true);
+            IsFileCaptureRunning = false;
+            ClearArmedMarker();
+            return (false, $"Refused to save the WPR capture: {redirectedAtStop}.", null, null);
+        }
+
         var (stopOk, stopMsg) = await RunAsync(WprPath, $"-stop \"{etl}\"", TimeSpan.FromSeconds(60), CancellationToken.None);
         IsFileCaptureRunning = false;
         ClearArmedMarker();
         if (!stopOk || !File.Exists(etl))
             return (false, $"Couldn't stop/save the WPR capture: {stopMsg}", null, null);
 
+        if (AppPaths.FindRedirectedOutput(report) is { } redirectedReport)
+            return (true, $"Capture saved, but the report was refused: {redirectedReport}.", etl, null);
         var (reportOk, reportMsg) = await RunAsync(TracerptPath, $"\"{etl}\" -report \"{report}\" -f html -y", TimeSpan.FromSeconds(120), CancellationToken.None);
         return reportOk && File.Exists(report)
             ? (true, "Capture complete.", etl, report)

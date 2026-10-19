@@ -68,12 +68,15 @@ public sealed class HardFaultEtwService
         if (!ToolsAvailable)
             return (false, "logman.exe/tracerpt.exe weren't found on this system - hard-fault ETW capture isn't available.", 0);
 
-        string dir = Path.Combine(AppPaths.SettingsDirectory, "ResponsivenessTraces");
-        try { Directory.CreateDirectory(dir); }
-        catch { return (false, "Couldn't create a temp folder for the trace.", 0); }
+        // logman writes the .etl and tracerpt the .xml, both elevated, and this app parses and
+        // deletes them - so they go in a per-sample admin-only folder (as DpcLatencyService does),
+        // not the user-writable settings folder where a junction could redirect them.
+        var workDir = AdminDataPaths.CreatePrivateTempDirectory("HardFaultSample", out string? dirError);
+        if (workDir is null)
+            return (false, $"Couldn't create a private folder for the trace: {dirError}", 0);
 
-        string etl = Path.Combine(dir, $"hardfault_{Guid.NewGuid():N}.etl");
-        string xml = Path.Combine(dir, $"hardfault_{Guid.NewGuid():N}.xml");
+        string etl = Path.Combine(workDir.FullName, $"hardfault_{Guid.NewGuid():N}.etl");
+        string xml = Path.Combine(workDir.FullName, $"hardfault_{Guid.NewGuid():N}.xml");
 
         try
         {
@@ -121,8 +124,7 @@ public sealed class HardFaultEtwService
         }
         finally
         {
-            try { if (File.Exists(etl)) File.Delete(etl); } catch { /* best-effort cleanup */ }
-            try { if (File.Exists(xml)) File.Delete(xml); } catch { /* best-effort cleanup */ }
+            AdminDataPaths.TryDelete(workDir);
         }
     }
 

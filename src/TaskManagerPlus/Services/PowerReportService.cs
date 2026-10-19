@@ -56,12 +56,25 @@ public static class PowerReportService
     /// #229's 60s run.</summary>
     public static async Task<(bool Ok, string Message, List<TimerResolutionRequesterRow> Rows)> RunTimerResolutionRequestersAsync(CancellationToken ct)
     {
-        string path = Path.Combine(ReportsDir, $"timerres_{DateTime.Now:yyyyMMdd_HHmmss}.html");
-        var (produced, output) = await RunToFileAsync($"/energy /duration 15 /output \"{path}\"", path, TimeSpan.FromSeconds(45), ct);
-        if (!produced)
-            return (false, $"powercfg /energy didn't produce a report: {Truncate(output)}", new List<TimerResolutionRequesterRow>());
+        // Only parsed, never shown, so the report goes in a per-run admin-only folder rather than
+        // the user-writable PowerReports one.
+        var tempDir = AdminDataPaths.CreatePrivateTempDirectory("timerres", out string? dirError);
+        if (tempDir is null)
+            return (false, $"powercfg /energy wasn't run: {dirError ?? "couldn't create a private folder for its report"}.", new List<TimerResolutionRequesterRow>());
+        string html;
+        try
+        {
+            string path = Path.Combine(tempDir.FullName, "timerres.html");
+            var (produced, output) = await RunToFileAsync($"/energy /duration 15 /output \"{path}\"", path, TimeSpan.FromSeconds(45), ct);
+            if (!produced)
+                return (false, $"powercfg /energy didn't produce a report: {Truncate(output)}", new List<TimerResolutionRequesterRow>());
+            html = await ReadAllTextSafeAsync(path);
+        }
+        finally
+        {
+            AdminDataPaths.TryDelete(tempDir);
+        }
 
-        string html = await ReadAllTextSafeAsync(path);
         var allFindings = ParseFindings(html);
 
         // Zero parsed Errors/Warnings rows of ANY kind almost always means the report's layout
@@ -235,10 +248,17 @@ public static class PowerReportService
     /// flag, so exit code can't be used as the success signal here.</summary>
     private static async Task<(bool Produced, string Output)> RunToFileAsync(string args, string outputPath, TimeSpan timeout, CancellationToken ct)
     {
-        try { Directory.CreateDirectory(ReportsDir); }
+        // The elevated powercfg writes outputPath, so one in the user-writable settings folder is
+        // refused when a junction/link on the way could redirect it - checked before the folder is
+        // created, since CreateDirectory would follow one too. Report names are fresh timestamps, so
+        // a file already there is refused rather than deleted: nothing elevated deletes through
+        // this path, and a planted file can't be read back as this run's report.
+        if (AppPaths.FindRedirectedOutput(outputPath) is { } redirected)
+            return (false, $"Refused to write the report: {redirected}.");
+        try { Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!); }
         catch (Exception ex) { return (false, $"Couldn't create the report folder: {ex.Message}"); }
-
-        try { if (File.Exists(outputPath)) File.Delete(outputPath); } catch { /* best-effort */ }
+        if (File.Exists(outputPath))
+            return (false, $"A file already exists at {outputPath}.");
 
         try
         {

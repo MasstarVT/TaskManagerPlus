@@ -1031,7 +1031,17 @@
                         <StackPanel>
                             <TextBlock Text="DWM composition timing" FontWeight="SemiBold" Margin="0,0,0,6" />
                             <TextBlock Text="{Binding DwmComposition.StatusText}" Foreground="{DynamicResource TextSecondaryBrush}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                            <!-- Hidden when the read failed: every field is then a default 0, not a reading. -->
                             <UniformGrid Columns="2" Margin="0,0,0,10">
+                                <UniformGrid.Style>
+                                    <Style TargetType="UniformGrid">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DwmComposition.IsAvailable}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </UniformGrid.Style>
                                 <views:VfdMeter Title="Refresh rate" Glow="True" Margin="0,0,8,0"
                                                 ValueText="{Binding DwmComposition.RefreshRateHz, StringFormat={}{0:0.##}}" Unit="Hz"
                                                 SubText="{Binding DwmComposition.CompositionFrameTimeMs, StringFormat={}{0:0.###} ms/frame}"
@@ -1042,6 +1052,15 @@
                                                 AccentBrush="{DynamicResource WarningBrush}" />
                             </UniformGrid>
                             <TextBlock FontSize="{StaticResource FontBody}" Margin="0,0,0,8">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DwmComposition.IsAvailable}" Value="False">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
                                 <Run Text="Dropped: " FontWeight="SemiBold" /><Run Text="{Binding DwmComposition.FramesDropped, Mode=OneWay}" />
                                 <Run Text="    Missed: " FontWeight="SemiBold" /><Run Text="{Binding DwmComposition.FramesMissed, Mode=OneWay}" />
                                 <Run Text="    Late: " FontWeight="SemiBold" /><Run Text="{Binding DwmComposition.FramesLate, Mode=OneWay}" />

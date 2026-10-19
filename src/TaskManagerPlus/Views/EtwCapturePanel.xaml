@@ -159,7 +159,9 @@
                                 </WrapPanel>
                                 <TextBox DockPanel.Dock="Top" Text="{Binding EtwProviderSearchText, UpdateSourceTrigger=PropertyChanged}"
                                           Margin="0,0,0,6" ToolTip="Filter by provider name or GUID" />
-                                <ListBox ItemsSource="{Binding EtwProvidersView}" SelectedItem="{Binding SelectedEtwProvider}"
+                                <!-- MaxHeight keeps the ~1,000-row list scrolling (and virtualizing) inside
+                                     itself instead of growing to its full height in the outer scroll. -->
+                                <ListBox ItemsSource="{Binding EtwProvidersView}" SelectedItem="{Binding SelectedEtwProvider}" MaxHeight="320"
                                           BorderThickness="0" Background="Transparent" FontSize="{StaticResource FontBody}">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate DataType="{x:Type models:EtwProviderRow}">

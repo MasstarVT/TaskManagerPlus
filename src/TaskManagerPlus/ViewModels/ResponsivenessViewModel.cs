@@ -2973,6 +2973,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         if (IsExportingIncident) return;
         IsExportingIncident = true;
         IncidentExportStatusText = "Exporting incident bundle...";
+        DirectoryInfo? traceDir = null;
         try
         {
             var (fgProcess, fgTitle) = ForegroundContextService.GetForegroundContext();
@@ -2988,14 +2989,26 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
             string? etlPath = null;
             if (WprCaptureService.IsCircularCaptureRunning)
             {
-                string tmpEtl = Path.Combine(IncidentBundlesFolder, $"trigger_{DateTime.Now:yyyyMMdd_HHmmss}.etl");
-                var (stopOk, stopMsg, savedPath) = await WprCaptureService.StopCircularAsync(tmpEtl);
-                EtwCircularCaptureStatusText = stopMsg;
-                if (stopOk) etlPath = savedPath;
-                if (_etwCircularCaptureEnabled)
+                // The elevated wpr writes the trace into an admin-only folder; the bundle gets a
+                // copy (which takes the bundle folder's permissions) and this folder is deleted
+                // below, so no loose trigger .etl is left behind.
+                traceDir = AdminDataPaths.CreatePrivateTempDirectory("IncidentTrace", out string? traceDirError);
+                if (traceDir is null)
                 {
-                    _etwCircularCaptureEnabled = false;
-                    OnPropertyChanged(nameof(EtwCircularCaptureEnabled));
+                    // Left armed: nothing was saved, and a later trigger can try again.
+                    EtwCircularCaptureStatusText = $"Couldn't save the circular capture (it is still running): {traceDirError}";
+                }
+                else
+                {
+                    string tmpEtl = Path.Combine(traceDir.FullName, $"trigger_{DateTime.Now:yyyyMMdd_HHmmss}.etl");
+                    var (stopOk, stopMsg, savedPath) = await WprCaptureService.StopCircularAsync(tmpEtl);
+                    EtwCircularCaptureStatusText = stopMsg;
+                    if (stopOk) etlPath = savedPath;
+                    if (_etwCircularCaptureEnabled)
+                    {
+                        _etwCircularCaptureEnabled = false;
+                        OnPropertyChanged(nameof(EtwCircularCaptureEnabled));
+                    }
                 }
             }
 
@@ -3013,6 +3026,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         }
         finally
         {
+            AdminDataPaths.TryDelete(traceDir);
             IsExportingIncident = false;
         }
     }
@@ -3104,7 +3118,9 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
         DpcLatencyService.StopSessionBlocking();
         if (PresentMonitorService.SessionMayBeRunning || IsMeasuringPresent || _presentLoopTask is { IsCompleted: false }) PresentMonitorService.StopSessionBlocking();
         if (IsMeasuringHardFaultEtw || _hardFaultEtwLoopTask is { IsCompleted: false }) HardFaultEtwService.StopSessionBlocking();
-        if (WprCaptureService.IsCircularCaptureRunning || IsCapturing) WprCaptureService.CancelBlocking();
+        // The service's own flags, not IsCapturing: that also covers the tracerpt report step,
+        // after this app's session has ended, when a blind `wpr -cancel` would end another tool's.
+        if (WprCaptureService.IsCircularCaptureRunning || WprCaptureService.IsFileCaptureRunning) WprCaptureService.CancelBlocking();
 
         _vblank.Dispose();
         _inputLatency.Dispose();

@@ -33,12 +33,13 @@ public static class DriverLoadTraceService
     public static async Task<(bool Success, string? FilePath, string Message)> StartAsync()
     {
         string tracesDir = AppPaths.GetPath("Traces");
-        try { Directory.CreateDirectory(tracesDir); }
-        catch (Exception ex) { return (false, null, $"Couldn't create the traces folder: {ex.Message}"); }
-
         string filePath = Path.Combine(tracesDir, $"DriverLoads-{DateTime.Now:yyyyMMdd-HHmmss}.etl");
+        // Before CreateDirectory, which would itself follow a junction on the way.
         if (AppPaths.FindRedirectedOutput(filePath) is { } redirected)
             return (false, null, $"Refused to start the trace: {redirected}.");
+
+        try { Directory.CreateDirectory(tracesDir); }
+        catch (Exception ex) { return (false, null, $"Couldn't create the traces folder: {ex.Message}"); }
 
         // Best-effort cleanup in case a previous run crashed mid-capture and left the kernel
         // session registered - logman just reports "not running" if there's nothing to stop.

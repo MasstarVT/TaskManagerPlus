@@ -5,7 +5,7 @@ namespace TaskManagerPlus.Services;
 
 /// <summary>
 /// #698: the disk-load half of the combined-load soak test - repeated sequential write+read passes
-/// against one dedicated scratch file under AppPaths' own Settings directory (never a real user
+/// against one dedicated scratch file in a per-run AdminDataPaths folder (never a real user
 /// file), sized modestly (256 MB, reused across passes rather than ever-growing) so this stays a
 /// load *generator*, not a MemoryVerifyTestService-style correctness check - #698's point is
 /// reproducing simultaneous CPU+GPU+disk load (the PSU/VRM-fault scenario neither subsystem alone
@@ -18,14 +18,18 @@ public static class DiskLoadTestService
     private const int BufferBytes = 4 * 1024 * 1024;
     private const long FileSizeBytes = 256L * 1024 * 1024;
 
-    public static async Task RunAsync(CancellationToken ct)
+    /// <summary>Null when the disk leg ran (until cancelled); otherwise why it didn't run at all.</summary>
+    public static async Task<string?> RunAsync(CancellationToken ct)
     {
-        string path = AppPaths.GetPath("StressTest", "diskload.tmp");
+        // The elevated process creates, rewrites and deletes this file on every pass, so it lives
+        // in a per-run admin-only folder - in the user-writable settings folder a junction or a
+        // planted link could point the 256 MB overwrite and the delete at another file.
+        var workDir = AdminDataPaths.CreatePrivateTempDirectory("DiskLoad", out string? dirError);
+        if (workDir is null)
+            return $"The disk load didn't run: {dirError ?? "couldn't create a private folder for its scratch file"}.";
+        string path = Path.Combine(workDir.FullName, "diskload.tmp");
         try
         {
-            var dir = Path.GetDirectoryName(path)!;
-            Directory.CreateDirectory(dir);
-
             var buffer = new byte[BufferBytes];
             ulong state = DeterministicWorkload.SeedFor(0);
             for (int i = 0; i + 8 <= buffer.Length; i += 8)
@@ -70,8 +74,9 @@ public static class DiskLoadTestService
         }
         finally
         {
-            try { if (File.Exists(path)) File.Delete(path); }
-            catch { /* best-effort cleanup - a leftover scratch file is harmless either way */ }
+            // A leftover folder is swept later by AdminDataPaths.PurgeStaleTemp.
+            AdminDataPaths.TryDelete(workDir);
         }
+        return null;
     }
 }

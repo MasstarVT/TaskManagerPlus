@@ -55,8 +55,12 @@ public static class BackgroundHealthStoreService
     {
         try
         {
-            Directory.CreateDirectory(SegmentsDir);
+            // The roll creates and deletes files as the elevated process; a junction/link in the
+            // settings folder would redirect them, so it's skipped (rows keep appending) instead.
             string segPath = Path.Combine(SegmentsDir, $"health-{DateTime.UtcNow:yyyyMMdd-HHmmss}.jsonl.gz");
+            if (AppPaths.FindRedirectedOutput(LiveLogPath) is not null || AppPaths.FindRedirectedOutput(segPath) is not null)
+                return;
+            Directory.CreateDirectory(SegmentsDir);
             using (var source = File.OpenRead(LiveLogPath))
             using (var destination = File.Create(segPath))
             using (var gzip = new GZipStream(destination, CompressionLevel.Optimal))
@@ -101,7 +105,8 @@ public static class BackgroundHealthStoreService
             int i = 0;
             while (total > budgetBytes && i < segments.Count)
             {
-                try { total -= segments[i].Length; File.Delete(segments[i].FullName); }
+                // Skips a segment whose path a junction/link could point at another file.
+                try { total -= segments[i].Length; if (AppPaths.FindRedirectedOutput(segments[i].FullName) is null) File.Delete(segments[i].FullName); }
                 catch { /* one locked/inaccessible segment shouldn't stop the rest of the sweep */ }
                 i++;
             }

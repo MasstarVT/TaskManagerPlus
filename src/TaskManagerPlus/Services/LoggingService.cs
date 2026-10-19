@@ -103,6 +103,10 @@ public sealed class LoggingService : IDisposable
             try
             {
                 var gzPath = path + ".gz";
+                // Elevated create + delete: skipped when a junction/link in the settings folder
+                // could redirect either one (a user-chosen folder elsewhere isn't checked).
+                if (AppPaths.FindRedirectedOutput(path) is not null || AppPaths.FindRedirectedOutput(gzPath) is not null)
+                    return;
                 using (var source = File.OpenRead(path))
                 using (var destination = File.Create(gzPath))
                 using (var gzip = new GZipStream(destination, CompressionLevel.Optimal))
@@ -135,6 +139,9 @@ public sealed class LoggingService : IDisposable
                 try
                 {
                     if (activeFilePath is not null && string.Equals(file, activeFilePath, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    // A junction/link on the way would point this elevated delete somewhere else.
+                    if (AppPaths.FindRedirectedOutput(file) is not null)
                         continue;
                     if (File.GetLastWriteTime(file) < cutoff)
                         File.Delete(file);
