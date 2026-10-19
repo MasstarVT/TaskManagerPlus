@@ -111,6 +111,7 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
     private List<string> _scrubbableFiles = new();
     private string? _cachedSsid;
     private Dictionary<string, string> _pendingScrubbedText = new();
+    private PiiScrubber? _pendingScrubber; // the scrubber behind _pendingScrubbedText
 
     public EvidenceBundleViewModel(EvidenceBundleService.CollectContext ctx)
     {
@@ -171,7 +172,19 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
             return;
         }
         _stagingDirInfo = staging;
-        _stagingDir = staging.FullName;
+        try
+        {
+            // The private folder is readable by every local account; the unscrubbed data goes one
+            // level down, readable by this user only.
+            _stagingDir = QuarantineService.CreateOwnerReadableDirectory(Path.Combine(staging.FullName, "bundle")).FullName;
+        }
+        catch (Exception ex)
+        {
+            ProgressLines.Add($"Couldn't create a protected staging folder, so nothing was collected: {ex.Message}");
+            CleanupStaging();
+            _destinationZipPath = null;
+            return;
+        }
         Stage = EvidenceBundleStage.Collecting;
 
         IProgress<string> progress = new Progress<string>(line =>
@@ -248,6 +261,7 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
             var (byPath, summaries, unreadable) = await Task.Run(() => EvidenceBundleService.PreviewScrub(files, scrubber));
             if (generation != _scrubPreviewGeneration) return;
             _pendingScrubbedText = byPath;
+            _pendingScrubber = scrubber;
             ScrubResults.Clear();
             foreach (var s in summaries) ScrubResults.Add(s);
             ScrubSkippedText = unreadable.Count == 0 ? string.Empty
@@ -283,6 +297,7 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
 
         bool wasScrubbed = Stage == EvidenceBundleStage.ScrubReview;
         var pendingScrubbedText = _pendingScrubbedText;
+        var scrubber = wasScrubbed ? _pendingScrubber : null;
         if (wasScrubbed) _manifest.WasScrubbed = true;
 
         Stage = EvidenceBundleStage.Collecting;
@@ -305,10 +320,13 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
                 int unscrubbed = wasScrubbed
                     ? EvidenceBundleService.ApplyScrub(manifest, stagingDir, scrubbableFiles, pendingScrubbedText)
                     : 0;
-                EvidenceBundleService.WriteManifest(manifest, stagingDir);
+                // In a scrubbed bundle the manifest and index.html (machine name, findings,
+                // timeline, specs) go through the same scrubber as the files.
+                var shipped = scrubber is null ? manifest : EvidenceBundleService.ScrubbedCopy(manifest, scrubber);
+                EvidenceBundleService.WriteManifest(shipped, stagingDir);
                 var theme = SummarySettingsService.Load().ReportTheme;
-                var html = EvidenceBundleService.BuildIndexHtml(manifest, findings, timeline, specs, theme);
-                File.WriteAllText(Path.Combine(stagingDir, "index.html"), html);
+                var html = EvidenceBundleService.BuildIndexHtml(shipped, findings, timeline, specs, theme);
+                File.WriteAllText(Path.Combine(stagingDir, "index.html"), scrubber is null ? html : scrubber.Scrub(html));
                 EvidenceBundleService.CreateZip(stagingDir, destinationZipPath, manifest);
                 return unscrubbed;
             });

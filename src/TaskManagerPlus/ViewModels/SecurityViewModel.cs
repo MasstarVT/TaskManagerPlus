@@ -497,6 +497,9 @@ public sealed class SecurityViewModel : ObservableObject
         QuarantineStatus = $"Restoring \"{item.ThreatName}\"...";
         var (success, output) = await Task.Run(() => DefenderService.RestoreQuarantineItem(item.ThreatName, item.FilePath));
         QuarantineStatus = success ? $"Restored \"{item.ThreatName}\": {output}" : $"Restore failed for \"{item.ThreatName}\": {output}";
+        AppendOneShotRun(item.FilePath ?? item.ThreatName, $"Restored Defender quarantine item \"{item.ThreatName}\"",
+            string.IsNullOrEmpty(item.FilePath) ? $"MpCmdRun -Restore -Name \"{item.ThreatName}\"" : $"MpCmdRun -Restore -FilePath \"{item.FilePath}\"",
+            success, "Defender quarantine restore - re-quarantine the file with a Defender scan if needed.");
     }
 
     /// <summary>#863: MpCmdRun has no cleanly-documented per-item permanent-purge switch - implemented
@@ -512,6 +515,9 @@ public sealed class SecurityViewModel : ObservableObject
         QuarantineStatus = $"Purging \"{item.ThreatName}\"...";
         var (success, output) = await Task.Run(() => DefenderService.PurgeQuarantineItem(item.ThreatName, item.FilePath));
         QuarantineStatus = success ? $"Purged \"{item.ThreatName}\": {output}" : $"Purge failed for \"{item.ThreatName}\": {output}";
+        AppendOneShotRun(item.FilePath ?? item.ThreatName, $"Purged Defender quarantine item \"{item.ThreatName}\"",
+            $"MpCmdRun -Restore -FilePath \"{item.FilePath}\", then delete the restored file",
+            success, "Permanent delete - the file is gone.");
     }
 
     private async Task LoadAsrEventsAsync()
@@ -1288,7 +1294,11 @@ public sealed class SecurityViewModel : ObservableObject
                 SecurityActionJournalService.BuildFirewallUndoPayload(rule.Name));
         }
         FirewallRuleScanStatus = success ? $"Disabled \"{rule.Name}\"." : $"Couldn't disable \"{rule.Name}\": {output}";
+        AppendOneShotRun(rule.Name, $"Disabled firewall rule \"{rule.Name}\"",
+            $"netsh advfirewall firewall set rule name=\"{rule.Name}\" new enable=no", success, FirewallUndoHint);
     }
+
+    private const string FirewallUndoHint = "Firewall rule toggle - undo it from the Security tab's action journal or Windows Defender Firewall.";
 
     /// <summary>#882: same-session "Undo" - re-enables a rule this app disabled.</summary>
     private async Task UndoDisableFirewallRuleAsync(string? ruleName)
@@ -1297,6 +1307,8 @@ public sealed class SecurityViewModel : ObservableObject
         var (success, output) = await Task.Run(() => FirewallService.EnableRule(ruleName));
         if (success) DisabledFirewallRuleNames.Remove(ruleName);
         FirewallRuleScanStatus = success ? $"Re-enabled \"{ruleName}\"." : $"Couldn't re-enable \"{ruleName}\": {output}";
+        AppendOneShotRun(ruleName, $"Re-enabled firewall rule \"{ruleName}\"",
+            $"netsh advfirewall firewall set rule name=\"{ruleName}\" new enable=yes", success, FirewallUndoHint);
     }
 
     /// <summary>#883: cross-references live LISTENING sockets against a fresh enabled-inbound-
@@ -1931,6 +1943,22 @@ public sealed class SecurityViewModel : ObservableObject
     // tab's own action journal, shaped like the Startup/Services tabs' own entries.
     private const string OemCleanupTrigger = "Security tab (OEM cleanup)";
 
+    /// <summary>A Security-tab change with no inverse the change journal can run itself (firewall
+    /// toggles, Defender quarantine restore/purge, file quarantine and its restore) - recorded
+    /// with its real outcome; undo lives in the Security tab's own action journal where one exists.</summary>
+    private static void AppendOneShotRun(string target, string action, string command, bool success, string notUndoableReason) =>
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.OneShotToolRun,
+            Target = target,
+            ActionDescription = action,
+            AfterValue = command,
+            TriggeredBy = "Security tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = notUndoableReason,
+        });
+
     private static void AppendStartupItemToggle(Models.StartupItem item, bool newState, bool success) =>
         ChangeJournalService.Append(new ChangeJournalEntry
         {
@@ -2053,6 +2081,9 @@ public sealed class SecurityViewModel : ObservableObject
         if (confirm != MessageBoxResult.Yes) return;
 
         var (success, quarantinePath, error) = QuarantineService.Quarantine(entry.ResolvedPath);
+        AppendOneShotRun(entry.ResolvedPath, $"Quarantined \"{entry.Name}\"",
+            success ? $"Moved to {quarantinePath}" : $"Not moved: {error}", success,
+            "File quarantine - move it back with Undo in the Security tab's action journal.");
         if (success && quarantinePath is not null)
         {
             RecordJournalEntry(SecurityActionKind.FileQuarantine, $"Quarantined \"{entry.Name}\"", entry.ResolvedPath,
@@ -2086,6 +2117,8 @@ public sealed class SecurityViewModel : ObservableObject
                     var r = await Task.Run(() => FirewallService.EnableRule(payload["ruleName"]));
                     success = r.Success; error = r.Output;
                     if (success) DisabledFirewallRuleNames.Remove(payload["ruleName"]);
+                    AppendOneShotRun(payload["ruleName"], $"Re-enabled firewall rule \"{payload["ruleName"]}\"",
+                        $"netsh advfirewall firewall set rule name=\"{payload["ruleName"]}\" new enable=yes", success, FirewallUndoHint);
                     break;
                 }
                 case SecurityActionKind.ServiceDisable:
@@ -2119,6 +2152,9 @@ public sealed class SecurityViewModel : ObservableObject
                 {
                     var r = QuarantineService.Restore(payload["quarantinePath"], payload["originalPath"]);
                     success = r.Success; error = r.Error;
+                    AppendOneShotRun(payload["originalPath"], "Restored a quarantined file",
+                        success ? $"Moved {payload["quarantinePath"]} back to {payload["originalPath"]}" : $"Not moved: {r.Error}", success,
+                        "Quarantine restore - quarantine the file again from the Persistence grid if needed.");
                     break;
                 }
                 default:

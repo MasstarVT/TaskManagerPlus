@@ -46,7 +46,7 @@ public static class QuarantineService
                 folder = Path.Combine(root, $"{stamp}-{n}");
 
             DirectoryInfo dir;
-            try { dir = CreateAdminOnlyDirectory(folder); }
+            try { dir = CreateOwnerReadableDirectory(folder); }
             catch (Exception ex)
             {
                 return (false, null, $"Couldn't create a protected quarantine folder - this needs the app running as Administrator ({ex.Message}).");
@@ -178,6 +178,31 @@ public static class QuarantineService
         security.AddAccessRule(new FileSystemAccessRule(LocalSystemSid, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
         security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
             FileSystemRights.ReadAndExecute, inherit, PropagationFlags.None, AccessControlType.Allow));
+        var dir = new DirectoryInfo(path);
+        dir.Create(security);
+        return dir;
+    }
+
+    /// <summary>Like <see cref="CreateAdminOnlyDirectory"/>, but readable only by the account
+    /// running this app rather than every Authenticated User - for data copied out of admin-only
+    /// places (minidumps, event logs, quarantined files) or not yet scrubbed, which used to sit in
+    /// that user's own profile. The OWNER RIGHTS entry takes away the implicit WRITE_DAC the user
+    /// would otherwise hold on files the elevated app creates inside (they're owned by the user
+    /// under Windows' default "object creator" owner policy). Passes CheckAdminOnly.</summary>
+    internal static DirectoryInfo CreateOwnerReadableDirectory(string path)
+    {
+        const InheritanceFlags inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+        var security = new DirectorySecurity();
+        security.SetOwner(AdministratorsSid);
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new FileSystemAccessRule(AdministratorsSid, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(LocalSystemSid, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-3-4"), FileSystemRights.ReadAndExecute, inherit, PropagationFlags.None, AccessControlType.Allow));
+        using (var identity = WindowsIdentity.GetCurrent())
+        {
+            if (identity.User is { } user)
+                security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.ReadAndExecute, inherit, PropagationFlags.None, AccessControlType.Allow));
+        }
         var dir = new DirectoryInfo(path);
         dir.Create(security);
         return dir;

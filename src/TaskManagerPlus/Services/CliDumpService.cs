@@ -111,6 +111,7 @@ public static class CliDumpService
         using var rulesEngine = new RulesEngineService(performance);
 
         await Task.Delay(2500);
+        await WaitForSpecsAsync(systemSpecs);
 
         var bag = RulesEngineService.BuildMetricBag(performance, energyThermals, systemSpecs, services, processes, out var unavailable);
         var result = rulesEngine.Evaluate(bag, unavailable);
@@ -124,6 +125,16 @@ public static class CliDumpService
         var dir = Path.GetDirectoryName(Path.GetFullPath(resolvedPath));
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         File.WriteAllText(resolvedPath, json);
+    }
+
+    /// <summary>SystemSpecsViewModel loads its inventory asynchronously and usually takes longer
+    /// than the fixed first-tick wait; rules evaluated before then report those metrics as
+    /// "couldn't check". Waits (bounded) while that load is still running - success or failure.</summary>
+    private static async Task WaitForSpecsAsync(SystemSpecsViewModel specs)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (specs.IsLoading && !specs.HasLoaded && DateTime.UtcNow < deadline)
+            await Task.Delay(250);
     }
 
     /// <summary>The unattended scan runs as SYSTEM (UnattendedScanService) but writes under the
@@ -233,23 +244,26 @@ public static class CliDumpService
         using var rulesEngine = new RulesEngineService(performance);
 
         await Task.Delay(2500);
+        await WaitForSpecsAsync(systemSpecs);
 
         var ctx = new EvidenceBundleService.CollectContext(performance, processes, energyThermals, systemSpecs, services, rulesEngine);
         // Admin-only staging (not %TEMP%): elevated tools write here, and the scrub rewrites and
         // the zip read these files back.
         var staging = AdminDataPaths.CreatePrivateTempDirectory("CliCollect", out string? stagingError)
             ?? throw new IOException($"Couldn't create a protected staging folder: {stagingError}");
-        string stagingDir = staging.FullName;
         try
         {
+            // One level down, readable by this account only (see EvidenceBundleViewModel).
+            string stagingDir = QuarantineService.CreateOwnerReadableDirectory(Path.Combine(staging.FullName, "bundle")).FullName;
             var items = EvidenceBundleService.BuildCatalog();
             var manifest = await EvidenceBundleService.CollectAsync(items, stagingDir, ctx, progress: null, CancellationToken.None);
 
+            PiiScrubber? scrubber = null;
             if (scrub)
             {
                 var ruleSet = ScrubRulesService.Load();
                 string? ssid = await ScrubRulesService.TryGetCurrentSsidAsync();
-                var scrubber = PiiScrubber.Build(ruleSet, ssid);
+                scrubber = PiiScrubber.Build(ruleSet, ssid);
                 var scrubbableFiles = EvidenceBundleService.GetScrubbableFiles(items, manifest, stagingDir);
                 var (scrubbedTextByPath, _, _) = EvidenceBundleService.PreviewScrub(scrubbableFiles, scrubber);
                 // Fails closed: anything that couldn't be scrubbed is left out of the zip.
@@ -257,7 +271,9 @@ public static class CliDumpService
                 manifest.WasScrubbed = true;
             }
 
-            EvidenceBundleService.WriteManifest(manifest, stagingDir);
+            // Scrubbed bundle: the manifest and index.html go through the scrubber too.
+            var shipped = scrubber is null ? manifest : EvidenceBundleService.ScrubbedCopy(manifest, scrubber);
+            EvidenceBundleService.WriteManifest(shipped, stagingDir);
 
             var bag = RulesEngineService.BuildMetricBag(performance, energyThermals, systemSpecs, services, processes, out var unavailable);
             var result = rulesEngine.Evaluate(bag, unavailable);
@@ -270,8 +286,8 @@ public static class CliDumpService
             timeline.AddRange(ThermalEventLogService.ReadAll());
             timeline.AddRange(await TimelineService.GetDriverInstallEventsAsync());
 
-            var html = EvidenceBundleService.BuildIndexHtml(manifest, findings, timeline.OrderByDescending(e => e.Timestamp).ToList(), systemSpecs, SummarySettingsService.Load().ReportTheme);
-            File.WriteAllText(Path.Combine(stagingDir, "index.html"), html);
+            var html = EvidenceBundleService.BuildIndexHtml(shipped, findings, timeline.OrderByDescending(e => e.Timestamp).ToList(), systemSpecs, SummarySettingsService.Load().ReportTheme);
+            File.WriteAllText(Path.Combine(stagingDir, "index.html"), scrubber is null ? html : scrubber.Scrub(html));
 
             var dir = Path.GetDirectoryName(Path.GetFullPath(outputZipPath));
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);

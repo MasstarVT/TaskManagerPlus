@@ -32,8 +32,9 @@ public static class RegistryBackupService
             string? undoRoot = AdminDataPaths.TryGetArea(AreaName, out string? areaError);
             if (undoRoot is null) return (false, null, $"Couldn't prepare a protected backup folder ({areaError}).");
             string dir = Path.Combine(undoRoot, DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
-            // A same-second folder that already exists must pass the same check.
-            var backupDir = QuarantineService.CreateAdminOnlyDirectory(dir);
+            // A same-second folder that already exists must pass the same check. Owner-readable,
+            // so the user who owns the .reg reg.exe writes can't re-ACL it and rewrite it.
+            var backupDir = QuarantineService.CreateOwnerReadableDirectory(dir);
             if (QuarantineService.CheckAdminOnly(backupDir) is { } problem)
                 return (false, null, $"Couldn't create a protected backup folder ({problem}).");
             string filePath = Path.Combine(dir, safeName + ".reg");
@@ -72,7 +73,7 @@ public static class RegistryBackupService
             string undoRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(AdminDataPaths.RootPath, AreaName)));
 
             importDir = Path.Combine(undoRoot, "import-" + Guid.NewGuid().ToString("N"));
-            var dir = QuarantineService.CreateAdminOnlyDirectory(importDir);
+            var dir = QuarantineService.CreateOwnerReadableDirectory(importDir);
             pin = new FileStream(Path.Combine(importDir, "in-use"), FileMode.CreateNew, FileAccess.Write, FileShare.None);
             if (QuarantineService.CheckAdminOnly(dir) is { } problem)
                 return (false, $"Couldn't prepare a protected copy to import ({problem}).");

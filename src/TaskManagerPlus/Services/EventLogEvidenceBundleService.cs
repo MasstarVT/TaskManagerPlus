@@ -143,7 +143,8 @@ public sealed class EventLogEvidenceBundleService
     /// <summary>The bundle is written by elevated tools (wevtutil, msinfo32, dxdiag) and elevated
     /// copies of admin-only files (Report.wer, minidumps), so it goes in AdminDataPaths' admin-only
     /// area rather than the user-writable settings folder, where a planted junction would redirect
-    /// those writes. The user can still read (and attach) everything in it.</summary>
+    /// those writes. The user running the app can still read (and attach) everything in it; other
+    /// local accounts can't.</summary>
     private static string CreateBundleFolder()
     {
         string root = AdminDataPaths.TryGetArea("EvidenceBundles", out string? error)
@@ -151,7 +152,8 @@ public sealed class EventLogEvidenceBundleService
         string folder = Path.Combine(root, $"Bundle-{DateTime.Now:yyyyMMdd-HHmmss}");
         for (int n = 2; Directory.Exists(folder); n++)
             folder = Path.Combine(root, $"Bundle-{DateTime.Now:yyyyMMdd-HHmmss}-{n}");
-        Directory.CreateDirectory(folder);
+        // Readable by this user only - it holds copies of admin-only minidumps and logs.
+        QuarantineService.CreateOwnerReadableDirectory(folder);
         return folder;
     }
 

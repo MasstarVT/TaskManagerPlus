@@ -24,12 +24,19 @@ public static class ReportPrintService
         var dir = AdminDataPaths.CreatePrivateTempDirectory("Print", out string? error)
             ?? throw new InvalidOperationException($"couldn't create a protected folder for the report ({error})");
         string safePrefix = string.Concat(fileNamePrefix.Where(c => char.IsLetterOrDigit(c) || c == '-'));
-        string path = Path.Combine(dir.FullName, $"{(safePrefix.Length > 0 ? safePrefix : "report")}-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.html");
-        File.WriteAllText(path, WithPrintOnLoad(html));
-        if (!SafeLaunchService.OpenDocument(path))
+        try
+        {
+            // Readable by this user (the browser opening it runs as them), not every local account.
+            var sub = QuarantineService.CreateOwnerReadableDirectory(Path.Combine(dir.FullName, "report"));
+            string path = Path.Combine(sub.FullName, $"{(safePrefix.Length > 0 ? safePrefix : "report")}-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.html");
+            File.WriteAllText(path, WithPrintOnLoad(html));
+            if (!SafeLaunchService.OpenDocument(path))
+                throw new InvalidOperationException("couldn't open the report in your default browser");
+        }
+        catch
         {
             AdminDataPaths.TryDelete(dir);
-            throw new InvalidOperationException("couldn't open the report in your default browser");
+            throw;
         }
     }
 

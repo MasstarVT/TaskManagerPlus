@@ -243,6 +243,31 @@ public static class EvidenceBundleService
         return leftOut;
     }
 
+    /// <summary>The copy of the manifest written to manifest.json and index.html in a scrubbed
+    /// bundle: the machine name and each entry's title, command and failure text go through the
+    /// same scrubber as the files (they otherwise ship the computer name and user paths under a
+    /// "scrubbed" label). File names stay as they are - they're the zip's own entry names.
+    /// The caller should also scrub the index.html text built from it (findings, timeline, specs).</summary>
+    public static EvidenceBundleManifest ScrubbedCopy(EvidenceBundleManifest manifest, PiiScrubber scrubber) => new()
+    {
+        GeneratedAtUtc = manifest.GeneratedAtUtc,
+        MachineName = scrubber.Scrub(manifest.MachineName),
+        AppVersion = manifest.AppVersion,
+        WasScrubbed = manifest.WasScrubbed,
+        Entries = manifest.Entries.Select(e => new EvidenceBundleManifestEntry
+        {
+            Id = e.Id,
+            Title = scrubber.Scrub(e.Title),
+            SourceCommand = scrubber.Scrub(e.SourceCommand),
+            CollectedAtUtc = e.CollectedAtUtc,
+            Success = e.Success,
+            FileName = e.FileName,
+            SizeBytes = e.SizeBytes,
+            Sha256 = e.Sha256,
+            FailureReason = scrubber.Scrub(e.FailureReason),
+        }).ToList(),
+    };
+
     public static void WriteManifest(EvidenceBundleManifest manifest, string stagingDir)
     {
         string json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
