@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
 
@@ -110,45 +109,21 @@ public static class FirewallLogService
     /// enable` - always called from behind an explicit confirm dialog in the ViewModel (this
     /// service has no confirmation of its own, by design, matching AdapterRestartService's own
     /// "the caller owns the prompt" convention) since it's a persistent firewall configuration
-    /// change, not a one-off diagnostic read.</summary>
-    public static async Task<string> EnableDroppedConnectionLoggingAsync()
-    {
-        string output = await RunNetshAsync("advfirewall set allprofiles logging droppedconnections enable");
-        return output.Length == 0 ? "Dropped-connection logging enabled." : output;
-    }
-
-    private static async Task<string> RunNetshAsync(string arguments)
+    /// change, not a one-off diagnostic read. Succeeded comes from netsh's exit code: its text is
+    /// localized, and a failure (e.g. the firewall service stopped) prints netsh's own error.</summary>
+    public static async Task<(string Message, bool Succeeded)> EnableDroppedConnectionLoggingAsync()
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", arguments)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return "Couldn't start netsh.exe.";
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-                return "netsh.exe timed out.";
-            }
-
-            return ((await outputTask) + (await errorTask)).Trim();
+            var (output, exitCode) = await ToolRunner.RunCapturedAsync(
+                "netsh.exe", "advfirewall set allprofiles logging droppedconnections enable", TimeoutMs, timeoutOutput: "netsh.exe timed out.");
+            output = output.Trim();
+            if (exitCode == 0) return (output.Length == 0 ? "Dropped-connection logging enabled." : output, true);
+            return (output.Length == 0 ? $"netsh exited with code {exitCode}." : output, false);
         }
         catch (Exception ex)
         {
-            return $"Failed: {ex.Message}";
+            return ($"Failed: {ex.Message}", false);
         }
     }
 }

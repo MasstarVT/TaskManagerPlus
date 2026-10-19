@@ -581,6 +581,15 @@ public static class ReverseDnsService
 {
     private const int TimeoutMs = 800;
 
+    // Dns.GetHostEntryAsync on an IP literal runs the blocking reverse lookup on a pool thread and
+    // its token only stops a lookup that hasn't started, so the timeout is a WhenAny race and the
+    // number of lookups in flight is capped - a "Resolve names" over dozens of IPs with slow
+    // PTR/NetBIOS fallbacks used to block one pool thread per IP. A slot is held until its lookup
+    // really finishes; an IP that can't get one within the batch budget stays uncached for next time.
+    private const int MaxConcurrentLookups = 8;
+    private const int BatchBudgetMs = 5000;
+    private static readonly SemaphoreSlim LookupSlots = new(MaxConcurrentLookups);
+
     // Null is a cached "looked up, nothing came back" result - distinct from "never looked up at
     // all" (not present in the dictionary), so a failed PTR lookup isn't retried every refresh.
     private static readonly ConcurrentDictionary<string, string?> Cache = new();
@@ -599,34 +608,75 @@ public static class ReverseDnsService
     public static async Task ResolveNamesAsync(IEnumerable<TcpConnectionInfo> connections)
     {
         var snapshot = connections.ToList();
+        // Private/link-local addresses go last: with no PTR record they fall back to NetBIOS and take
+        // ~5-10 s each (measured), so queued first they'd hold every slot and starve the public
+        // addresses, which usually answer in ~100 ms.
         var toResolve = snapshot
             .Select(c => c.RemoteAddress)
             .Where(ip => ip != "0.0.0.0" && ip != "::" && !Cache.ContainsKey(ip))
             .Distinct()
+            .OrderBy(ip => IsPrivateOrLocal(ip) ? 1 : 0)
             .ToList();
 
-        var tasks = toResolve.Select(async ip => Cache[ip] = await ResolveOneAsync(ip));
-        await Task.WhenAll(tasks);
+        using var budget = new CancellationTokenSource(BatchBudgetMs);
+        await Task.WhenAll(toResolve.Select(ip => ResolveOneAsync(ip, budget.Token)));
 
         ApplyCached(snapshot);
     }
 
-    private static async Task<string?> ResolveOneAsync(string ip)
+    private static async Task ResolveOneAsync(string ip, CancellationToken budget)
     {
         try
         {
-            using var cts = new CancellationTokenSource(TimeoutMs);
-            var entry = await Dns.GetHostEntryAsync(ip, cts.Token);
-            return string.IsNullOrWhiteSpace(entry.HostName) || entry.HostName.Equals(ip, StringComparison.OrdinalIgnoreCase)
-                ? null
-                : entry.HostName;
+            await LookupSlots.WaitAsync(budget);
+        }
+        catch (OperationCanceledException)
+        {
+            return; // never started - left uncached so the next "Resolve names" tries it
+        }
+
+        Task<IPHostEntry> lookup;
+        try
+        {
+            lookup = Dns.GetHostEntryAsync(ip);
         }
         catch
         {
-            // No PTR record, timed out, or the resolver refused - degrade to null (shown as the
-            // bare IP), never fabricate a name.
-            return null;
+            LookupSlots.Release();
+            Cache[ip] = null;
+            return;
         }
+
+        // Frees the slot only when the lookup really ends, and lets a late answer replace the
+        // timed-out null below (the next periodic refresh's ApplyCached then shows it).
+        _ = lookup.ContinueWith(t =>
+        {
+            LookupSlots.Release();
+            _ = t.Exception; // observed - a failed lookup is just "no name"
+            if (t.IsCompletedSuccessfully && NameOf(t.Result, ip) is { } late) Cache[ip] = late;
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
+        if (await Task.WhenAny(lookup, Task.Delay(TimeoutMs)) == lookup && lookup.IsCompletedSuccessfully)
+            Cache[ip] = NameOf(lookup.Result, ip);
+        else
+            Cache.TryAdd(ip, null); // no PTR record, timed out, or refused - shown as the bare IP, never a guessed name
+    }
+
+    private static string? NameOf(IPHostEntry entry, string ip) =>
+        string.IsNullOrWhiteSpace(entry.HostName) || entry.HostName.Equals(ip, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : entry.HostName;
+
+    private static bool IsPrivateOrLocal(string ip)
+    {
+        if (!IPAddress.TryParse(ip, out var address)) return false;
+        if (IPAddress.IsLoopback(address)) return true;
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+            return address.IsIPv6LinkLocal || address.IsIPv6SiteLocal || (address.GetAddressBytes()[0] & 0xFE) == 0xFC;
+        byte[] b = address.GetAddressBytes();
+        return b[0] == 10 || (b[0] == 172 && (b[1] & 0xF0) == 16) || (b[0] == 192 && b[1] == 168)
+            || (b[0] == 169 && b[1] == 254) || (b[0] == 100 && (b[1] & 0xC0) == 64);
     }
 }
 

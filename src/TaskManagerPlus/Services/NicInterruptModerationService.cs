@@ -61,7 +61,9 @@ public static class NicInterruptModerationService
                     bool? interruptModeration = ReadTriState(adapterKey, "*InterruptModeration");
                     bool? rss = ReadTriState(adapterKey, "*RSS");
                     int? rssQueues = ReadInt(adapterKey, "*NumRssQueues");
-                    bool? flowControl = ReadTriState(adapterKey, "*FlowControl", trueValues: new[] { "3", "1", "2" }); // 3=Tx&Rx,1=Tx,2=Rx,0=Disabled
+                    // Standardized *FlowControl: 0 = disabled, 1 = Tx, 2 = Rx, 3 = Rx & Tx, 4 = auto-negotiate
+                    // (on unless the link partner refuses). Any other (vendor) value stays Unknown.
+                    bool? flowControl = ReadTriState(adapterKey, "*FlowControl", trueValues: new[] { "1", "2", "3", "4" });
 
                     bool multiCore = Environment.ProcessorCount > 1;
                     results.Add(new NicInterruptModerationInfo(
@@ -90,8 +92,12 @@ public static class NicInterruptModerationService
     {
         object? raw = key.GetValue(valueName);
         if (raw is null) return null;
-        string s = raw.ToString() ?? string.Empty;
-        if (trueValues is not null) return trueValues.Contains(s, StringComparer.OrdinalIgnoreCase);
+        string s = (raw.ToString() ?? string.Empty).Trim();
+        if (trueValues is not null)
+        {
+            if (trueValues.Contains(s, StringComparer.OrdinalIgnoreCase)) return true;
+            return s == "0" ? false : null;
+        }
         return s switch
         {
             "1" => true,

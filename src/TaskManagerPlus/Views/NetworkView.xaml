@@ -260,10 +260,75 @@
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="Tier" Binding="{Binding Label}" Width="1.1*" />
                                         <DataGridTextColumn Header="Target" Binding="{Binding TargetHost}" Width="1.3*" />
-                                        <DataGridTextColumn Header="Min" Binding="{Binding MinMs, StringFormat={}{0:0.#} ms}" Width="0.8*" />
-                                        <DataGridTextColumn Header="Avg" Binding="{Binding AvgMs, StringFormat={}{0:0.#} ms}" Width="0.8*" />
-                                        <DataGridTextColumn Header="Max" Binding="{Binding MaxMs, StringFormat={}{0:0.#} ms}" Width="0.8*" />
-                                        <DataGridTextColumn Header="Loss" Binding="{Binding LossPercent, StringFormat={}{0:0.#}%}" Width="0.7*" />
+                                        <!-- No samples, or every probe lost: the service reports 0 ms, which would
+                                             read as instant replies - show a dash instead. -->
+                                        <DataGridTemplateColumn Header="Min" Width="0.8*" SortMemberPath="MinMs">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock TextTrimming="CharacterEllipsis">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="{Binding MinMs, StringFormat={}{0:0.#} ms}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding SampleCount}" Value="0"><Setter Property="Text" Value="—" /></DataTrigger>
+                                                                    <DataTrigger Binding="{Binding LossPercent}" Value="100"><Setter Property="Text" Value="—" /></DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="Avg" Width="0.8*" SortMemberPath="AvgMs">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock TextTrimming="CharacterEllipsis">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="{Binding AvgMs, StringFormat={}{0:0.#} ms}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding SampleCount}" Value="0"><Setter Property="Text" Value="—" /></DataTrigger>
+                                                                    <DataTrigger Binding="{Binding LossPercent}" Value="100"><Setter Property="Text" Value="—" /></DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="Max" Width="0.8*" SortMemberPath="MaxMs">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock TextTrimming="CharacterEllipsis">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="{Binding MaxMs, StringFormat={}{0:0.#} ms}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding SampleCount}" Value="0"><Setter Property="Text" Value="—" /></DataTrigger>
+                                                                    <DataTrigger Binding="{Binding LossPercent}" Value="100"><Setter Property="Text" Value="—" /></DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="Loss" Width="0.7*" SortMemberPath="LossPercent">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock TextTrimming="CharacterEllipsis">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="{Binding LossPercent, StringFormat={}{0:0.#}%}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding SampleCount}" Value="0"><Setter Property="Text" Value="—" /></DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
                                     </DataGrid.Columns>
                                 </DataGrid>
                                 <TextBlock Text="Gateway bad points at your router/Wi-Fi, first-hop bad points at your ISP's local plant, only the resolver bad points upstream/peering - not started, or no data yet, shows as an empty table."
@@ -750,9 +815,55 @@
                                     <DataGridTextColumn Header="Sent" Binding="{Binding Sent}" Width="0.6*" />
                                     <DataGridTextColumn Header="Recv" Binding="{Binding Received}" Width="0.6*" />
                                     <DataGridTextColumn Header="Loss" Binding="{Binding LossPercent, StringFormat={}{0:0.#}%}" Width="0.7*" />
-                                    <DataGridTextColumn Header="Min" Binding="{Binding MinMs, StringFormat={}{0:0.#} ms}" Width="0.8*" />
-                                    <DataGridTextColumn Header="Avg" Binding="{Binding AvgMs, StringFormat={}{0:0.#} ms}" Width="0.8*" />
-                                    <DataGridTextColumn Header="Max" Binding="{Binding MaxMs, StringFormat={}{0:0.#} ms}" Width="0.8*" />
+                                    <!-- A hop with no replies has no latency; MtrService reports 0 ms for it. -->
+                                    <DataGridTemplateColumn Header="Min" Width="0.8*" SortMemberPath="MinMs">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock TextTrimming="CharacterEllipsis">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="{Binding MinMs, StringFormat={}{0:0.#} ms}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Received}" Value="0"><Setter Property="Text" Value="—" /></DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Avg" Width="0.8*" SortMemberPath="AvgMs">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock TextTrimming="CharacterEllipsis">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="{Binding AvgMs, StringFormat={}{0:0.#} ms}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Received}" Value="0"><Setter Property="Text" Value="—" /></DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Max" Width="0.8*" SortMemberPath="MaxMs">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock TextTrimming="CharacterEllipsis">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="{Binding MaxMs, StringFormat={}{0:0.#} ms}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Received}" Value="0"><Setter Property="Text" Value="—" /></DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                 </DataGrid.Columns>
                             </DataGrid>
                             <TextBlock Text="Not started - enter a host and click Start.">
@@ -2723,7 +2834,19 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Active connections" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
-                                <TextBlock Grid.Column="1" Text="{Binding Connections.Count, StringFormat={}{0} total}" Style="{StaticResource SubStat}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <!-- Counts whichever table the TCP/UDP switch below is showing. -->
+                                <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="0,0,10,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                            <Setter Property="Text" Value="{Binding Connections.Count, StringFormat={}{0} total}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ShowUdpConnections}" Value="True">
+                                                    <Setter Property="Text" Value="{Binding UdpConnections.Count, StringFormat={}{0} total}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                                 <!-- #525: on-demand reverse-DNS (PTR) enrichment - never automatic, since
                                      it's a real DNS lookup per unique remote address. -->
                                 <Button Grid.Column="2" Padding="10,4" Command="{Binding ResolveConnectionNamesCommand}">
@@ -2994,10 +3117,10 @@
                                 </TextBlock.Style>
                             </TextBlock>
 
-                            <!-- #564: ephemeral-port utilization, derived from the TCP/UDP tables the
+                            <!-- #564: ephemeral-port utilization, derived from the TCP table the
                                  Active connections card above already samples - no extra I/O. -->
                             <TextBlock Text="Ephemeral port utilization" Style="{StaticResource SpecLabel}" Margin="0,0,0,4" />
-                            <TextBlock Text="How many currently-open local ports fall inside the dynamic range above - the classic 'new connections fail but existing ones keep working' cause once this gets close to full. Windows doesn't fail at one exact percentage (TIME_WAIT reuse blurs the real ceiling), so treat this as worth investigating, not a hard prediction."
+                            <TextBlock Text="How many distinct local TCP ports in use fall inside the TCP dynamic range above - the classic 'new connections fail but existing ones keep working' cause once this gets close to full. UDP has its own separate range and isn't counted here. Windows doesn't fail at one exact percentage (TIME_WAIT reuse blurs the real ceiling), so treat this as worth investigating, not a hard prediction."
                                        Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" Opacity="0.7" />
 
                             <StackPanel Visibility="{Binding PortExhaustion, Converter={StaticResource NullToVisibilityConverter}}">

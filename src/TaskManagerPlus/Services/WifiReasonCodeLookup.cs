@@ -1,60 +1,23 @@
 namespace TaskManagerPlus.Services;
 
 /// <summary>
-/// Item #542: decodes the reason/status codes carried by WLAN-AutoConfig operational events
-/// (#541's 8003 disconnect and 11004/11005 association-phase events) into readable text.
+/// Item #542: turns the reason carried by a WLAN-AutoConfig operational event (#541's 8003
+/// disconnect and the 8002/11002/11006 failure events) into one readable line.
 ///
-/// The IEEE 802.11 reason and status codes below are a small, stable, publicly-documented part of
-/// the 802.11 standard itself (not a Microsoft-internal enum) - this table covers the values most
-/// commonly seen in practice, not the full spec. Windows' own WLAN_REASON_CODE enum (attached to
-/// event 8003's "Reason" field) is a much larger, undocumented-as-a-stable-contract Microsoft-
-/// internal numbering scheme spanning several driver/security subsystems, so this deliberately
-/// doesn't attempt to hardcode it wholesale - guessing at hex offsets from memory and presenting
-/// them as fact would be exactly the kind of fabrication CLAUDE.md's "degrade, never fabricate"
-/// rule exists to prevent. Instead, a numeric code is looked up against the 802.11 table first
-/// (accurate when it hits - Windows often does forward the raw 802.11 deauth/status code
-/// unchanged), then a keyword search over the event's own formatted message text - the same
-/// "best-effort classification of real event data, not a fabricated ID mapping" tradeoff
-/// DhcpEventLogService/DnsEventLogService already take for their own vendor-specific text. Neither
-/// numeric code nor keyword rule anywhere hardcodes text for an event that wasn't actually there.
+/// What those events actually carry (WLAN-AutoConfig manifest): Windows' own reason text (8003
+/// "Reason", 8002/11002 "FailureReason", 11006 "ReasonText"), a WLAN_REASON_CODE ReasonCode, and -
+/// on 11002 only - a real IEEE 802.11 Dot11StatusCode. WLAN_REASON_CODE is Windows' own large,
+/// subsystem-banded numbering (not an 802.11 code), so it is never looked up in an 802.11 table -
+/// doing that would print a confident, wrong explanation. The 802.11 status table below is a small,
+/// stable part of the standard and is used only for the 11002 field that really holds one. Keyword
+/// rules classify the reason text alone, never the whole templated message (whose labels, e.g.
+/// "Profile Name:", would match a rule on every event), and an unmatched reason is shown verbatim -
+/// it's Windows' own wording, localized on non-English installs.
 /// </summary>
 public static class WifiReasonCodeLookup
 {
-    // IEEE 802.11 reason codes - attached to deauthentication/disassociation events (roughly #8003,
-    // and the reason side of #11004/#11005).
-    private static readonly Dictionary<int, string> Dot11ReasonCodes = new()
-    {
-        [1] = "Unspecified reason",
-        [2] = "Previous authentication is no longer valid",
-        [3] = "Deauthenticated because the sending station is leaving (or has left) the network",
-        [4] = "Disassociated due to inactivity",
-        [5] = "Deauthenticated because the AP is overloaded and cannot handle any more associated stations",
-        [6] = "Class 2 frame received from a nonauthenticated station",
-        [7] = "Class 3 frame received from a nonassociated station",
-        [8] = "Disassociated because the sending station is leaving (or has left) the network",
-        [9] = "Station requesting (re)association is not authenticated with the responding station",
-        [10] = "Disassociated - the Power Capability element is unacceptable",
-        [11] = "Disassociated - the Supported Channels element is unacceptable",
-        [13] = "Invalid information element",
-        [14] = "Message integrity code (MIC) failure",
-        [15] = "4-way handshake timed out",
-        [16] = "Group key handshake timed out",
-        [17] = "Information element in the 4-way handshake differs from the (re)association request/probe response",
-        [18] = "Invalid group cipher",
-        [19] = "Invalid pairwise cipher",
-        [20] = "Invalid AKMP",
-        [21] = "Unsupported RSN information element version",
-        [22] = "Invalid RSN information element capabilities",
-        [23] = "IEEE 802.1X authentication failed",
-        [24] = "Cipher suite rejected because of the network's security policy",
-        [33] = "Disassociated for a QoS-related reason",
-        [34] = "Disassociated - insufficient bandwidth for this QoS traffic stream",
-        [39] = "Disassociated - timeout (missing acknowledgements)",
-        [46] = "Deauthenticated because the network is set up for direct-link (peer-to-peer) communication only",
-    };
-
-    // IEEE 802.11 status codes - attached to (re)association result events (roughly #11004/#11005);
-    // 0 is success, everything else is a specific reason the association attempt was refused.
+    // IEEE 802.11 status codes - attached to (re)association results (event 11002's
+    // Dot11StatusCode); 0 is success, everything else is a specific reason the attempt was refused.
     private static readonly Dictionary<int, string> Dot11StatusCodes = new()
     {
         [0] = "Successful",
@@ -82,13 +45,12 @@ public static class WifiReasonCodeLookup
         [46] = "Cipher suite rejected because of the network's security policy",
     };
 
-    /// <summary>Keyword rules over the event's own formatted description text - the same
-    /// best-effort classification technique DhcpEventLogService.Categorize already uses, for the
-    /// Microsoft-specific higher-level reasons (user-initiated, roam, radio off, ...) the plain
-    /// 802.11 tables above can't express. First matching rule wins.</summary>
+    /// <summary>Keyword rules over the event's reason text only - the same best-effort
+    /// classification technique DhcpEventLogService.Categorize already uses. First matching rule
+    /// wins; English-only, so a localized reason simply falls through to being shown as-is.</summary>
     private static readonly (string[] AnyOf, string Text)[] KeywordRules =
     {
-        (new[] { "user has requested", "manually disabled", "user requested a disconnect", "user disconnect" }, "Explicitly disconnected by the user"),
+        (new[] { "user has requested", "manually disabled", "user requested a disconnect", "user disconnect", "disconnected by the user" }, "Explicitly disconnected by the user"),
         (new[] { "roam" }, "Roamed to a better AP"),
         (new[] { "unable to handle", "overload" }, "The AP reported it is overloaded"),
         (new[] { "radio state", "radio was turned off", "radio off" }, "The Wi-Fi radio was turned off"),
@@ -98,32 +60,30 @@ public static class WifiReasonCodeLookup
         (new[] { "security", "authentication failed", "802.1x" }, "A security/authentication handshake failed"),
     };
 
-    /// <summary>Decodes a raw reason or status code plus the event's own formatted message into one
-    /// readable line. Never fabricates: an unrecognized numeric code and no keyword match degrades
-    /// to a plain "code N (not decoded)" rather than an invented explanation.</summary>
-    public static string? Decode(string? rawCode, bool isStatusCode, string message)
+    /// <summary>One readable line for a disconnect/failure event: the decoded 802.11 status code
+    /// when <paramref name="dot11StatusRaw"/> holds a known non-zero one, else a keyword
+    /// classification of <paramref name="reasonText"/>, else that text verbatim. Null when the event
+    /// carried neither.</summary>
+    public static string? Describe(string? reasonText, string? dot11StatusRaw)
     {
-        if (!string.IsNullOrWhiteSpace(rawCode) && int.TryParse(rawCode, out var code))
+        string? reason = string.IsNullOrWhiteSpace(reasonText) ? null : reasonText.Trim();
+
+        if (int.TryParse(dot11StatusRaw, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var status) && status != 0)
         {
-            var table = isStatusCode ? Dot11StatusCodes : Dot11ReasonCodes;
-            if (table.TryGetValue(code, out var text))
-                return $"{text} (802.11 {(isStatusCode ? "status" : "reason")} code {code})";
+            string decoded = Dot11StatusCodes.TryGetValue(status, out var text)
+                ? $"{text} (802.11 status code {status})"
+                : $"802.11 status code {status} (not in the lookup table)";
+            return reason is null ? decoded : $"{decoded} - {reason}";
         }
 
-        var keywordHit = ClassifyByKeyword(message);
-        if (keywordHit is not null) return keywordHit;
-
-        if (!string.IsNullOrWhiteSpace(rawCode))
-            return $"Code {rawCode} (not in the lookup table - see Event Viewer for full detail)";
-
-        return null;
+        if (reason is null) return null;
+        return ClassifyByKeyword(reason) ?? reason;
     }
 
-    private static string? ClassifyByKeyword(string message)
+    private static string? ClassifyByKeyword(string reason)
     {
-        if (string.IsNullOrEmpty(message)) return null;
         foreach (var (anyOf, text) in KeywordRules)
-            if (anyOf.Any(k => message.Contains(k, StringComparison.OrdinalIgnoreCase)))
+            if (anyOf.Any(k => reason.Contains(k, StringComparison.OrdinalIgnoreCase)))
                 return text;
         return null;
     }

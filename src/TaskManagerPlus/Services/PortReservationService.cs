@@ -39,8 +39,8 @@ public sealed record PortReservationInfo(
 /// compiler-synthesized tuple element name at runtime.</summary>
 public sealed record PortContributor(string ProcessName, int Count);
 
-/// <summary>#564: ephemeral-port utilization - how many of the currently-open local TCP/UDP ports
-/// fall inside the dynamic range above, against that range's size. Windows doesn't literally refuse
+/// <summary>#564: ephemeral-port utilization - how many distinct currently-open local TCP ports
+/// fall inside the TCP dynamic range above, against that range's size. Windows doesn't literally refuse
 /// a new outbound connection at some exact percentage (TIME_WAIT reuse and the real allocation
 /// algorithm make the practical ceiling fuzzier than a hard number), so <see cref="IsHighUtilization"/>
 /// is worded as "worth investigating," not a predicted failure.</summary>
@@ -53,8 +53,8 @@ public sealed record PortExhaustionInfo(
 /// exclusion/dynamic-port configuration via netsh (the standard tool for this, per CLAUDE.md's
 /// "known tool over raw interop" convention - there's no WMI class or simple managed API for
 /// either), flags any excluded range that swallows part of the dynamic range (#563), and separately
-/// computes how full that dynamic range currently is from whatever TCP/UDP tables the caller already
-/// has in hand (#564) - no extra process launch for the exhaustion half at all.
+/// computes how full that dynamic range currently is from the TCP table the caller already has in
+/// hand (#564) - no extra process launch for the exhaustion half at all.
 /// </summary>
 public static class PortReservationService
 {
@@ -83,27 +83,26 @@ public static class PortReservationService
         }
     }
 
-    /// <summary>#564: pure, no extra I/O - counts already-sampled local TCP + UDP ports that fall
-    /// inside <paramref name="dynamicRange"/>, and the top processes contributing them. Null when
-    /// there's no dynamic range to compare against yet (netsh hasn't been read, or it failed) -
-    /// the view hides the whole section in that case rather than showing a 0% that isn't real.</summary>
-    public static PortExhaustionInfo? ComputeExhaustion(
-        IEnumerable<TcpConnectionInfo> tcpConnections, IEnumerable<UdpConnectionInfo> udpConnections, DynamicPortRange? dynamicRange)
+    /// <summary>#564: pure, no extra I/O - counts the distinct local TCP ports among the already-
+    /// sampled connections that fall inside <paramref name="dynamicRange"/> (the TCP range), and the
+    /// top processes holding them. Distinct ports, not connection rows: a v4+v6 listener pair or a
+    /// listener's many inbound connections all share one local port. UDP is left out - it has its
+    /// own, separately configured dynamic range. Null when there's no dynamic range to compare
+    /// against yet (netsh hasn't been read, or it failed) - the view hides the whole section in that
+    /// case rather than showing a 0% that isn't real.</summary>
+    public static PortExhaustionInfo? ComputeExhaustion(IEnumerable<TcpConnectionInfo> tcpConnections, DynamicPortRange? dynamicRange)
     {
         if (dynamicRange is null || dynamicRange.PortCount <= 0) return null;
 
         bool InRange(int port) => port >= dynamicRange.StartPort && port <= dynamicRange.EndPort;
 
-        var contributors = tcpConnections.Where(c => InRange(c.LocalPort)).Select(c => c.ProcessName)
-            .Concat(udpConnections.Where(u => InRange(u.LocalPort)).Select(u => u.ProcessName))
-            .ToList();
-
-        int count = contributors.Count;
+        var inRange = tcpConnections.Where(c => InRange(c.LocalPort)).ToList();
+        int count = inRange.Select(c => c.LocalPort).Distinct().Count();
         double pct = Math.Round(100.0 * count / dynamicRange.PortCount, 1);
 
-        var top = contributors
-            .GroupBy(n => n, StringComparer.OrdinalIgnoreCase)
-            .Select(g => new PortContributor(g.Key, g.Count()))
+        var top = inRange
+            .GroupBy(c => c.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new PortContributor(g.Key, g.Select(c => c.LocalPort).Distinct().Count()))
             .OrderByDescending(t => t.Count)
             .Take(5)
             .ToList();

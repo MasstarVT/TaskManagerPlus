@@ -19,6 +19,7 @@ public sealed record TracerouteHop(int HopNumber, string? Ip);
 public static class TracerouteService
 {
     private static readonly Regex ValidHostRegex = new(@"^[A-Za-z0-9][A-Za-z0-9.\-:]*$", RegexOptions.Compiled);
+    private const int TimeoutSeconds = 75;
 
     // Matches a leading hop number (tracert -d's numeric-only lines) and, separately, an IPv4 or
     // bare IPv6 address at the end of the line - tracert -d's own three timing columns sit
@@ -80,8 +81,11 @@ public static class TracerouteService
             var outputTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
             var errorTask = proc.StandardError.ReadToEndAsync(cancellationToken);
 
+            // tracert's own worst case is 20 hops x 3 probes x 1 s = 60 s (a path whose far end drops
+            // ICMP hits it on every run), so the bound sits above that rather than cutting off a
+            // normal slow trace.
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(30));
+            cts.CancelAfter(TimeSpan.FromSeconds(TimeoutSeconds));
             try
             {
                 await proc.WaitForExitAsync(cts.Token);
@@ -92,7 +96,13 @@ public static class TracerouteService
                 // kept running unobserved after the caller gave up on it.
                 try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 if (cancellationToken.IsCancellationRequested) throw;
-                return "Traceroute timed out after 30 seconds (a hop count of 20 with a 1s-per-hop timeout can still run long on a lossy path).";
+
+                // The hops printed before the kill are real; keep them, labelled as partial.
+                string partial = string.Empty;
+                if (await Task.WhenAny(outputTask, Task.Delay(2000)) == outputTask && outputTask.IsCompletedSuccessfully)
+                    partial = outputTask.Result.Trim();
+                string note = $"Traceroute timed out after {TimeoutSeconds} seconds - the hops below are partial.";
+                return partial.Length == 0 ? note : $"{note}\n{partial}";
             }
 
             string output = (await outputTask) + (await errorTask);

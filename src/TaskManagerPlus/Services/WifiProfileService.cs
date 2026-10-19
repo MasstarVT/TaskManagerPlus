@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
 
@@ -14,7 +13,7 @@ public sealed record WifiProfileAudit(
 ///
 /// #543 shells `netsh wlan show wlanreport` (Windows' own built-in wireless diagnostics report
 /// generator - the best offline Wi-Fi history Windows offers, zero parsing needed) and opens the
-/// resulting HTML file in the default browser.
+/// resulting HTML file in the user's default browser, unelevated (SafeLaunchService.OpenDocument).
 ///
 /// #544 parses `netsh wlan show profiles` for the saved-network list, then `netsh wlan show
 /// profile name="X"` (deliberately never with `key=clear` - this app has no use for the stored
@@ -29,9 +28,15 @@ public static class WifiProfileService
 {
     private const int TimeoutMs = 5000;
 
+    /// <summary>Throws when `netsh wlan show profiles` itself fails (wlansvc stopped: "The Wireless
+    /// AutoConfig Service (wlansvc) is not running.", exit 1) or times out, so a failed read never
+    /// reaches the caller as "no saved profiles".</summary>
     public static async Task<List<WifiProfileAudit>> ListProfilesAsync()
     {
-        string listOutput = await RunNetshAsync("wlan show profiles");
+        var (listOutput, exitCode) = await RunNetshAsync("wlan show profiles");
+        if (exitCode is null) throw new TimeoutException("netsh wlan show profiles timed out.");
+        if (exitCode != 0)
+            throw new InvalidOperationException(listOutput.Trim() is { Length: > 0 } text ? text : $"netsh exited with code {exitCode}.");
 
         var results = new List<WifiProfileAudit>();
         foreach (var (interfaceName, name) in ExtractProfiles(listOutput))
@@ -39,28 +44,29 @@ public static class WifiProfileService
             string detailArgs = interfaceName is null
                 ? $"wlan show profile name=\"{EscapeArg(name)}\""
                 : $"wlan show profile name=\"{EscapeArg(name)}\" interface=\"{EscapeArg(interfaceName)}\"";
-            string detail = await RunNetshAsync(detailArgs);
+            var (detail, _) = await RunNetshAsync(detailArgs);
             results.Add(ParseProfileDetail(name, interfaceName, detail));
         }
         return results;
     }
 
-    public static async Task<string> DeleteProfileAsync(string profileName, string? interfaceName)
+    /// <summary>netsh's reply plus its exit code (null on timeout) - the reply is localized text,
+    /// so the exit code is what tells success from failure.</summary>
+    public static async Task<(string Output, int? ExitCode)> DeleteProfileAsync(string profileName, string? interfaceName)
     {
         string args = interfaceName is null
             ? $"wlan delete profile name=\"{EscapeArg(profileName)}\""
             : $"wlan delete profile name=\"{EscapeArg(profileName)}\" interface=\"{EscapeArg(interfaceName)}\"";
-        string output = await RunNetshAsync(args);
-        return output.Trim();
+        var (output, exitCode) = await RunNetshAsync(args);
+        return (output.Trim(), exitCode);
     }
 
     /// <summary>#543: runs Windows' own wireless-report generator, then opens the fixed, documented
-    /// output path in the default browser. Surfaces the path itself if the browser launch fails
-    /// (no default handler for .html, Smart App Control blocking a shell launch, etc.) rather than
-    /// swallowing the failure.</summary>
+    /// output path in the user's (unelevated) browser via SafeLaunchService. Surfaces the path itself
+    /// if that launch fails rather than swallowing the failure.</summary>
     public static async Task<(bool Success, string Message, string? ReportPath)> RunWlanReportAsync()
     {
-        string output = await RunNetshAsync("wlan show wlanreport", timeoutMs: 15000);
+        var (output, _) = await RunNetshAsync("wlan show wlanreport", timeoutMs: 15000);
         string reportPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "Microsoft", "Windows", "WlanReport", "wlan-report-latest.html");
@@ -68,15 +74,9 @@ public static class WifiProfileService
         if (!File.Exists(reportPath))
             return (false, $"netsh didn't produce a report at the expected path.\n{output.Trim()}", null);
 
-        try
-        {
-            Process.Start(new ProcessStartInfo(reportPath) { UseShellExecute = true });
-            return (true, "Report generated and opened in your default browser.", reportPath);
-        }
-        catch (Exception ex)
-        {
-            return (true, $"Report generated at: {reportPath}\n(couldn't open it automatically - {ex.Message})", reportPath);
-        }
+        return SafeLaunchService.OpenDocument(reportPath)
+            ? (true, "Report generated and opened in your default browser.", reportPath)
+            : (true, $"Report generated at: {reportPath}\n(couldn't open it automatically - open that file yourself)", reportPath);
     }
 
     // ---- netsh output parsing ----------------------------------------------------------------
@@ -149,35 +149,8 @@ public static class WifiProfileService
 
     private static string EscapeArg(string value) => value.Replace("\"", "\\\"");
 
-    /// <summary>Same shelling-out shape WifiDiagnosticsService.ReadCurrentWifiAsync already
-    /// establishes - duplicated rather than shared per that method's own remarks (it's private to a
-    /// different class).</summary>
-    private static async Task<string> RunNetshAsync(string arguments, int timeoutMs = TimeoutMs)
-    {
-        var psi = new ProcessStartInfo("netsh", arguments)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var proc = Process.Start(psi);
-        if (proc is null) return string.Empty;
-
-        var outputTask = proc.StandardOutput.ReadToEndAsync();
-        var errorTask = proc.StandardError.ReadToEndAsync();
-
-        using var cts = new CancellationTokenSource(timeoutMs);
-        try
-        {
-            await proc.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            return string.Empty;
-        }
-
-        return (await outputTask) + (await errorTask);
-    }
+    /// <summary>Output plus exit code (null on timeout, with empty output) - the exit code is what
+    /// list/delete judge success by, since netsh's text is localized.</summary>
+    private static Task<(string Output, int? ExitCode)> RunNetshAsync(string arguments, int timeoutMs = TimeoutMs)
+        => ToolRunner.RunCapturedAsync("netsh.exe", arguments, timeoutMs, timeoutOutput: string.Empty);
 }

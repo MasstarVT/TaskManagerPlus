@@ -108,11 +108,18 @@ public static class NetworkHistoryService
 
                 foreach (var proc in capture)
                 {
+                    // The capture names a process "<ProcessName>.exe" (or "PID n" once it has exited);
+                    // RecordSample's rows use the bare Process.ProcessName, so strip the suffix to land
+                    // on the same row, and skip unresolved PIDs (meaningless after the day ends).
+                    if (!proc.ProcessName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
+                    string name = proc.ProcessName[..^4];
+                    if (name.Length == 0) continue;
+
                     var existing = entries.FirstOrDefault(e => e.Date == today &&
-                        e.ProcessName.Equals(proc.ProcessName, StringComparison.OrdinalIgnoreCase));
+                        e.ProcessName.Equals(name, StringComparison.OrdinalIgnoreCase));
                     if (existing is null)
                     {
-                        existing = new NetworkHistoryEntry { Date = today, ProcessName = proc.ProcessName };
+                        existing = new NetworkHistoryEntry { Date = today, ProcessName = name };
                         entries.Add(existing);
                     }
                     existing.BytesSentTotal += proc.BytesSent;

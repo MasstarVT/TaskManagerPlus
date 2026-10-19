@@ -37,9 +37,9 @@ public sealed record TracerouteDiffEntry(int? BaselineHop, int? CurrentHop, stri
 /// turning the existing one-shot text dump into an actionable "your ISP rerouted you through a
 /// different city" signal instead of two blocks of text the user has to eyeball themselves.
 ///
-/// Persisted as traceroute-baselines.json under AppPaths.SettingsDirectory - same fail-silent-to-
-/// defaults JSON pattern as latency-baseline.json/theme.json (LatencyBaselineService/ThemeService):
-/// a missing or corrupt file just means "no baselines saved yet", not a crash.
+/// Persisted as traceroute-baselines.json under AppPaths.SettingsDirectory: a missing or corrupt
+/// file just means "no baselines saved yet", not a crash - and since the baselines are user-named
+/// data, a corrupt file is backed up (AppPaths.PreserveUnreadable) before the next save replaces it.
 ///
 /// The diff itself is a classic LCS (longest common subsequence) alignment over hop IP addresses -
 /// a hop present in both sequences at the same relative order counts as Unchanged (or Reordered if
@@ -52,55 +52,74 @@ public static class TracerouteBaselineService
 {
     private static string SettingsPath => AppPaths.GetPath("traceroute-baselines.json");
 
+    /// <summary>The named baselines are user-authored, so a file that doesn't parse (or had entries
+    /// dropped) is marked for <see cref="AppPaths.PreserveUnreadable"/> - the next Save keeps a .bak
+    /// of it instead of silently replacing every other baseline with just the new one.</summary>
     public static TracerouteBaselineFile Load()
     {
+        string path = SettingsPath;
         try
         {
-            if (File.Exists(SettingsPath))
+            if (File.Exists(path))
             {
-                var json = File.ReadAllText(SettingsPath);
+                var json = File.ReadAllText(path);
                 var file = JsonSerializer.Deserialize<TracerouteBaselineFile>(json);
-                if (file is not null)
+                if (file is null || file.Baselines is null)
                 {
-                    // SaveBaseline calls Name.Equals on every baseline and Diff walks Hops - explicit
-                    // nulls from a hand edit are dropped or blanked. Diff's DP table is hops x hops,
-                    // so a baseline is also capped at 255 hops (the IP TTL ceiling).
-                    file.Baselines = file.Baselines?.Where(b => b is not null).ToList() ?? new List<TracerouteBaseline>();
-                    foreach (var b in file.Baselines)
-                    {
-                        b.Name ??= string.Empty;
-                        b.Host ??= string.Empty;
-                        b.Hops = b.Hops?.Where(h => h is not null).Take(255).ToList() ?? new List<TracerouteBaselineHop>();
-                    }
-                    return file;
+                    AppPaths.MarkUnreadable(path);
+                    return new TracerouteBaselineFile();
                 }
+
+                // SaveBaseline calls Name.Equals on every baseline and Diff walks Hops - explicit
+                // nulls from a hand edit are dropped or blanked. Diff's DP table is hops x hops,
+                // so a baseline is also capped at 255 hops (the IP TTL ceiling).
+                bool dropped = false;
+                var kept = file.Baselines.Where(b => b is not null).ToList();
+                dropped |= kept.Count != file.Baselines.Count;
+                file.Baselines = kept;
+                foreach (var b in file.Baselines)
+                {
+                    b.Name ??= string.Empty;
+                    b.Host ??= string.Empty;
+                    var hops = b.Hops?.Where(h => h is not null).Take(255).ToList() ?? new List<TracerouteBaselineHop>();
+                    dropped |= b.Hops is null || hops.Count != b.Hops.Count;
+                    b.Hops = hops;
+                }
+                if (dropped) AppPaths.MarkUnreadable(path);
+                return file;
             }
         }
         catch
         {
-            // Corrupt/unreadable file - fall back to "no baselines saved yet".
+            // Corrupt/unreadable file - fall back to "no baselines saved yet", but keep a copy
+            // before anything overwrites it.
+            AppPaths.MarkUnreadable(path);
         }
         return new TracerouteBaselineFile();
     }
 
-    public static void Save(TracerouteBaselineFile file)
+    /// <summary>False when nothing was written - the unreadable original couldn't be backed up
+    /// first, or the write itself failed.</summary>
+    public static bool Save(TracerouteBaselineFile file)
     {
+        string path = SettingsPath;
         try
         {
-            var dir = Path.GetDirectoryName(SettingsPath)!;
-            Directory.CreateDirectory(dir);
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(file, new JsonSerializerOptions { WriteIndented = true }));
+            if (!AppPaths.PreserveUnreadable(path)) return false;
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            AppPaths.WriteAllTextAtomic(path, JsonSerializer.Serialize(file, new JsonSerializerOptions { WriteIndented = true }));
+            return true;
         }
         catch
         {
-            // Best-effort - if we can't persist, the app still works for this session.
+            return false;
         }
     }
 
     /// <summary>Saves (or overwrites, by name) one baseline from a completed traceroute's parsed
     /// hops. Returns the saved baseline so the caller can immediately diff against it without a
-    /// second file read.</summary>
-    public static TracerouteBaseline SaveBaseline(string name, string host, IReadOnlyList<TracerouteHop> hops)
+    /// second file read, or null when it couldn't be written.</summary>
+    public static TracerouteBaseline? SaveBaseline(string name, string host, IReadOnlyList<TracerouteHop> hops)
     {
         var file = Load();
         var baseline = new TracerouteBaseline
@@ -113,8 +132,7 @@ public static class TracerouteBaselineService
 
         file.Baselines.RemoveAll(b => b.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         file.Baselines.Add(baseline);
-        Save(file);
-        return baseline;
+        return Save(file) ? baseline : null;
     }
 
     /// <summary>LCS-based diff between a saved baseline and a freshly-run traceroute's hops - see

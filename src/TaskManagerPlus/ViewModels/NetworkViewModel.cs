@@ -2199,38 +2199,23 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             $"netsh interface set interface \"{adapterName}\" admin=disable, then admin=enable", success);
     }
 
-    /// <summary>#46: opens the hosts file in Notepad for DNS override troubleshooting - explicitly
-    /// launches notepad.exe rather than ShellExecute-ing the bare path, since the hosts file has
-    /// no extension and so no reliably-registered default handler to fall back to.</summary>
+    /// <summary>#46: opens the hosts file in Notepad for DNS override troubleshooting - System32's
+    /// notepad.exe (elevated, so the admin-only file can be saved), never an association lookup;
+    /// the hosts file has no extension and so no reliable default handler anyway. Best-effort - if
+    /// Notepad can't launch there's nothing more useful this app can do here.</summary>
     private static void OpenHostsFile()
     {
-        try
-        {
-            string hostsPath = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.System), @"drivers\etc\hosts");
-            Process.Start(new ProcessStartInfo("notepad.exe", $"\"{hostsPath}\"") { UseShellExecute = true });
-        }
-        catch
-        {
-            // Best-effort - if Notepad can't launch there's nothing more useful this app can do here.
-        }
+        string hostsPath = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.System), @"drivers\etc\hosts");
+        SafeLaunchService.OpenInNotepad(hostsPath);
     }
 
     /// <summary>#551: opens Device Manager - there's no documented switch/URI to deep-link straight
     /// to a specific device's Power Management tab, so this just gets the user to the right tool
     /// (they still pick the adapter and tab themselves), the same "known tool over nothing" shape
-    /// OpenHostsFile above already takes for a different destination.</summary>
-    private static void OpenDeviceManager()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo("devmgmt.msc") { UseShellExecute = true });
-        }
-        catch
-        {
-            // Best-effort - if it can't launch there's nothing more useful this app can do here.
-        }
-    }
+    /// OpenHostsFile above already takes for a different destination. Started as System32's
+    /// devmgmt.msc through mmc.exe, best-effort.</summary>
+    private static void OpenDeviceManager() => SafeLaunchService.OpenSnapIn("devmgmt.msc");
 
     /// <summary>#49: on-demand traceroute - see TracerouteService's remarks for why this shells
     /// out to tracert.exe rather than reimplementing it.</summary>
@@ -2238,7 +2223,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     {
         if (IsTracerouting) return;
         IsTracerouting = true;
-        TracerouteOutput = "Running traceroute (up to 20 hops, this can take several seconds)...";
+        TracerouteOutput = "Running traceroute (up to 20 hops - this can take up to about a minute on a path that drops probes)...";
         try
         {
             TracerouteOutput = await TracerouteService.RunAsync(TracerouteHost);
@@ -2684,7 +2669,12 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     {
         if (_lastTracerouteHops.Count == 0 || string.IsNullOrWhiteSpace(TracerouteBaselineName)) return;
 
-        TracerouteBaselineService.SaveBaseline(TracerouteBaselineName.Trim(), TracerouteHost, _lastTracerouteHops);
+        if (TracerouteBaselineService.SaveBaseline(TracerouteBaselineName.Trim(), TracerouteHost, _lastTracerouteHops) is null)
+        {
+            TracerouteDiff.Clear();
+            TracerouteDiffSummaryText = "Couldn't save the baseline - traceroute-baselines.json couldn't be written (or, if it was unreadable, backed up first). Nothing was changed.";
+            return;
+        }
         LoadTracerouteBaselineNames();
         SelectedTracerouteBaseline = TracerouteBaselineName.Trim();
     }
@@ -2880,7 +2870,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     /// Connections/UdpConnections and PortReservation.DynamicRange - no I/O, safe to call after
     /// either input changes.</summary>
     private void RecomputePortExhaustion() =>
-        PortExhaustion = PortReservationService.ComputeExhaustion(Connections, UdpConnections, PortReservation.DynamicRange);
+        PortExhaustion = PortReservationService.ComputeExhaustion(Connections, PortReservation.DynamicRange);
 
     // ---- #517-526 helpers -------------------------------------------------------------------
 
@@ -3480,7 +3470,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             WifiEventStatusText = !result.ChannelAvailable
                 ? "The WLAN-AutoConfig Operational log couldn't be read (access denied, or the channel is disabled/absent on this machine)."
                 : result.Events.Count == 0
-                    ? $"No connect/disconnect/roam events in the last {WifiEventScanWindowHours:0.#}h."
+                    ? $"No Wi-Fi connection events in the last {WifiEventScanWindowHours:0.#}h."
                     : $"{result.Events.Count} event(s) in the last {WifiEventScanWindowHours:0.#}h.";
         }
         catch (Exception ex)
@@ -3514,10 +3504,13 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>#544: on-demand saved-profile audit.</summary>
-    private async Task RefreshWifiProfilesAsync()
+    /// <summary>#544: on-demand saved-profile audit. False when the list couldn't be read (the old
+    /// rows are cleared and the status says why, never "No saved profiles found").</summary>
+    private Task RefreshWifiProfilesAsync() => RefreshWifiProfilesCoreAsync();
+
+    private async Task<bool> RefreshWifiProfilesCoreAsync()
     {
-        if (IsLoadingWifiProfiles) return;
+        if (IsLoadingWifiProfiles) return false;
         IsLoadingWifiProfiles = true;
         WifiProfilesStatusText = "Loading...";
         try
@@ -3530,10 +3523,13 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
             WifiProfilesStatusText = profiles.Count == 0
                 ? "No saved profiles found."
                 : $"{profiles.Count} saved profile(s), {flagged} flagged.";
+            return true;
         }
         catch (Exception ex)
         {
+            WifiProfiles.Clear();
             WifiProfilesStatusText = $"Couldn't load saved profiles: {ex.Message}";
+            return false;
         }
         finally
         {
@@ -3555,25 +3551,31 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
         IsLoadingWifiProfiles = true;
         WifiProfilesStatusText = $"Deleting \"{target.Name}\"...";
-        bool ran = false;
+        bool deleted = false;
+        string? failure = null;
         try
         {
-            await WifiProfileService.DeleteProfileAsync(target.Name, target.InterfaceName);
-            ran = true;
+            var (output, exitCode) = await WifiProfileService.DeleteProfileAsync(target.Name, target.InterfaceName);
+            deleted = exitCode == 0;
+            if (!deleted)
+                failure = exitCode is null ? "netsh timed out." : output.Length > 0 ? output : $"netsh exited with code {exitCode}.";
         }
         catch (Exception ex)
         {
-            WifiProfilesStatusText = $"Delete failed: {ex.Message}";
+            failure = ex.Message;
         }
         finally
         {
             IsLoadingWifiProfiles = false;
         }
-        await RefreshWifiProfilesAsync();
+        bool listed = await RefreshWifiProfilesCoreAsync();
+        if (failure is not null) WifiProfilesStatusText = $"Delete failed: {failure}";
 
-        // netsh's reply is localized text, so success is judged by the profile actually being gone.
-        bool gone = ran && !WifiProfiles.Any(p => string.Equals(p.Name, target.Name, StringComparison.Ordinal) &&
-                                                  string.Equals(p.InterfaceName, target.InterfaceName, StringComparison.OrdinalIgnoreCase));
+        // netsh's reply is localized text, so success needs its exit code AND a re-list that both
+        // succeeded and no longer shows the profile - a failed re-list (wlansvc stopped) is empty.
+        bool gone = deleted && listed &&
+                    !WifiProfiles.Any(p => string.Equals(p.Name, target.Name, StringComparison.Ordinal) &&
+                                           string.Equals(p.InterfaceName, target.InterfaceName, StringComparison.OrdinalIgnoreCase));
         JournalOneShotRun("Delete saved Wi-Fi profile",
             target.InterfaceName is null
                 ? $"netsh wlan delete profile name=\"{target.Name}\""
@@ -3673,8 +3675,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         bool success = false;
         try
         {
-            FirewallLogStatusText = await FirewallLogService.EnableDroppedConnectionLoggingAsync();
-            success = !LooksLikeRunFailure(FirewallLogStatusText);
+            (FirewallLogStatusText, success) = await FirewallLogService.EnableDroppedConnectionLoggingAsync();
         }
         catch (Exception ex)
         {
@@ -4413,9 +4414,9 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>#593: NCSI explainer - run once at startup (mirroring the existing Proxy card's own
-    /// auto-load) plus on demand, since "which of the three checks is failing" is exactly the kind
-    /// of thing worth re-running the moment Windows' own icon changes.</summary>
+    /// <summary>#593: NCSI explainer - on demand only (it sends real probes, so it never runs
+    /// automatically), since "which of the three checks is failing" is exactly the kind of thing
+    /// worth re-running the moment Windows' own icon changes.</summary>
     private async Task RunNcsiCheckAsync()
     {
         if (IsCheckingNcsi) return;
@@ -4487,7 +4488,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
     }
 
     // Mirrors PerformanceViewModel.HistoryLength (private to that class) - the Throughput chart's
-    // own rolling window is 60 one-second samples.
+    // own rolling window is 60 samples, one per Performance.PollIntervalSeconds.
     private const int ThroughputHistoryLength = 60;
 
     /// <summary>#597: full clear+rebuild of one chart's event-marker overlay from the last #596
@@ -4772,7 +4773,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
         {
             string dir = AppPaths.GetPath("NetworkIncidents");
             Directory.CreateDirectory(dir);
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = true });
+            SafeLaunchService.RevealInExplorer(dir); // unelevated Explorer window
         }
         catch
         {
