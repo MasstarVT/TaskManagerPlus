@@ -65,11 +65,11 @@ public static class RegistryChangeJournalService
     public static bool Verify(RegistryChangeEntry entry) =>
         JournalIntegrityService.Verify(MacDomain, entry.Mac, MacFields(entry));
 
-    // Everything Undo reads, plus the text shown beside the Undo button. Undone is excluded:
-    // MarkUndone flips it in place. Null stays distinct from empty (null OldValueText = delete).
+    // Everything Undo reads, the text shown beside the Undo button, and Undone (the Undo button's
+    // gate - MarkUndone re-signs). Null stays distinct from empty (null OldValueText = delete).
     private static string?[] MacFields(RegistryChangeEntry e) => new[]
     {
-        e.Id.ToString("D"), JournalIntegrityService.Instant(e.Timestamp), e.Source, e.Description,
+        e.Id.ToString("D"), JournalIntegrityService.Flag(e.Undone), JournalIntegrityService.Instant(e.Timestamp), e.Source, e.Description,
         e.Hive, e.SubKeyPath, e.ValueName, e.ValueKind, e.OldValueKind, e.OldValueText, e.NewValueText,
     };
 
@@ -159,9 +159,12 @@ public static class RegistryChangeJournalService
         lock (FileLock)
         {
             var history = LoadHistoryUnlocked();
-            var match = history.FirstOrDefault(e => e.Id == id);
+            // The verified row, not just the first with this Id - a forged duplicate placed earlier
+            // must neither be marked nor shield the real entry. Re-signed, since Undone is MAC'd.
+            var match = history.FirstOrDefault(e => e.Id == id && e.IsVerified);
             if (match is null) return;
             match.Undone = true;
+            match.Mac = JournalIntegrityService.Sign(MacDomain, MacFields(match));
             SaveUnlocked(history);
         }
     }

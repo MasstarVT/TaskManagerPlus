@@ -77,23 +77,29 @@ public static class SecurityActionJournalService
 
     public static List<SecurityActionJournalEntry> MarkUndone(List<SecurityActionJournalEntry> current, string entryId)
     {
-        var updated = current.Select(e => e.Id == entryId ? CloneUndone(e) : e).ToList();
+        // Only the verified row is marked (and re-signed, since IsUndone is MAC'd); a forged row
+        // reusing the Id is left exactly as it was.
+        var updated = current.Select(e => e.Id == entryId && Verify(e) ? CloneUndone(e) : e).ToList();
         Save(updated);
         return updated;
     }
 
-    private static SecurityActionJournalEntry CloneUndone(SecurityActionJournalEntry e) => new()
+    private static SecurityActionJournalEntry CloneUndone(SecurityActionJournalEntry e)
     {
-        Id = e.Id,
-        TimestampUtc = e.TimestampUtc,
-        Kind = e.Kind,
-        ActionDescription = e.ActionDescription,
-        Target = e.Target,
-        UndoPayload = e.UndoPayload,
-        IsUndone = true,
-        Mac = e.Mac,
-        IsVerified = e.IsVerified,
-    };
+        var clone = new SecurityActionJournalEntry
+        {
+            Id = e.Id,
+            TimestampUtc = e.TimestampUtc,
+            Kind = e.Kind,
+            ActionDescription = e.ActionDescription,
+            Target = e.Target,
+            UndoPayload = e.UndoPayload,
+            IsUndone = true,
+        };
+        clone.Mac = JournalIntegrityService.Sign(MacDomain, MacFields(clone));
+        clone.IsVerified = clone.Mac is not null;
+        return clone;
+    }
 
     private const string MacDomain = "security-actions";
 
@@ -101,11 +107,11 @@ public static class SecurityActionJournalService
     public static bool Verify(SecurityActionJournalEntry entry) =>
         JournalIntegrityService.Verify(MacDomain, entry.Mac, MacFields(entry));
 
-    // Everything Undo reads (Kind picks the inverse, UndoPayload is its arguments) plus the text
-    // shown beside the Undo button. IsUndone is excluded: MarkUndone flips it.
+    // Everything Undo reads (Kind picks the inverse, UndoPayload is its arguments), the text shown
+    // beside the Undo button, and IsUndone (CanUndo's gate - MarkUndone re-signs).
     private static string?[] MacFields(SecurityActionJournalEntry e) => new[]
     {
-        e.Id, JournalIntegrityService.Instant(e.TimestampUtc), e.Kind.ToString(), e.ActionDescription, e.Target, e.UndoPayload,
+        e.Id, JournalIntegrityService.Flag(e.IsUndone), JournalIntegrityService.Instant(e.TimestampUtc), e.Kind.ToString(), e.ActionDescription, e.Target, e.UndoPayload,
     };
 
     /// <summary>The undo arguments for an entry, only when its MAC verifies - the one way

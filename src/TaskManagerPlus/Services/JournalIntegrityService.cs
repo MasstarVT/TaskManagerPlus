@@ -26,9 +26,11 @@ namespace TaskManagerPlus.Services;
 /// "unverified", which disables that entry's Undo. Entries written before this existed carry no MAC
 /// and are therefore unverified too: they still list, they just can't be undone from the app.
 ///
-/// Residual: this proves authorship, not freshness - a line this app genuinely wrote can be
-/// replayed (e.g. an undone entry copied back with Undone=false). That can only repeat an inverse
-/// of something this app really did.
+/// The undone flag is inside the MAC (and re-signed by each MarkUndone), so flipping it back on an
+/// undone entry breaks verification. Residual: this proves authorship, not freshness - a copy of a
+/// line captured BEFORE it was undone can be written back and verifies. That can only repeat an
+/// inverse of something this app really did; closing it would need undone ids kept in the
+/// admin-only key.
 /// </summary>
 public static class JournalIntegrityService
 {

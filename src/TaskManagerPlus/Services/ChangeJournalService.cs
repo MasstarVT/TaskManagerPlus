@@ -108,11 +108,11 @@ public static class ChangeJournalService
         JournalIntegrityService.Verify(MacDomain, entry.Mac, MacFields(entry));
 
     // Everything an inverse reads (TimestampUtc too - the PID-reuse check compares against it),
-    // plus the text shown beside the Undo button. Undone/UndoneAtUtc are excluded: MarkUndone
-    // flips them in place.
+    // the text shown beside the Undo button, and Undone - every undo gate reads it, so flipping it
+    // back must break the MAC. MarkUndone re-signs the row it marks.
     private static string?[] MacFields(ChangeJournalEntry e) => new[]
     {
-        e.Id, e.Kind.ToString(), JournalIntegrityService.Instant(e.TimestampUtc), e.Target, e.ActionDescription,
+        e.Id, JournalIntegrityService.Flag(e.Undone), e.Kind.ToString(), JournalIntegrityService.Instant(e.TimestampUtc), e.Target, e.ActionDescription,
         e.BeforeValue, e.AfterValue, e.TriggeredBy, JournalIntegrityService.Flag(e.Success), JournalIntegrityService.Flag(e.IsUndoable),
         e.ServiceName, e.Pid?.ToString(System.Globalization.CultureInfo.InvariantCulture), e.ProcessName,
         e.StartupItemName, e.StartupItemCommand, e.StartupItemSource, e.PowerPlanGuidBefore, e.RegistryBackupPath,
@@ -138,10 +138,13 @@ public static class ChangeJournalService
                     try
                     {
                         var entry = JsonSerializer.Deserialize<ChangeJournalEntry>(line, JsonOpts);
-                        if (entry is not null && string.Equals(entry.Id, entryId, StringComparison.Ordinal))
+                        // Only a row that verified before the flip is marked and re-signed - a forged
+                        // row reusing the same Id stays exactly as it was, still unverified.
+                        if (entry is not null && string.Equals(entry.Id, entryId, StringComparison.Ordinal) && Verify(entry))
                         {
                             entry.Undone = true;
                             entry.UndoneAtUtc = DateTime.UtcNow;
+                            entry.Mac = JournalIntegrityService.Sign(MacDomain, MacFields(entry));
                             rewritten.Add(JsonSerializer.Serialize(entry, JsonOpts));
                             continue;
                         }
