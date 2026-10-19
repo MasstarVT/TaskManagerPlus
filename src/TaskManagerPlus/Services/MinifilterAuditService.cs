@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Text.RegularExpressions;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -24,8 +23,6 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class MinifilterAuditService
 {
-    private static readonly Regex ColumnSplit = new(@"\s{2,}", RegexOptions.Compiled);
-
     public static async Task<MinifilterAuditResult> RunAsync()
     {
         try
@@ -42,6 +39,14 @@ public static class MinifilterAuditService
 
             var filters = ParseFilters(filtersOutput);
             var instances = ParseInstances(instancesOutput);
+
+            // Every Windows install has in-box minifilters (FileInfo, WdFilter, ...), so an empty
+            // table is a failed read (e.g. "Filter listing failed with error: 0x80070005"), not "none".
+            if (filters.Count == 0)
+            {
+                string reason = filtersOutput.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "no output";
+                return MinifilterAuditResult.Unavailable($"fltmc.exe (filters) returned no filter table: {reason}");
+            }
 
             var volumesByFilter = instances
                 .GroupBy(i => i.FilterName, StringComparer.OrdinalIgnoreCase)
@@ -87,54 +92,82 @@ public static class MinifilterAuditService
     private static double ParseAltitude(string altitude)
         => double.TryParse(altitude, NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v : 0;
 
-    /// <summary>Parses `fltmc filters`' 4-column table (Filter Name / Num Instances / Altitude /
-    /// Frame). fltmc's column widths aren't fixed-width-aligned in a way that's safe to slice by
-    /// character position across Windows versions, so this splits on runs of 2+ spaces instead
-    /// (the same tolerant approach VolumeDiagnosticsService's vssadmin/fsutil parsers use) and
-    /// silently skips any line that doesn't cleanly split into 4 columns - the header row, the
-    /// "----" separator row, and any blank line all fail that check harmlessly.</summary>
+    /// <summary>Parses `fltmc filters`' table (Filter Name / Num Instances / Altitude / Frame),
+    /// skipping any row whose instance count isn't a number.</summary>
     private static List<MinifilterDriverInfo> ParseFilters(string output)
     {
         var result = new List<MinifilterDriverInfo>();
-        foreach (var rawLine in output.Split('\n'))
+        foreach (var cols in ParseFltmcTable(output))
         {
-            var line = rawLine.Trim();
-            if (line.Length == 0 || IsSeparatorLine(line)) continue;
-
-            var cols = ColumnSplit.Split(line);
-            if (cols.Length != 4) continue;
-            if (string.Equals(cols[0], "Filter Name", StringComparison.OrdinalIgnoreCase)) continue;
+            if (cols.Length < 3 || cols[0].Length == 0) continue;
             if (!int.TryParse(cols[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int instanceCount)) continue;
-
             result.Add(new MinifilterDriverInfo { Name = cols[0], InstanceCount = instanceCount, Altitude = cols[2] });
         }
         return result;
     }
 
+    /// <summary>Label for a `fltmc instances` row whose Volume Name column is blank (fltmc couldn't
+    /// name that volume) - kept as a row so per-volume counts still add up to Num Instances.</summary>
+    internal const string UnnamedVolumeLabel = "(unnamed volume)";
+
     /// <summary>Parses `fltmc instances`' table - Filter / Volume Name / Altitude / Instance Name,
     /// followed on current builds by Frame / SprtFtrs / VlStatus (older builds print fewer trailing
-    /// columns, and title the first one "Filter Name"). Only the first four are used, so any row
-    /// with at least four columns is accepted - same tolerant column-split approach as
-    /// ParseFilters above.</summary>
+    /// columns, and title the first one "Filter Name"). Only the first four are used.</summary>
     private static List<MinifilterInstanceInfo> ParseInstances(string output)
     {
         var result = new List<MinifilterInstanceInfo>();
-        foreach (var rawLine in output.Split('\n'))
+        foreach (var cols in ParseFltmcTable(output))
         {
-            var line = rawLine.Trim();
-            if (line.Length == 0 || IsSeparatorLine(line)) continue;
-
-            var cols = ColumnSplit.Split(line);
-            if (cols.Length < 4) continue;
-            if (string.Equals(cols[0], "Filter Name", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(cols[0], "Filter", StringComparison.OrdinalIgnoreCase)) continue;
-
-            result.Add(new MinifilterInstanceInfo { FilterName = cols[0], VolumeName = cols[1], Altitude = cols[2], InstanceName = cols[3] });
+            if (cols.Length < 4 || cols[0].Length == 0) continue;
+            result.Add(new MinifilterInstanceInfo
+            {
+                FilterName = cols[0],
+                VolumeName = cols[1].Length > 0 ? cols[1] : UnnamedVolumeLabel,
+                Altitude = cols[2],
+                InstanceName = cols[3],
+            });
         }
         return result;
     }
 
-    private static bool IsSeparatorLine(string line) => line.Length > 0 && line.All(c => c == '-' || c == ' ');
+    /// <summary>Slices one of fltmc's fixed-width tables at the column spans marked by its "----"
+    /// separator row: one string[] per data row, columns in order (positional, so a localized
+    /// header doesn't matter). Splitting on runs of spaces instead shifted every column left on
+    /// `fltmc instances` rows whose Volume Name is blank, turning altitudes into volume names.
+    /// Each column runs up to the next one's start, so a value that spills into the gap between
+    /// columns isn't cut; the last runs to the end of the line.</summary>
+    internal static List<string[]> ParseFltmcTable(string output)
+    {
+        var rows = new List<string[]>();
+        if (string.IsNullOrEmpty(output)) return rows;
+        var lines = output.Replace("\r\n", "\n").Split('\n');
+
+        int sep = Array.FindIndex(lines, IsSeparatorLine);
+        if (sep < 0) return rows;
+
+        var starts = new List<int>();
+        string sepLine = lines[sep];
+        for (int pos = 0; pos < sepLine.Length; pos++)
+            if (sepLine[pos] == '-' && (pos == 0 || sepLine[pos - 1] != '-')) starts.Add(pos);
+
+        for (int i = sep + 1; i < lines.Length; i++)
+        {
+            string line = lines[i].TrimEnd();
+            if (line.Length == 0 || IsSeparatorLine(line)) continue;
+
+            var cols = new string[starts.Count];
+            for (int c = 0; c < starts.Count; c++)
+            {
+                int start = starts[c];
+                int end = c + 1 < starts.Count ? Math.Min(starts[c + 1], line.Length) : line.Length;
+                cols[c] = start < end ? line[start..end].Trim() : string.Empty;
+            }
+            rows.Add(cols);
+        }
+        return rows;
+    }
+
+    private static bool IsSeparatorLine(string line) => line.Trim().Length > 0 && line.All(c => c == '-' || c == ' ' || c == '\r');
 
     /// <summary>Concurrent async reads + a bounded WaitForExitAsync + Kill()-on-timeout - the same
     /// pattern VolumeDiagnosticsService's fsutil/vssadmin shell-outs use.</summary>

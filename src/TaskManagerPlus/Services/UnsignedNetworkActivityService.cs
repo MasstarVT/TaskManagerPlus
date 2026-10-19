@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace TaskManagerPlus.Services;
 
@@ -6,9 +6,9 @@ namespace TaskManagerPlus.Services;
 /// Round 16, #858: joins NetworkConnectionsService's per-process TCP table with SignatureCheckService
 /// to surface processes that are (a) LISTENING on a socket bound to every interface (0.0.0.0/::) or
 /// (b) hold an ESTABLISHED connection (outbound, or inbound to one of its own listeners) with a
-/// non-loopback remote address, and that are
-/// unsigned or not Microsoft-signed - anything that isn't SignedEmbedded/SignedCatalog (Unsigned,
-/// Unknown, UntrustedChain, Expired) is treated as flaggable here, per #858's own guidance.
+/// non-loopback remote address, and whose image isn't validly signed by anyone - anything that
+/// isn't SignedEmbedded/SignedCatalog (Unsigned, Unknown, UntrustedChain, Expired) is treated as
+/// flaggable here, per #858's own guidance. A validly signed third-party binary is NOT flagged.
 ///
 /// TCP only - NetworkConnectionsService.Sample() (the existing #21/"themed netstat -b" table) has no
 /// UDP counterpart, and UDP is connectionless (no LISTENING/ESTABLISHED state to key this join off
@@ -73,18 +73,47 @@ public static class UnsignedNetworkActivityService
         if (cache.TryGetValue(pid, out var cached)) return cached;
 
         string? path = null;
-        try
+        if (pid == 4)
         {
-            using var proc = Process.GetProcessById(pid);
-            path = proc.MainModule?.FileName;
+            // "System" has no image of its own to open - its sockets (SMB, http.sys) are the kernel's.
+            path = System.IO.Path.Combine(Environment.SystemDirectory, "ntoskrnl.exe");
         }
-        catch
+        else
         {
-            // Exited, protected, or access denied - leave null; SignatureCheckService treats a
-            // null path as Unknown, which #858 already treats as flaggable.
+            // PROCESS_QUERY_LIMITED_INFORMATION works on protected (PPL) processes such as
+            // MsMpEng, where Process.MainModule's full-access open is denied.
+            IntPtr handle = OpenProcess(ProcessQueryLimitedInformation, false, pid);
+            if (handle != IntPtr.Zero)
+            {
+                try
+                {
+                    var buffer = new System.Text.StringBuilder(1024);
+                    int size = buffer.Capacity;
+                    if (QueryFullProcessImageName(handle, 0, buffer, ref size)) path = buffer.ToString();
+                }
+                finally
+                {
+                    CloseHandle(handle);
+                }
+            }
+            // Still null (exited / access denied): SignatureCheckService treats a null path as
+            // Unknown, which #858 already treats as flaggable.
         }
 
         cache[pid] = path;
         return path;
     }
+
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, int processId);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryFullProcessImageName(IntPtr process, uint flags, System.Text.StringBuilder exeName, ref int size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
 }

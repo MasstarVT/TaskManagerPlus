@@ -82,7 +82,11 @@ public static class AutorunsBaselineService
         result.HasBaseline = true;
 
         var baselineByKey = new Dictionary<string, AutorunEntry>(StringComparer.OrdinalIgnoreCase);
-        foreach (var e in baseline) baselineByKey[KeyOf(e)] = e; // last write wins on a duplicate key
+        foreach (var e in baseline)
+        {
+            if (e is null) continue; // a null row in otherwise-valid JSON
+            baselineByKey[KeyOf(e)] = e; // last write wins on a duplicate key
+        }
 
         var currentByKey = new Dictionary<string, AutorunEntry>(StringComparer.OrdinalIgnoreCase);
         foreach (var e in current) currentByKey[KeyOf(e)] = e;

@@ -25,7 +25,8 @@ public static class SecurityActionJournalService
             {
                 var json = File.ReadAllText(JournalPath);
                 var entries = JsonSerializer.Deserialize<List<SecurityActionJournalEntry>>(json);
-                if (entries is not null) return entries;
+                // Valid JSON can still hold null rows or null ids - drop those rows only.
+                if (entries is not null) return entries.Where(e => e is not null && !string.IsNullOrEmpty(e.Id)).ToList();
             }
         }
         catch
@@ -98,7 +99,12 @@ public static class SecurityActionJournalService
     public static Dictionary<string, string>? ParseUndoPayload(string? payload)
     {
         if (string.IsNullOrWhiteSpace(payload)) return null;
-        try { return JsonSerializer.Deserialize<Dictionary<string, string>>(payload); }
+        try
+        {
+            // A null field value would otherwise flow into the undo call as a null argument.
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, string?>>(payload);
+            return parsed?.Where(kv => kv.Value is not null).ToDictionary(kv => kv.Key, kv => kv.Value!);
+        }
         catch { return null; }
     }
 }

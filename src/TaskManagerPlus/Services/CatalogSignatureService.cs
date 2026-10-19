@@ -11,8 +11,8 @@ namespace TaskManagerPlus.Services;
 /// on"). Most in-box Windows kernel drivers are signed via a system catalog (a .cat file listing
 /// file hashes) rather than an embedded Authenticode signature, so SignatureCheckService alone
 /// mis-reports the large majority of drivers as "Unsigned". This does the real thing:
-///   1. CryptCATAdminCalcHashFromFileHandle - hash the driver file the same way Windows itself does
-///      for catalog membership lookups.
+///   1. CryptCATAdminCalcHashFromFileHandle2 - hash the driver file the same way Windows itself does
+///      for catalog membership lookups (SHA-256 first, then SHA-1 for older catalogs).
 ///   2. CryptCATAdminEnumCatalogFromHash - find which system catalog (if any) lists that hash.
 ///   3. WinVerifyTrust with WTD_CHOICE_CATALOG - ask Windows' own trust provider to validate the
 ///      catalog's signature chain for that member, exactly like Driver Signature Enforcement does
@@ -53,10 +53,12 @@ public static class CatalogSignatureService
         {
             if (!File.Exists(filePath)) return UnknownResult;
 
-            var (catalogFilePath, memberTag) = TryFindCatalog(filePath);
-            return catalogFilePath is not null && memberTag is not null
-                ? VerifyViaCatalog(filePath, catalogFilePath, memberTag)
-                : VerifyEmbedded(filePath);
+            // Current catalogs list SHA-256 member hashes; older ones only SHA-1. A SHA-1 lookup can
+            // still find a SHA-256 catalog, but verifying that member with a SHA-1 tag fails with
+            // TRUST_E_BAD_DIGEST - so try SHA-256 first and verify with the same hash and context.
+            return TryVerifyViaCatalog(filePath, "SHA256")
+                ?? TryVerifyViaCatalog(filePath, null)
+                ?? VerifyEmbedded(filePath);
         }
         catch
         {
@@ -64,65 +66,65 @@ public static class CatalogSignatureService
         }
     }
 
-    /// <summary>Hashes the file the way CryptCATAdmin expects and looks up which system catalog (if
-    /// any) lists that hash, returning the catalog's own file path plus the hex member tag
-    /// WinVerifyTrust needs to look the member back up inside it. Every CryptCATAdmin handle
-    /// acquired here is released before returning, success or failure.</summary>
-    private static (string? CatalogFilePath, string? MemberTag) TryFindCatalog(string filePath)
+    /// <summary>Hashes the file with <paramref name="hashAlgorithm"/> (null = SHA-1, the
+    /// CryptCATAdmin default), looks up which system catalog lists that hash, and verifies the
+    /// member with WTD_CHOICE_CATALOG while the same CryptCATAdmin context is still held. Null
+    /// when no catalog lists the file under that algorithm. Every handle acquired here is released
+    /// before returning, success or failure.</summary>
+    private static CatalogSignatureResult? TryVerifyViaCatalog(string filePath, string? hashAlgorithm)
     {
         IntPtr catAdmin = IntPtr.Zero;
         IntPtr catInfo = IntPtr.Zero;
+        IntPtr hashPtr = IntPtr.Zero;
         try
         {
             var subsystem = DriverActionVerifyGuid;
-            if (!CryptCATAdminAcquireContext(out catAdmin, ref subsystem, 0)) return (null, null);
+            if (!CryptCATAdminAcquireContext2(out catAdmin, ref subsystem, hashAlgorithm, IntPtr.Zero, 0)) return null;
 
             using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
 
             uint hashSize = 0;
-            CryptCATAdminCalcHashFromFileHandle(stream.SafeFileHandle, ref hashSize, null, 0);
-            if (hashSize == 0) return (null, null);
+            CryptCATAdminCalcHashFromFileHandle2(catAdmin, stream.SafeFileHandle, ref hashSize, null, 0);
+            if (hashSize == 0) return null;
 
             var hash = new byte[hashSize];
-            if (!CryptCATAdminCalcHashFromFileHandle(stream.SafeFileHandle, ref hashSize, hash, 0)) return (null, null);
+            if (!CryptCATAdminCalcHashFromFileHandle2(catAdmin, stream.SafeFileHandle, ref hashSize, hash, 0)) return null;
 
             IntPtr prevCatInfo = IntPtr.Zero;
             catInfo = CryptCATAdminEnumCatalogFromHash(catAdmin, hash, hashSize, 0, ref prevCatInfo);
-            if (catInfo == IntPtr.Zero) return (null, null);
+            if (catInfo == IntPtr.Zero) return null;
 
             var catalogInfo = new CATALOG_INFO { cbStruct = (uint)Marshal.SizeOf<CATALOG_INFO>() };
-            if (!CryptCATCatalogInfoFromContext(catInfo, ref catalogInfo, 0)) return (null, null);
+            if (!CryptCATCatalogInfoFromContext(catInfo, ref catalogInfo, 0)) return null;
 
-            string memberTag = Convert.ToHexString(hash); // uppercase hex, no separators - what WinVerifyTrust's pcwszMemberTag expects
-            return (catalogInfo.wszCatalogFile, memberTag);
+            hashPtr = Marshal.AllocHGlobal((int)hashSize);
+            Marshal.Copy(hash, 0, hashPtr, (int)hashSize);
+            var info = new WINTRUST_CATALOG_INFO
+            {
+                cbStruct = (uint)Marshal.SizeOf<WINTRUST_CATALOG_INFO>(),
+                pcwszCatalogFilePath = catalogInfo.wszCatalogFile,
+                pcwszMemberTag = Convert.ToHexString(hash), // uppercase hex, no separators
+                pcwszMemberFilePath = filePath,
+                pbCalculatedFileHash = hashPtr,
+                cbCalculatedFileHash = hashSize,
+                hCatAdmin = catAdmin,
+            };
+
+            uint result = CallWinVerifyTrust(WTD_CHOICE_CATALOG, ref info);
+            string? signer = ReadSignerCommonName(catalogInfo.wszCatalogFile);
+            bool isWhql = signer is not null && signer.Equals(WhqlSignerName, StringComparison.OrdinalIgnoreCase);
+            return new CatalogSignatureResult(ClassifyResult(result, viaCatalog: true), signer, isWhql, IsCatalogSigned: true);
         }
         catch
         {
-            return (null, null);
+            return null;
         }
         finally
         {
+            if (hashPtr != IntPtr.Zero) Marshal.FreeHGlobal(hashPtr);
             if (catInfo != IntPtr.Zero) { try { CryptCATAdminReleaseCatalogContext(catAdmin, catInfo, 0); } catch { /* best-effort */ } }
             if (catAdmin != IntPtr.Zero) { try { CryptCATAdminReleaseContext(catAdmin, 0); } catch { /* best-effort */ } }
         }
-    }
-
-    private static CatalogSignatureResult VerifyViaCatalog(string filePath, string catalogFilePath, string memberTag)
-    {
-        var catalogInfo = new WINTRUST_CATALOG_INFO
-        {
-            cbStruct = (uint)Marshal.SizeOf<WINTRUST_CATALOG_INFO>(),
-            pcwszCatalogFilePath = catalogFilePath,
-            pcwszMemberTag = memberTag,
-            pcwszMemberFilePath = filePath,
-        };
-
-        uint result = CallWinVerifyTrust(WTD_CHOICE_CATALOG, ref catalogInfo);
-        string status = ClassifyResult(result);
-
-        string? signer = ReadSignerCommonName(catalogFilePath);
-        bool isWhql = signer is not null && signer.Equals(WhqlSignerName, StringComparison.OrdinalIgnoreCase);
-        return new CatalogSignatureResult(status, signer, isWhql, IsCatalogSigned: true);
     }
 
     private static CatalogSignatureResult VerifyEmbedded(string filePath)
@@ -134,7 +136,7 @@ public static class CatalogSignatureService
         };
 
         uint result = CallWinVerifyTrust(WTD_CHOICE_FILE, ref fileInfo);
-        string status = ClassifyResult(result);
+        string status = ClassifyResult(result, viaCatalog: false);
 
         string? signer = ReadSignerCommonName(filePath);
         bool isWhql = signer is not null && signer.Equals(WhqlSignerName, StringComparison.OrdinalIgnoreCase);
@@ -172,6 +174,8 @@ public static class CatalogSignatureService
         }
         finally
         {
+            // StructureToPtr allocated native copies of the struct's LPWStr fields; free them too.
+            Marshal.DestroyStructure<TInfo>(infoPtr);
             Marshal.FreeHGlobal(infoPtr);
         }
     }
@@ -181,12 +185,15 @@ public static class CatalogSignatureService
     /// itself won't trust - the same result a driver signed with a locally-generated test
     /// certificate under `bcdedit /set testsigning on` produces). Any other nonzero result is
     /// reported with its raw HRESULT rather than guessed at, since the remaining codes (expired
-    /// cert, revoked, wrong usage, ...) are each a distinct condition worth showing verbatim.</summary>
-    private static string ClassifyResult(uint result) => result switch
+    /// cert, revoked, wrong usage, ...) are each a distinct condition worth showing verbatim.
+    /// On the catalog path the file was found BY its own hash, so TRUST_E_BAD_DIGEST there is a
+    /// verification failure of that catalog member, not evidence of "no signature" - it gets the
+    /// raw-HRESULT text like any other unexpected result.</summary>
+    private static string ClassifyResult(uint result, bool viaCatalog) => result switch
     {
         0 => "Signed",
         0x800B0100 => "Unsigned", // TRUST_E_NOSIGNATURE
-        0x80096010 => "Unsigned", // TRUST_E_BAD_DIGEST - not actually a member of the catalog it was pulled from
+        0x80096010 when !viaCatalog => "Unsigned", // TRUST_E_BAD_DIGEST - embedded signature doesn't match the file
         0x800B0109 => "Test-signed / untrusted root", // CERT_E_UNTRUSTEDROOT
         0x800B0111 => "Test-signed / untrusted root", // TRUST_E_EXPLICIT_DISTRUST
         0x800B0004 => "Test-signed / untrusted root", // TRUST_E_SUBJECT_NOT_TRUSTED
@@ -274,10 +281,10 @@ public static class CatalogSignatureService
     }
 
     [DllImport("wintrust.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool CryptCATAdminAcquireContext(out IntPtr catAdmin, ref Guid subsystem, uint flags);
+    private static extern bool CryptCATAdminAcquireContext2(out IntPtr catAdmin, ref Guid subsystem, string? hashAlgorithm, IntPtr strongHashPolicy, uint flags);
 
     [DllImport("wintrust.dll", SetLastError = true)]
-    private static extern bool CryptCATAdminCalcHashFromFileHandle(Microsoft.Win32.SafeHandles.SafeFileHandle fileHandle, ref uint hashSize, byte[]? hash, uint flags);
+    private static extern bool CryptCATAdminCalcHashFromFileHandle2(IntPtr catAdmin, Microsoft.Win32.SafeHandles.SafeFileHandle fileHandle, ref uint hashSize, byte[]? hash, uint flags);
 
     [DllImport("wintrust.dll", SetLastError = true)]
     private static extern IntPtr CryptCATAdminEnumCatalogFromHash(IntPtr catAdmin, byte[] hash, uint hashSize, uint flags, ref IntPtr prevCatInfo);

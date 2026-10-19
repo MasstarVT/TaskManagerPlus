@@ -68,7 +68,7 @@ public static class DefenderActivityService
                 {
                     cpuCap = pref["ScanAvgCPULoadFactor"] is { } c ? Convert.ToInt32(c) : null;
                     idleOnly = pref["ScanOnlyIfIdleEnabled"] is bool ib && ib;
-                    scheduleTimeText = pref["ScanScheduleTime"]?.ToString();
+                    scheduleTimeText = FormatScheduleTime(pref["ScanScheduleTime"] as string);
                 }
             }
             catch
@@ -208,6 +208,17 @@ public static class DefenderActivityService
         string e = exclusion.TrimEnd('\\');
         return dir.TrimEnd('\\').Equals(e, StringComparison.OrdinalIgnoreCase)
             || dir.StartsWith(e + "\\", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>ScanScheduleTime is a CIM interval ("00000000020000.000000:000" = 02:00 after
+    /// midnight); some builds report a CIM timestamp instead. Null when it's neither.</summary>
+    private static string? FormatScheduleTime(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        try { return ManagementDateTimeConverter.ToTimeSpan(raw).ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture); }
+        catch { /* not an interval - try the timestamp form */ }
+        try { return ManagementDateTimeConverter.ToDateTime(raw).ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture); }
+        catch { return null; }
     }
 
     private static DateTime? ToDateTimeOrNull(object? value)

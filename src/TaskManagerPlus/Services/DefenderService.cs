@@ -180,7 +180,13 @@ public static class DefenderService
     // on any failure (channel not enabled, access denied, ...) rather than throwing.
     // ==================================================================================
 
-    public sealed record DefenderTimelineEvent(DateTime Time, int EventId, string EventType, string Summary);
+    /// <param name="ActionName">The "Action:" line of a 1116/1117 message (e.g. Quarantine, Allow),
+    /// read from the full message before <paramref name="Summary"/> is truncated; null when absent
+    /// (other event IDs, or a localized message).</param>
+    public sealed record DefenderTimelineEvent(DateTime Time, int EventId, string EventType, string Summary, string? ActionName = null);
+
+    private static readonly System.Text.RegularExpressions.Regex ActionLineRegex =
+        new(@"^\s*Action:\s*(.+?)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private static readonly Dictionary<int, string> ScanEventLabels = new()
     {
@@ -239,7 +245,10 @@ public static class DefenderService
                     catch { message = string.Empty; } // provider's message file isn't registered - a known, common gap
 
                     string label = labels.TryGetValue(record.Id, out var l) ? l : $"Event {record.Id}";
-                    result.Add(new DefenderTimelineEvent(record.TimeCreated ?? DateTime.MinValue, record.Id, label, Truncate(message, 400)));
+                    // The action line sits ~900 chars into a 1117 message, past the 400-char summary.
+                    var action = ActionLineRegex.Match(message);
+                    result.Add(new DefenderTimelineEvent(record.TimeCreated ?? DateTime.MinValue, record.Id, label, Truncate(message, 400),
+                        action.Success ? action.Groups[1].Value : null));
                 }
             }
         }
@@ -271,7 +280,7 @@ public static class DefenderService
             using var threatSearcher = new ManagementObjectSearcher(DefenderNamespace, "SELECT ThreatID, ThreatName, SeverityID FROM MSFT_MpThreat");
             foreach (ManagementObject mo in threatSearcher.Get())
             {
-                string? id = TryGetString(mo, "ThreatID");
+                string? id = TryGetIdText(mo, "ThreatID");
                 if (string.IsNullOrWhiteSpace(id)) continue;
                 names[id] = (TryGetString(mo, "ThreatName") ?? "Unknown threat", SeverityText(TryGetInt(mo, "SeverityID")));
             }
@@ -284,13 +293,13 @@ public static class DefenderService
         var result = new List<ThreatDetectionRecord>();
         try
         {
-            using var searcher = new ManagementObjectSearcher(DefenderNamespace, "SELECT ThreatID, ProcessName, InitialDetectionTime, ActionSuccess, SeverityID FROM MSFT_MpThreatDetection");
+            // MSFT_MpThreatDetection has no SeverityID (asking for it makes the whole query
+            // "Invalid query") - severity comes only from the MSFT_MpThreat join above.
+            using var searcher = new ManagementObjectSearcher(DefenderNamespace, "SELECT ThreatID, ProcessName, InitialDetectionTime, ActionSuccess FROM MSFT_MpThreatDetection");
             foreach (ManagementObject mo in searcher.Get())
             {
-                queryOk = true;
-                string? threatId = TryGetString(mo, "ThreatID");
-                var (name, severityFromCatalog) = threatId is not null && names.TryGetValue(threatId, out var n) ? n : ("Unknown threat", "Unknown");
-                string severity = severityFromCatalog != "Unknown" ? severityFromCatalog : SeverityText(TryGetInt(mo, "SeverityID"));
+                string? threatId = TryGetIdText(mo, "ThreatID");
+                var (name, severity) = threatId is not null && names.TryGetValue(threatId, out var n) ? n : ("Unknown threat", "Unknown");
 
                 result.Add(new ThreatDetectionRecord(
                     TryGetDateTime(mo, "InitialDetectionTime"),
@@ -299,11 +308,12 @@ public static class DefenderService
                     severity,
                     TryGetBool(mo, "ActionSuccess")));
             }
+            queryOk = true; // enumerated to the end - zero rows now means "no detections"
         }
         catch
         {
-            // No detections / class unavailable - an empty list, same "nothing found" degrade as
-            // every other optional WMI class in this app.
+            // Class unavailable / query rejected - queryOk stays false so the caller can say
+            // "couldn't read" instead of reporting zero detections.
         }
 
         return result.OrderByDescending(r => r.DetectionTime).ToList();
@@ -339,7 +349,7 @@ public static class DefenderService
             });
         }
 
-        foreach (var e in threatEvents.Where(e => e.EventId == 1117 && e.Summary.Contains("allow", StringComparison.OrdinalIgnoreCase)))
+        foreach (var e in threatEvents.Where(e => e.EventId == 1117 && e.ActionName is { } a && a.StartsWith("Allow", StringComparison.OrdinalIgnoreCase)))
         {
             findings.Add(new SecurityFinding
             {
@@ -932,7 +942,8 @@ public static class DefenderService
                     },
                     CloudBlockLevelText = cloudBlock switch
                     {
-                        0 => "Default", 2 => "Moderate", 4 => "High", 6 => "High plus", 8 => "Zero tolerance",
+                        // MSFT_MpPreference ValueMap is {0,1,2,4,6}.
+                        0 => "Default", 1 => "Moderate", 2 => "High", 4 => "High plus", 6 => "Zero tolerance",
                         null => "Unknown", _ => $"Unknown ({cloudBlock})",
                     },
                 };
@@ -1137,6 +1148,13 @@ public static class DefenderService
     private static string? TryGetString(ManagementBaseObject mo, string property)
     {
         try { return (mo[property] as string)?.Trim(); } catch { return null; }
+    }
+
+    /// <summary>ThreatID is a CIM uint64 (boxed Int64), not a string - read it as invariant text
+    /// so the MSFT_MpThreat / MSFT_MpThreatDetection join has a key to match on.</summary>
+    private static string? TryGetIdText(ManagementBaseObject mo, string property)
+    {
+        try { return mo[property] is { } v ? Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture) : null; } catch { return null; }
     }
 
     private static int? TryGetInt(ManagementBaseObject mo, string property)

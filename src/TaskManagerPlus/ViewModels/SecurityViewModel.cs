@@ -441,7 +441,8 @@ public sealed class SecurityViewModel : ObservableObject
             ReplaceSectionFindings("ThreatHistory", result.findings);
 
             string logNote = result.logOk ? string.Empty : " (couldn't read the Defender Operational event log)";
-            ThreatHistoryStatus = $"{result.detections.Count} WMI detection(s), {result.events.Count} event(s) in the last 90 days{logNote}" +
+            string wmiText = result.wmiOk ? $"{result.detections.Count} WMI detection(s)" : "WMI detections couldn't be read";
+            ThreatHistoryStatus = $"{wmiText}, {result.events.Count} event(s) in the last 90 days{logNote}" +
                 (result.findings.Count > 0 ? $" - {result.findings.Count} new finding(s)." : ".");
         }
         catch (Exception ex)
@@ -556,6 +557,7 @@ public sealed class SecurityViewModel : ObservableObject
             DefenderService.DefenderScanType.Full => "Running a Full scan - this can take a long time.",
             _ => $"Scanning \"{customPath}\"...",
         };
+        _scanCancelled = false;
         IsScanRunning = true;
 
         try
@@ -597,6 +599,7 @@ public sealed class SecurityViewModel : ObservableObject
 
         ScanOutputLines.Clear();
         ScanRunStatus = "Starting Defender Offline scan (Start-MpWDOScan) - the PC will restart shortly.";
+        _scanCancelled = false;
         IsScanRunning = true;
 
         try
@@ -613,8 +616,11 @@ public sealed class SecurityViewModel : ObservableObject
         }
     }
 
+    private bool _scanCancelled;
+
     private void CancelScan()
     {
+        _scanCancelled = true;
         try { _runningScanProcess?.Kill(entireProcessTree: true); }
         catch { /* best-effort - it may have already exited */ }
         ScanRunStatus = "Scan cancelled.";
@@ -636,7 +642,9 @@ public sealed class SecurityViewModel : ObservableObject
         {
             int? exitCode = null;
             try { exitCode = _runningScanProcess?.ExitCode; } catch { /* process object disposed/inaccessible */ }
-            ScanRunStatus = $"Scan finished (exit code {(exitCode?.ToString() ?? "unknown")}).";
+            // The killed process's exit would otherwise replace "Scan cancelled." with its exit code.
+            if (!_scanCancelled) ScanRunStatus = $"Scan finished (exit code {(exitCode?.ToString() ?? "unknown")}).";
+            _scanCancelled = false;
             IsScanRunning = false;
             _runningScanProcess = null;
         });
@@ -1891,6 +1899,7 @@ public sealed class SecurityViewModel : ObservableObject
                 if (success)
                     RecordJournalEntry(SecurityActionKind.ServiceDisable, $"Disabled service \"{candidate.TargetName}\" ({candidate.SourceName})", candidate.TargetName,
                         SecurityActionJournalService.BuildServiceUndoPayload(candidate.TargetName, previous));
+                AppendServiceStartTypeChange(candidate.TargetName, previous, "Disabled", success);
                 OemCleanupStatus = success ? $"Disabled service \"{candidate.TargetName}\"." : $"Couldn't disable \"{candidate.TargetName}\": {error}";
                 break;
             }
@@ -1900,6 +1909,7 @@ public sealed class SecurityViewModel : ObservableObject
                 if (success)
                     RecordJournalEntry(SecurityActionKind.ScheduledTaskDisable, $"Disabled scheduled task \"{candidate.TargetName}\" ({candidate.SourceName})", candidate.TargetName,
                         SecurityActionJournalService.BuildScheduledTaskUndoPayload(candidate.TargetName));
+                AppendScheduledTaskToggle(candidate.TargetName, newState: false, success);
                 OemCleanupStatus = success ? $"Disabled scheduled task \"{candidate.TargetName}\"." : $"Couldn't disable \"{candidate.TargetName}\": {error}";
                 break;
             }
@@ -1910,11 +1920,64 @@ public sealed class SecurityViewModel : ObservableObject
                 if (success)
                     RecordJournalEntry(SecurityActionKind.StartupItemDisable, $"Disabled startup item \"{candidate.TargetName}\" ({candidate.SourceName})", candidate.TargetName,
                         SecurityActionJournalService.BuildStartupItemUndoPayload(candidate.StartupItemRef.Name, candidate.StartupItemRef.Source.ToString(), candidate.StartupItemRef.Command));
+                AppendStartupItemToggle(candidate.StartupItemRef, newState: false, success);
                 OemCleanupStatus = success ? $"Disabled startup item \"{candidate.TargetName}\"." : $"Couldn't disable \"{candidate.TargetName}\": {error}";
                 break;
             }
         }
     }
+
+    // The app-wide change journal (Troubleshoot > Changes) records these alongside the Security
+    // tab's own action journal, shaped like the Startup/Services tabs' own entries.
+    private const string OemCleanupTrigger = "Security tab (OEM cleanup)";
+
+    private static void AppendStartupItemToggle(Models.StartupItem item, bool newState, bool success) =>
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.StartupToggle,
+            Target = item.Name,
+            ActionDescription = newState ? "Enabled at startup" : "Disabled at startup",
+            BeforeValue = newState ? "Disabled" : "Enabled",
+            AfterValue = (success ? newState : !newState) ? "Enabled" : "Disabled",
+            TriggeredBy = OemCleanupTrigger,
+            Success = success,
+            IsUndoable = success,
+            StartupItemName = item.Name,
+            StartupItemCommand = item.Command,
+            StartupItemSource = item.Source.ToString(),
+        });
+
+    private static void AppendScheduledTaskToggle(string taskName, bool newState, bool success) =>
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.StartupToggle,
+            Target = taskName,
+            ActionDescription = newState ? "Enabled scheduled task" : "Disabled scheduled task",
+            BeforeValue = newState ? "Disabled" : "Enabled",
+            AfterValue = (success ? newState : !newState) ? "Enabled" : "Disabled",
+            TriggeredBy = OemCleanupTrigger,
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = $"Scheduled task - toggle it back from the Security tab's action journal or the Startup tab (schtasks /change /tn \"{taskName}\" /{(newState ? "disable" : "enable")}).",
+            StartupItemName = taskName,
+            StartupItemSource = Models.StartupSource.ScheduledTaskTrigger.ToString(),
+        });
+
+    private static void AppendServiceStartTypeChange(string serviceName, string? before, string after, bool success) =>
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.ServiceStateChange,
+            Target = serviceName,
+            ActionDescription = $"Startup type set to {after}",
+            BeforeValue = before,
+            AfterValue = success ? after : before,
+            TriggeredBy = OemCleanupTrigger,
+            Success = success,
+            // This kind's Undo restores running/stopped state, not the startup type.
+            IsUndoable = false,
+            NotUndoableReason = "Startup-type change - restore it from the Security tab's action journal or the Services tab.",
+            ServiceName = serviceName,
+        });
 
     /// <summary>#897.</summary>
     private async Task ScanBrowserHijackAsync()
@@ -2027,12 +2090,14 @@ public sealed class SecurityViewModel : ObservableObject
                 {
                     var r = await Task.Run(() => ServiceControlService.SetStartupType(payload["serviceName"], payload["previousStartType"]));
                     success = r.Success; error = r.Error;
+                    AppendServiceStartTypeChange(payload["serviceName"], r.PreviousStartType, payload["previousStartType"], success);
                     break;
                 }
                 case SecurityActionKind.ScheduledTaskDisable:
                 {
                     var r = await ScheduledTaskService.SetEnabledAsync(payload["taskName"], true);
                     success = r.Success; error = r.Error;
+                    AppendScheduledTaskToggle(payload["taskName"], newState: true, success);
                     break;
                 }
                 case SecurityActionKind.StartupItemDisable:
@@ -2045,6 +2110,7 @@ public sealed class SecurityViewModel : ObservableObject
                     };
                     var r = StartupManagerService.SetEnabled(startupItem, true);
                     success = r.Success; error = r.Error;
+                    AppendStartupItemToggle(startupItem, newState: true, success);
                     break;
                 }
                 case SecurityActionKind.FileQuarantine:

@@ -51,6 +51,11 @@ public static class ScrubRulesService
                 var loaded = JsonSerializer.Deserialize<ScrubRuleSet>(json);
                 if (loaded is not null)
                 {
+                    // Valid JSON can still carry "Rules": null, null rows, or nulls in the required
+                    // strings (System.Text.Json doesn't enforce non-null) - drop those rows only.
+                    loaded.Rules = (loaded.Rules ?? new List<ScrubRule>())
+                        .Where(r => r is not null && r.Id is not null && r.Label is not null && r.PlaceholderPrefix is not null)
+                        .ToList();
                     var existingKinds = loaded.Rules.Where(r => r.IsBuiltIn).Select(r => r.Kind).ToHashSet();
                     var missing = BuiltInRules().Where(b => !existingKinds.Contains(b.Kind)).ToList();
                     if (missing.Count > 0)

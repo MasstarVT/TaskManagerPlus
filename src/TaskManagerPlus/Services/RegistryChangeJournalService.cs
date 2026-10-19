@@ -37,21 +37,9 @@ public static class RegistryChangeJournalService
 
     public static List<RegistryChangeEntry> LoadHistory()
     {
-        lock (FileLock)
-        {
-            try
-            {
-                if (!File.Exists(FilePath)) return new List<RegistryChangeEntry>();
-                string json = File.ReadAllText(FilePath);
-                return JsonSerializer.Deserialize<List<RegistryChangeEntry>>(json) ?? new List<RegistryChangeEntry>();
-            }
-            catch
-            {
-                // Missing/corrupt file - degrade to empty history, same as every other settings
-                // file in this app (CLAUDE.md's settings-persistence convention).
-                return new List<RegistryChangeEntry>();
-            }
-        }
+        // Missing/corrupt file - degrade to empty history, same as every other settings file in
+        // this app (CLAUDE.md's settings-persistence convention).
+        lock (FileLock) return LoadHistoryUnlocked();
     }
 
     /// <summary>Appends one entry and returns the full, now-current history - callers should
@@ -106,6 +94,11 @@ public static class RegistryChangeJournalService
     /// journal file. Needs the same elevation this whole app already runs with for an HKLM write.</summary>
     public static (bool Success, string? Error) Undo(RegistryChangeEntry entry)
     {
+        // The journal file lives in the user's own %AppData%, so an unelevated process can forge
+        // entries in it - only (key, value) pairs this app itself journals are ever written back.
+        if (!IsKnownAppWrite(entry))
+            return (false, $"{entry.FullKeyText}\\{entry.ValueName} isn't a value this app writes, so it won't be changed from this journal.");
+
         try
         {
             RegistryKey baseHive = HiveFromName(entry.Hive);
@@ -203,6 +196,58 @@ public static class RegistryChangeJournalService
     private static string EscapeRegString(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"");
     private static string EscapeRegName(string s) => EscapeRegString(s);
 
+    // Every Record() call site in the app as (hive, key, value names; null = any name). Keep in step
+    // with the writers: StartupManagerService, FastStartupService, PrefetchAuditService,
+    // RegistryHealthService, DriverVerifierService, EnvironmentHealthService, UsbPowerService.
+    private static readonly (string Hive, string Key, string[]? Values)[] KnownWrites =
+    {
+        ("HKCU", @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", null),
+        ("HKLM", @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", null),
+        ("HKLM", @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32", null),
+        ("HKCU", @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder", null),
+        ("HKLM", @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder", null),
+        ("HKLM", @"SYSTEM\CurrentControlSet\Control\Session Manager\Power", new[] { "HiberbootEnabled" }),
+        ("HKLM", @"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters", new[] { "EnablePrefetcher", "EnableSuperfetch" }),
+        ("HKLM", @"SYSTEM\CurrentControlSet\Services\SysMain", new[] { "Start" }),
+        ("HKLM", @"SYSTEM\CurrentControlSet\Control\Session Manager\Configuration Manager", new[] { "EnablePeriodicBackup" }),
+        ("HKLM", @"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management", new[] { "PoolTag" }),
+        ("HKCU", "Environment", null),
+        ("HKLM", @"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", null),
+    };
+
+    private const string UsbEnumPrefix = @"SYSTEM\CurrentControlSet\Enum\";
+    private const string UsbEnumSuffix = @"\Device Parameters";
+    private static readonly string[] UsbValueNames = { "SelectiveSuspendEnabled", "EnhancedPowerManagementEnabled" };
+
+    /// <summary>True when the entry's hive/key/value is one this app itself writes and journals.
+    /// Startup-approval flags are only ever REG_BINARY and environment values only
+    /// REG_SZ/REG_EXPAND_SZ, so a forged kind for those keys is refused too.</summary>
+    public static bool IsKnownAppWrite(RegistryChangeEntry entry)
+    {
+        string hive = entry.Hive ?? string.Empty, key = entry.SubKeyPath ?? string.Empty, value = entry.ValueName ?? string.Empty;
+        if (!hive.Equals("HKCU", StringComparison.OrdinalIgnoreCase) && !hive.Equals("HKLM", StringComparison.OrdinalIgnoreCase)) return false;
+        // RegistryKey collapses doubled/trailing separators, so a lookalike path can't pass an exact match.
+        if (key.Length == 0 || key.Contains(@"\\", StringComparison.Ordinal) || key.StartsWith('\\') || key.EndsWith('\\')) return false;
+        string kind = entry.OldValueKind ?? entry.ValueKind ?? string.Empty;
+
+        foreach (var (h, k, values) in KnownWrites)
+        {
+            if (!h.Equals(hive, StringComparison.OrdinalIgnoreCase) || !k.Equals(key, StringComparison.OrdinalIgnoreCase)) continue;
+            if (values is not null) return values.Contains(value, StringComparer.OrdinalIgnoreCase);
+            if (value.Length == 0) return false;
+            return k.Contains("StartupApproved", StringComparison.Ordinal)
+                ? kind == nameof(RegistryValueKind.Binary)
+                : kind == nameof(RegistryValueKind.String) || kind == nameof(RegistryValueKind.ExpandString);
+        }
+
+        return hive.Equals("HKLM", StringComparison.OrdinalIgnoreCase)
+            && key.StartsWith(UsbEnumPrefix, StringComparison.OrdinalIgnoreCase)
+            && key.EndsWith(UsbEnumSuffix, StringComparison.OrdinalIgnoreCase)
+            && key.Length > UsbEnumPrefix.Length + UsbEnumSuffix.Length
+            && UsbValueNames.Contains(value, StringComparer.OrdinalIgnoreCase)
+            && (kind == nameof(RegistryValueKind.DWord) || kind == nameof(RegistryValueKind.Binary));
+    }
+
     private static RegistryKey HiveFromName(string hive) =>
         hive.Equals("HKCU", StringComparison.OrdinalIgnoreCase) ? Registry.CurrentUser : Registry.LocalMachine;
 
@@ -212,7 +257,11 @@ public static class RegistryChangeJournalService
         {
             if (!File.Exists(FilePath)) return new List<RegistryChangeEntry>();
             string json = File.ReadAllText(FilePath);
-            return JsonSerializer.Deserialize<List<RegistryChangeEntry>>(json) ?? new List<RegistryChangeEntry>();
+            // Valid JSON can still carry null elements or null strings; drop those rows so no
+            // consumer (MarkUndone's e.Id, FullKeyText, Undo) can throw on them.
+            return (JsonSerializer.Deserialize<List<RegistryChangeEntry>>(json) ?? new List<RegistryChangeEntry>())
+                .Where(e => e is not null && e.Hive is not null && e.SubKeyPath is not null && e.ValueName is not null && e.ValueKind is not null)
+                .ToList();
         }
         catch
         {

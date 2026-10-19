@@ -57,8 +57,13 @@ public static class FirewallService
         var profiles = new List<FirewallProfileInfo>();
         try
         {
-            using var searcher = new ManagementObjectSearcher(@"root\StandardCimv2",
-                "SELECT Name, Enabled, DefaultInboundAction, DefaultOutboundAction, NotifyOnListen, LogAllowed, LogBlocked FROM MSFT_NetFirewallProfile");
+            // Without a PolicyStore context MSFT_NetFirewallProfile reads the local persistent store:
+            // a Group Policy that turns the firewall off still reads Enabled=1 there, and stock
+            // defaults read NotConfigured (0). ActiveStore is the effective, merged policy.
+            var context = new ManagementNamedValueCollection { { "PolicyStore", "ActiveStore" } };
+            using var searcher = new ManagementObjectSearcher(new ManagementScope(@"root\StandardCimv2"),
+                new ObjectQuery("SELECT Name, Enabled, DefaultInboundAction, DefaultOutboundAction, NotifyOnListen, LogAllowed, LogBlocked FROM MSFT_NetFirewallProfile"),
+                new System.Management.EnumerationOptions { Context = context });
             foreach (ManagementObject mo in searcher.Get())
             {
                 profiles.Add(new FirewallProfileInfo

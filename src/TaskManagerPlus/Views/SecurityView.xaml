@@ -1856,11 +1856,16 @@
                                                         <Style TargetType="Border">
                                                             <Setter Property="Background" Value="Transparent" />
                                                             <Style.Triggers>
+                                                                <!-- Muted fill + status border: a solid Warning/Danger fill put the default text at 1.5-2.9:1. -->
                                                                 <DataTrigger Binding="{Binding Tier}" Value="DriverAdjacentDoNotRemove">
-                                                                    <Setter Property="Background" Value="{DynamicResource WarningBrush}" />
+                                                                    <Setter Property="Background" Value="{DynamicResource BgElevatedBrush}" />
+                                                                    <Setter Property="BorderBrush" Value="{DynamicResource WarningBrush}" />
+                                                                    <Setter Property="BorderThickness" Value="1" />
                                                                 </DataTrigger>
                                                                 <DataTrigger Binding="{Binding Tier}" Value="Trialware">
-                                                                    <Setter Property="Background" Value="{DynamicResource DangerBrush}" />
+                                                                    <Setter Property="Background" Value="{DynamicResource DangerMutedBrush}" />
+                                                                    <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+                                                                    <Setter Property="BorderThickness" Value="1" />
                                                                 </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>

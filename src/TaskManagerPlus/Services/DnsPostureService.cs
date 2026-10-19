@@ -32,7 +32,7 @@ public static class DnsPostureService
         public List<string> NrptRules { get; init; } = new();
         public bool NrptCmdletAvailable { get; init; }
 
-        public string DohAvailabilityText => DohCmdletAvailable ? "Read" : "Not available on this Windows build";
+        public string DohAvailabilityText => DohCmdletAvailable ? "Read" : "Couldn't read (cmdlet missing, failed or timed out)";
         public string NrptAvailabilityText => NrptCmdletAvailable ? "Read" : "Couldn't read (cmdlet missing, failed or timed out)";
     }
 
@@ -117,13 +117,17 @@ public static class DnsPostureService
     {
         try
         {
-            string output = RunCapturedSync("powershell.exe",
-                "-NoProfile -Command \"Get-DnsClientDohServerAddress | Select-Object ServerAddress,DohTemplate,AutoUpgrade | ConvertTo-Csv -NoTypeInformation\"",
+            // Same contract as the NRPT read: -ErrorAction Stop turns a cmdlet error into a
+            // nonzero exit, a timeout is a null exit - both "couldn't read"; exit 0 with no output
+            // is a real "no DoH servers".
+            var (output, exitCode) = ToolRunner.RunCaptured("powershell.exe",
+                "-NoProfile -Command \"Get-DnsClientDohServerAddress -ErrorAction Stop | Select-Object ServerAddress,DohTemplate,AutoUpgrade | ConvertTo-Csv -NoTypeInformation\"",
                 TimeSpan.FromSeconds(15));
-            if (string.IsNullOrWhiteSpace(output)) return (new List<DohServerInfo>(), false);
+            if (exitCode != 0) return (new List<DohServerInfo>(), false);
+            if (string.IsNullOrWhiteSpace(output)) return (new List<DohServerInfo>(), true);
 
             var rows = SimpleCsv.ParseRows(output);
-            if (rows.Count == 0) return (new List<DohServerInfo>(), false);
+            if (rows.Count == 0) return (new List<DohServerInfo>(), true);
 
             var header = rows[0];
             int addrIdx = header.FindIndex(h => h.Equals("ServerAddress", StringComparison.OrdinalIgnoreCase));
@@ -175,9 +179,4 @@ public static class DnsPostureService
             return (new List<string>(), false);
         }
     }
-
-    /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> (run tool, capture
-    /// stdout+stderr, kill the whole process tree on timeout).</summary>
-    private static string RunCapturedSync(string exe, string args, TimeSpan timeout)
-        => ToolRunner.RunCaptured(exe, args, timeout).Output;
 }

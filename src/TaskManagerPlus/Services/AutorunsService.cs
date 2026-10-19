@@ -685,8 +685,16 @@ public static class AutorunsService
         }
     }
 
-    private static string StripNativePrefix(string path) =>
-        path.StartsWith(@"\??\", StringComparison.Ordinal) ? path[4..] : path;
+    // Entries can carry a "*<digits>" prefix before \??\ (e.g. "*1\??\C:\...") and a destination
+    // can start with "!" (replace existing); both are flags, not part of the path.
+    private static readonly System.Text.RegularExpressions.Regex PendingRenamePrefixRegex =
+        new(@"^(?:\*\d+|!)?\\\?\?\\", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static string StripNativePrefix(string path)
+    {
+        var m = PendingRenamePrefixRegex.Match(path);
+        return m.Success ? path[m.Length..] : path;
+    }
 
     // #814: KnownDLLs - Windows pre-maps these into every process's address space directly from
     // System32, bypassing the normal per-process DLL search order entirely. A value name/data pair
@@ -840,9 +848,12 @@ public static class AutorunsService
         if (key.GetValue(valueName) is not string[] packages || packages.Length == 0) return;
 
         var entryLocation = $@"{location}\{valueName}";
-        foreach (var package in packages)
+        foreach (var rawPackage in packages)
         {
-            if (string.IsNullOrWhiteSpace(package)) continue;
+            // Stock Windows stores Security Packages as the literal two-character string "" - an
+            // empty list, not a package named "".
+            var package = (rawPackage ?? string.Empty).Trim().Trim('"').Trim();
+            if (package.Length == 0) continue;
 
             var entry = new AutorunEntry
             {
@@ -1266,54 +1277,35 @@ public static class AutorunsService
         }
     }
 
-    /// <summary>Parses `fltmc filters` output into name -&gt; (altitude, frame). Defensive by
-    /// design: skips the header and the dashed separator line, splits remaining lines on runs of
-    /// 2+ spaces (the columns are whitespace-padded, not delimited), and if a line doesn't have
-    /// enough columns to read altitude/frame it still keeps the filter name with "Unknown" for the
-    /// rest rather than dropping the row - the exact column layout isn't documented to be stable
-    /// across every Windows build.</summary>
+    /// <summary>Parses `fltmc filters` output into name -&gt; (altitude, frame), slicing at the
+    /// separator row's column spans (MinifilterAuditService.ParseFltmcTable) - the separator is
+    /// runs of dashes WITH spaces, and the header/separator must never become a filter row. A row
+    /// too short to carry altitude/frame keeps the filter name with "Unknown" for the rest.</summary>
     private static Dictionary<string, (string Altitude, string Frame)> ParseFltmcFilters(string output)
     {
         var result = new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(output)) return result;
-
-        foreach (var rawLine in output.Split('\n'))
+        foreach (var columns in MinifilterAuditService.ParseFltmcTable(output))
         {
-            var line = rawLine.TrimEnd('\r');
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            if (line.Contains("Filter Name", StringComparison.OrdinalIgnoreCase)) continue; // header
-            if (line.Trim().Trim('-').Length == 0) continue; // dashed separator line
-
-            var columns = System.Text.RegularExpressions.Regex.Split(line.Trim(), @"\s{2,}");
-            if (columns.Length == 0 || string.IsNullOrWhiteSpace(columns[0])) continue;
-
-            var name = columns[0].Trim();
-            string altitude = columns.Length > 2 ? columns[2].Trim() : "Unknown";
-            string frame = columns.Length > 3 ? columns[3].Trim() : "Unknown";
-            result[name] = (altitude, frame);
+            if (columns.Length == 0 || columns[0].Length == 0) continue;
+            string altitude = columns.Length > 2 && columns[2].Length > 0 ? columns[2] : "Unknown";
+            string frame = columns.Length > 3 && columns[3].Length > 0 ? columns[3] : "Unknown";
+            result[columns[0]] = (altitude, frame);
         }
         return result;
     }
 
-    /// <summary>Parses `fltmc instances` output into filter name -&gt; attached volumes, same
-    /// defensive column-splitting approach as ParseFltmcFilters.</summary>
+    /// <summary>Parses `fltmc instances` output (first column headed "Filter" on current builds)
+    /// into filter name -&gt; attached volumes, same column-span parsing as ParseFltmcFilters. A
+    /// blank Volume Name is labelled rather than letting the altitude shift into its place.</summary>
     private static Dictionary<string, List<string>> ParseFltmcInstances(string output)
     {
         var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(output)) return result;
-
-        foreach (var rawLine in output.Split('\n'))
+        foreach (var columns in MinifilterAuditService.ParseFltmcTable(output))
         {
-            var line = rawLine.TrimEnd('\r');
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            if (line.Contains("Filter Name", StringComparison.OrdinalIgnoreCase)) continue;
-            if (line.Trim().Trim('-').Length == 0) continue;
+            if (columns.Length < 2 || columns[0].Length == 0) continue;
 
-            var columns = System.Text.RegularExpressions.Regex.Split(line.Trim(), @"\s{2,}");
-            if (columns.Length < 2) continue;
-
-            var name = columns[0].Trim();
-            var volume = columns[1].Trim();
+            var name = columns[0];
+            var volume = columns[1].Length > 0 ? columns[1] : MinifilterAuditService.UnnamedVolumeLabel;
             if (!result.TryGetValue(name, out var list))
             {
                 list = new List<string>();
@@ -1424,7 +1416,11 @@ public static class AutorunsService
                         && !resolvedDir.Equals(standardDriverDir, StringComparison.OrdinalIgnoreCase)
                         // Subfolders count too - Defender's own drivers live in drivers\wd.
                         && !resolvedDir.StartsWith(standardDriverDir + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                        && !resolvedDir.StartsWith(driverStoreDir, StringComparison.OrdinalIgnoreCase);
+                        && !resolvedDir.StartsWith(driverStoreDir, StringComparison.OrdinalIgnoreCase)
+                        // In-box kernel modules such as CDD (System32\cdd.dll) sit directly in
+                        // System32 - not unusual when the file is signed.
+                        && !(resolvedDir.Equals(Environment.SystemDirectory, StringComparison.OrdinalIgnoreCase)
+                             && status.Equals("Signed", StringComparison.OrdinalIgnoreCase));
 
                     var location = $@"HKLM\{keyPath}\{serviceName}\ImagePath";
                     var entry = new AutorunEntry
@@ -1853,7 +1849,12 @@ public static class AutorunsService
                         {
                             Severity = FindingSeverity.Low,
                             Title = $"Active Setup component will re-run at next logon: {subName}",
-                            Reason = $"This user's HKCU version marker for \"{subName}\" is {(hkcuVersion is null ? "missing" : $"\"{hkcuVersion}\"")}, which doesn't match the HKLM version \"{hklmVersion}\" - Windows will re-run its StubPath command (\"{stubPath}\") the next time this user logs on.",
+                            Reason = (hklmVersion.Length == 0
+                                ? $"\"{subName}\" has no HKLM version and this user has no HKCU record of it yet"
+                                : hkcuVersion is null
+                                    ? $"This user has no HKCU version marker for \"{subName}\" (HKLM version \"{hklmVersion}\")"
+                                    : $"This user's HKCU version marker for \"{subName}\" is \"{hkcuVersion}\", lower than the HKLM version \"{hklmVersion}\"")
+                                + $" - Windows will re-run its StubPath command (\"{stubPath}\") the next time this user logs on.",
                             Path = location,
                             WhatDisablingDoes = "Setting the HKCU Version value to match HKLM prevents the re-run; only do this if you understand what the stub command does. Quick flag, not a verdict - a version mismatch is often just a pending legitimate per-user setup step (e.g. a newly-created user profile).",
                             RelatedEntry = entry,
@@ -2259,11 +2260,16 @@ public static class AutorunsService
 
                     if (loadsFromUserWritable)
                     {
+                        // Per-user installs (OneDrive, Teams, Electron apps) legitimately register
+                        // signed AppData DLLs here - only an unsigned one is a High signal.
+                        string sig = entry.SignatureStatus;
                         findings.Add(new SecurityFinding
                         {
-                            Severity = FindingSeverity.High,
+                            Severity = sig.Equals("Signed", StringComparison.OrdinalIgnoreCase) ? FindingSeverity.Low
+                                : sig.Equals("Unsigned", StringComparison.OrdinalIgnoreCase) ? FindingSeverity.High
+                                : FindingSeverity.Medium,
                             Title = $"Per-user COM object loads from a user-writable location: {clsid}",
-                            Reason = $"Per-user COM object CLSID {clsid} loads \"{expandedDll}\" from a user-writable temp/AppData location.",
+                            Reason = $"Per-user COM object CLSID {clsid} loads \"{expandedDll}\" from a user-writable temp/AppData location (signature: {sig}).",
                             Path = location,
                             WhatDisablingDoes = "Deleting this HKCU CLSID subkey stops the object from being loadable via COM; only do this for a CLSID you don't recognize. Quick flag, not a verdict.",
                             RelatedEntry = entry,
@@ -2573,6 +2579,15 @@ public static class AutorunsService
                     || task.FolderPath.StartsWith(@"\Microsoft\", StringComparison.OrdinalIgnoreCase);
                 bool isSystem = task.RunAsUser.Equals("S-1-5-18", StringComparison.OrdinalIgnoreCase)
                     || task.RunAsUser.Contains("SYSTEM", StringComparison.OrdinalIgnoreCase);
+                // A user-writable binary only crosses a privilege boundary when the task runs as
+                // someone more privileged than the user who can rewrite it.
+                bool runsPrivileged = isSystem
+                    || task.RunAsUser.Equals("S-1-5-19", StringComparison.OrdinalIgnoreCase)
+                    || task.RunAsUser.Equals("S-1-5-20", StringComparison.OrdinalIgnoreCase)
+                    || task.RunAsUser.Equals("S-1-5-32-544", StringComparison.OrdinalIgnoreCase)
+                    || task.RunAsUser.Contains("LOCAL SERVICE", StringComparison.OrdinalIgnoreCase)
+                    || task.RunAsUser.Contains("NETWORK SERVICE", StringComparison.OrdinalIgnoreCase)
+                    || task.RunAsUser.Contains("Administrators", StringComparison.OrdinalIgnoreCase);
                 bool isScriptHost = ScheduledTaskScriptHosts.Any(h => task.ActionCommand.Contains(h, StringComparison.OrdinalIgnoreCase));
 
                 var actionExePath = StartupManagerService.ExtractPath(task.ActionCommand);
@@ -2584,13 +2599,15 @@ public static class AutorunsService
                 if (task.IsHidden) issues.Add("is hidden from Task Scheduler's default view (Hidden flag set)");
                 if (!underMicrosoftWindows) issues.Add($"is registered outside \\Microsoft\\Windows\\ (folder: {task.FolderPath})");
                 if (isScriptHost) issues.Add($"runs a script host in its action (\"{task.ActionCommand}\")");
-                if (isUserWritable) issues.Add($"its action executable lives in a user-writable location (\"{expandedActionPath}\")");
+                if (isUserWritable) issues.Add(runsPrivileged
+                    ? $"its action executable lives in a user-writable location (\"{expandedActionPath}\") but runs as {task.RunAsUser}"
+                    : $"its action executable lives in a user-writable location (\"{expandedActionPath}\")");
                 if (isSystem && !underMicrosoft) issues.Add("runs as SYSTEM but its registered folder isn't under \\Microsoft\\");
 
                 if (issues.Count == 0) continue;
 
-                var severity = (isUserWritable || (isSystem && !underMicrosoft)) ? FindingSeverity.High
-                    : isScriptHost ? FindingSeverity.Medium
+                var severity = ((isUserWritable && runsPrivileged) || (isSystem && !underMicrosoft)) ? FindingSeverity.High
+                    : isScriptHost || (isUserWritable && task.RunAsUser.Length == 0) ? FindingSeverity.Medium
                     : FindingSeverity.Low;
 
                 findings.Add(new SecurityFinding
@@ -3117,14 +3134,21 @@ public static class AutorunsService
             string account = principal[(principal.LastIndexOf('\\') + 1)..];
             if (!WeakAclPrincipalNames.Contains(account)) continue;
 
-            string rights = line[separator..];
-            bool hasWriteGrant = rights.Contains("(W)", StringComparison.OrdinalIgnoreCase)
-                || rights.Contains("(F)", StringComparison.OrdinalIgnoreCase)
-                || rights.Contains("(M)", StringComparison.OrdinalIgnoreCase);
+            // icacls prints rights as parenthesised groups, either a shorthand ("(F)") or a
+            // comma-separated list of specific rights ("(CI)(WD,AD,WEA,WA)", "(RX,W)"). Deny ACEs
+            // ("(DENY)(W)") and inherit-only ACEs ("(IO)") grant nothing on this object itself.
+            var groups = System.Text.RegularExpressions.Regex.Matches(line[separator..], @"\(([^)]*)\)")
+                .Select(m => m.Groups[1].Value.Trim()).ToList();
+            if (groups.Any(g => g.Equals("DENY", StringComparison.OrdinalIgnoreCase) || g.Equals("IO", StringComparison.OrdinalIgnoreCase))) continue;
+            bool hasWriteGrant = groups.SelectMany(g => g.Split(',')).Any(t => IcaclsWriteRights.Contains(t.Trim()));
             if (hasWriteGrant) lines.Add(line);
         }
         return lines;
     }
+
+    // F full, M modify, W write, WD write data/add file, AD append data/add subdirectory,
+    // DC delete child, WDAC write DAC, WO write owner - each lets a holder replace or take over.
+    private static readonly HashSet<string> IcaclsWriteRights = new(StringComparer.OrdinalIgnoreCase) { "F", "M", "W", "WD", "AD", "DC", "WDAC", "WO" };
 
     public static List<SecurityFinding> CheckWritePermissions(IEnumerable<AutorunEntry> entries)
     {
@@ -3157,10 +3181,9 @@ public static class AutorunsService
 
     /// <summary>Shells out to icacls.exe for one path and looks for a write-capable grant to a
     /// broad, low-privilege principal. Deliberately loose/over-inclusive: a case-insensitive match
-    /// on the principal's account name (not a parsed SID), and any of (W)/(F)/(M) in that ACE's
-    /// flags counts as "write" (icacls's own grant-flag shorthand, e.g.
-    /// "BUILTIN\Users:(OI)(CI)(W)") - being a little over-inclusive here is safer than missing a
-    /// real finding, per #845's own guidance.</summary>
+    /// on the principal's account name (not a parsed SID), and any write-capable right in that
+    /// ACE (see FindWeakWriteGrantLines) counts as "write" - being a little over-inclusive here is
+    /// safer than missing a real finding, per #845's own guidance.</summary>
     private static void CheckOnePathAcl(List<SecurityFinding> findings, AutorunEntry entry, string path, string pathKind, HashSet<string> checkedPaths)
     {
         if (!checkedPaths.Add(path)) return; // several entries can share a containing folder
@@ -3182,7 +3205,7 @@ public static class AutorunsService
             {
                 Severity = FindingSeverity.High,
                 Title = $"Writable {pathKind} for a persistence target: {entry.Name}",
-                Reason = $"icacls reports a write-capable permission for a broad group on \"{path}\" ({line}). A boot-start/autorun target (or its containing folder) that any ordinary user can overwrite is a real, actionable finding - anyone who can write here can replace what actually runs. This match is deliberately loose/over-inclusive (any (W)/(F)/(M) grant to Users/Authenticated Users/Everyone/BUILTIN\\Users, matched by account name) - always confirm with icacls yourself before acting.",
+                Reason = $"icacls reports a write-capable permission for a broad group on \"{path}\" ({line}). A boot-start/autorun target (or its containing folder) that any ordinary user can overwrite is a real, actionable finding - anyone who can write here can replace what actually runs. This match is deliberately loose/over-inclusive (any write-capable right - F/M/W/WD/AD/DC/WDAC/WO - granted to Users/Authenticated Users/Everyone, matched by account name) - always confirm with icacls yourself before acting.",
                 Path = path,
                 WhatDisablingDoes = "Tighten this path's ACL (remove the write grant for the broad group) if you don't have a specific reason for it to be writable by ordinary users.",
                 RelatedEntry = entry,

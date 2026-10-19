@@ -114,7 +114,8 @@ public static class BrowserExtensionService
                     // Chrome/Edge nest one more level: Extensions\<id>\<version>\manifest.json -
                     // pick the highest version folder present (an update can leave more than one).
                     var versionDir = Directory.EnumerateDirectories(extDir)
-                        .OrderByDescending(d => d, StringComparer.OrdinalIgnoreCase)
+                        .OrderByDescending(d => ParseVersionFolder(Path.GetFileName(d)))
+                        .ThenByDescending(d => d, StringComparer.OrdinalIgnoreCase)
                         .FirstOrDefault();
                     if (versionDir is null) continue;
 
@@ -167,6 +168,18 @@ public static class BrowserExtensionService
             // Whole browser unavailable (not installed, nonstandard profile path, access denied) -
             // contribute nothing from it.
         }
+    }
+
+    /// <summary>Chromium version folders are "&lt;version&gt;_&lt;n&gt;" (e.g. "1.10.2_0"); compared
+    /// numerically so 1.10 sorts above 1.9. An unparseable name sorts lowest.</summary>
+    private static (Version Version, int Suffix) ParseVersionFolder(string name)
+    {
+        int underscore = name.LastIndexOf('_');
+        string versionPart = underscore > 0 ? name[..underscore] : name;
+        int suffix = underscore > 0 && int.TryParse(name[(underscore + 1)..], System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out int n) ? n : 0;
+        if (!versionPart.Contains('.')) versionPart += ".0"; // Version.TryParse needs two components
+        return Version.TryParse(versionPart, out var v) ? (v, suffix) : (new Version(0, 0), -1);
     }
 
     private static List<string> ReadStringArray(JsonElement root, string propertyName)

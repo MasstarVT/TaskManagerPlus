@@ -485,8 +485,9 @@ public static class SignatureCheckService
     /// takeaway ("don't trust this chain") is the same for all four. Revocation checking is off by
     /// default (see class remarks), so CERT_E_REVOKED only appears here when a caller explicitly
     /// used a revocation-checking path. TRUST_E_BAD_DIGEST (the file was modified after signing)
-    /// and TRUST_E_EXPLICIT_DISTRUST (the signer is in the Disallowed store) share the bucket -
-    /// left as Unknown, a tampered signed binary was never flagged.</summary>
+    /// and TRUST_E_EXPLICIT_DISTRUST (the signer is in the Disallowed store) share the bucket too:
+    /// outside it they would fall through to Unknown, and a tampered signed binary would never be
+    /// flagged.</summary>
     private static bool IsUntrustedChainCode(int hr) =>
         hr == TrustESubjectNotTrusted || hr == CertEUntrustedRoot || hr == CertEChaining || hr == CertERevoked
         || hr == TrustEBadDigest || hr == TrustEExplicitDistrust;
@@ -685,7 +686,10 @@ public static class SignatureCheckService
                     var cleaned = new Dictionary<string, PersistedEntry>(StringComparer.OrdinalIgnoreCase);
                     foreach (var (key, entry) in loaded)
                     {
-                        if (Enum.TryParse<SignatureVerification>(entry.Verification, out var v) && v != SignatureVerification.Unknown)
+                        // A null row or a numeric/undefined verification is a corrupt row - skip it alone.
+                        if (entry is null || string.IsNullOrWhiteSpace(key)) continue;
+                        if (Enum.TryParse<SignatureVerification>(entry.Verification, out var v)
+                            && Enum.IsDefined(v) && v != SignatureVerification.Unknown)
                             cleaned[key] = entry;
                     }
                     return cleaned;

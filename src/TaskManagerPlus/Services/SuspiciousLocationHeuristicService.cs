@@ -34,6 +34,9 @@ public static class SuspiciousLocationHeuristicService
     private static readonly Regex GuidLikeSegment =
         new(@"^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    private static readonly Regex VersionLikeSegment =
+        new(@"^\D*\d+(\.\d+){1,3}(_\d+)?$", RegexOptions.Compiled);
+
     public static string? Evaluate(string? filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath)) return null;
@@ -62,6 +65,9 @@ public static class SuspiciousLocationHeuristicService
         foreach (var segment in dir.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
         {
             if (segment.Length < 8) continue;
+            // Versioned install folders (EdgeWebView "155.0.4283.60", Discord "app-1.0.9163") are
+            // digit-dense by design.
+            if (VersionLikeSegment.IsMatch(segment)) continue;
             if (HexLikeSegment.IsMatch(segment) || GuidLikeSegment.IsMatch(segment))
                 return $"Path contains a randomly-generated-looking folder name (\"{segment}\") - worth a second look. Quick flag, not a verdict.";
             if (segment.Length >= 10 && DigitDensity(segment) > 0.4)

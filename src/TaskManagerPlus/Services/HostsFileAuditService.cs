@@ -67,8 +67,8 @@ public static class HostsFileAuditService
             {
                 total++;
 
-                if (UpdateBlockHints.Any(h => hostname.Contains(h, StringComparison.OrdinalIgnoreCase)) ||
-                    AvVendorHints.Any(h => hostname.Contains(h, StringComparison.OrdinalIgnoreCase)))
+                if (UpdateBlockHints.Any(h => ContainsLabels(hostname, h)) ||
+                    AvVendorHints.Any(h => ContainsLabels(hostname, h)))
                 {
                     updateOrAv.Add(new FlaggedEntry(hostname, address, "May be blocking Windows Update or an antivirus vendor"));
                 }
@@ -90,5 +90,20 @@ public static class HostsFileAuditService
             IsLarge = total > LargeFileEntryThreshold,
             Zone = ZoneIdentifierService.Read(hostsPath),
         };
+    }
+
+    /// <summary>True when <paramref name="hint"/> occurs in the hostname on label boundaries
+    /// ('.', '-' or either end), so "eset" matches eset.com but not reset.example or preset.net.</summary>
+    private static bool ContainsLabels(string hostname, string hint)
+    {
+        for (int i = hostname.IndexOf(hint, StringComparison.OrdinalIgnoreCase); i >= 0;
+             i = hostname.IndexOf(hint, i + 1, StringComparison.OrdinalIgnoreCase))
+        {
+            int end = i + hint.Length;
+            bool startOk = i == 0 || hostname[i - 1] is '.' or '-';
+            bool endOk = end == hostname.Length || hostname[end] is '.' or '-';
+            if (startOk && endOk) return true;
+        }
+        return false;
     }
 }
