@@ -29,8 +29,17 @@
                 </Button.ToolTip>
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
-                        <Ellipse Width="11" Height="11" StrokeThickness="1" Stroke="{DynamicResource BorderSubtleBrush}"
-                                 Fill="{Binding Converter={StaticResource TimelineEventBrushConverter}}" />
+                        <!-- DynamicResource triggers rather than a brush converter, so a theme switch recolours it. -->
+                        <Ellipse Width="11" Height="11" StrokeThickness="1" Stroke="{DynamicResource BorderSubtleBrush}">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{DynamicResource AccentBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsFailure}" Value="True"><Setter Property="Fill" Value="{DynamicResource DangerBrush}" /></DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
                     </ControlTemplate>
                 </Button.Template>
             </Button>

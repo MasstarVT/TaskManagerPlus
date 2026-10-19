@@ -45,8 +45,22 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <Border Grid.Column="0" Width="9" Height="9" CornerRadius="4" Margin="0,3,10,0" VerticalAlignment="Top"
-                                Background="{Binding Status, Converter={StaticResource DiagnosticStepStatusToBrushConverter}}" />
+                        <!-- Status colours via DynamicResource triggers, not a converter: ApplyPalette replaces the
+                             brush instances, so a converter's looked-up brush kept the previous theme's colour. -->
+                        <Border Grid.Column="0" Width="9" Height="9" CornerRadius="4" Margin="0,3,10,0" VerticalAlignment="Top">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="{DynamicResource TextTertiaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Status}" Value="Passed"><Setter Property="Background" Value="{DynamicResource SuccessBrush}" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Status}" Value="Warning"><Setter Property="Background" Value="{DynamicResource WarningBrush}" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Status}" Value="TimedOut"><Setter Property="Background" Value="{DynamicResource WarningBrush}" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Status}" Value="Failed"><Setter Property="Background" Value="{DynamicResource DangerBrush}" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Status}" Value="Running"><Setter Property="Background" Value="{DynamicResource AccentBrush}" /></DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                        </Border>
                         <StackPanel Grid.Column="1">
                             <TextBlock Text="{Binding Label}" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Margin="0,2,0,0">
@@ -63,8 +77,20 @@
                             </TextBlock>
                         </StackPanel>
                         <TextBlock Grid.Column="2" Text="{Binding Status, Converter={StaticResource DiagnosticStepStatusToLabelConverter}}"
-                                   FontSize="{StaticResource FontBody}" FontWeight="SemiBold" VerticalAlignment="Top"
-                                   Foreground="{Binding Status, Converter={StaticResource DiagnosticStepStatusToBrushConverter}}" />
+                                   FontSize="{StaticResource FontBody}" FontWeight="SemiBold" VerticalAlignment="Top">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Status}" Value="Passed"><Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Status}" Value="Warning"><Setter Property="Foreground" Value="{DynamicResource WarningBrush}" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Status}" Value="TimedOut"><Setter Property="Foreground" Value="{DynamicResource WarningBrush}" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Status}" Value="Failed"><Setter Property="Foreground" Value="{DynamicResource DangerBrush}" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Status}" Value="Running"><Setter Property="Foreground" Value="{DynamicResource AccentBrush}" /></DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
                     </Grid>
 
                     <!-- #909/#911: a manual/opt-in step (the wpr/tracerpt DPC capture, the
