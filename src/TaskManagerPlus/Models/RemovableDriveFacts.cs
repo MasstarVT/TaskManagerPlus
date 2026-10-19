@@ -14,16 +14,19 @@ public sealed class RemovableDriveFacts
     public string PnpDeviceId { get; init; } = string.Empty;
     public long SizeBytes { get; init; }
 
-    /// <summary>Raw "UserRemovalPolicy" registry value: 1 = Quick removal, 2 = Better performance,
-    /// null = not explicitly set by the user (Windows default) or unreadable on this system - see
-    /// RemovalPolicyService.ReadRemovalPolicyRaw's remarks on why this isn't one guaranteed
-    /// registry location.</summary>
+    /// <summary>Raw "UserRemovalPolicy" registry value, a DEVICE_REMOVAL_POLICY:
+    /// 3 = expect surprise removal (Quick removal), 2 = expect orderly removal (Better
+    /// performance), 1 = expect no removal; null = not explicitly set by the user (Windows default)
+    /// or unreadable on this system - see RemovalPolicyService.ReadRemovalPolicyRaw's remarks on
+    /// why this isn't one guaranteed registry location.</summary>
     public int? RemovalPolicyRaw { get; init; }
 
     public string RemovalPolicyText => RemovalPolicyRaw switch
     {
-        1 => "Quick removal (write caching off - safe to unplug without ejecting)",
+        3 => "Quick removal (write caching off - safe to unplug without ejecting)",
         2 => "Better performance (write caching on - use Eject before unplugging)",
-        _ => "Default (not explicitly set)",
+        1 => "Not expected to be removed (fixed-disk policy)",
+        null => "Default (not explicitly set)",
+        { } other => $"Unrecognized ({other})",
     };
 }

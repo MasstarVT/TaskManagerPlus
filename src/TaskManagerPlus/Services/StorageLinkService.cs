@@ -142,6 +142,17 @@ public static class StorageLinkService
                 return null;
             }
 
+            // Same as SmartRawAttributeService: a bridge that rejects the ATA command still returns
+            // TRUE, with CHECK CONDITION (0x02) in ScsiStatus and the data buffer left zeroed.
+            var completed = Marshal.PtrToStructure<ScsiPassThroughDirectWithSense>(requestBuffer);
+            if (completed.Sptd.ScsiStatus != 0)
+            {
+                reason = completed.Sptd.ScsiStatus == 0x02
+                    ? "The device rejected the ATA IDENTIFY pass-through command (SCSI CHECK CONDITION) - this bridge/controller likely doesn't pass ATA commands through."
+                    : $"The device returned SCSI status 0x{completed.Sptd.ScsiStatus:X2} for the ATA IDENTIFY pass-through command.";
+                return null;
+            }
+
             return dataBuffer;
         }
         catch (Exception ex)

@@ -79,21 +79,33 @@ public sealed class FreeSpaceVolumeRow : ObservableObject
             ? $"{Formatting.FormatBytes(currentFreeBytes)} free of {Formatting.FormatBytes(currentTotalBytes)} ({(currentFreeBytes / (double)currentTotalBytes * 100):0.#}%)"
             : Formatting.FormatBytes(currentFreeBytes);
 
-        _freeBytesHistory.Clear();
-        foreach (var p in history) _freeBytesHistory.Add(p.FreeBytes);
-
-        if (history.Count >= 3)
+        // This runs every tick but the history is daily: only touch points that actually changed,
+        // and build the series once - a fresh series (or a clear+refill) re-animates the whole
+        // chart every second.
+        if (_freeBytesHistory.Count != history.Count)
         {
-            var (glow, core) = StorageViewModel.TrendLineOf(_freeBytesHistory, chartColor, "Free space");
-            Series = new ISeries[] { glow, core };
-            ShowChart = true;
+            _freeBytesHistory.Clear();
+            foreach (var p in history) _freeBytesHistory.Add(p.FreeBytes);
         }
         else
         {
-            Series = Array.Empty<ISeries>();
-            ShowChart = false;
+            for (int i = 0; i < history.Count; i++)
+                if (_freeBytesHistory[i] != history[i].FreeBytes) _freeBytesHistory[i] = history[i].FreeBytes;
         }
-        OnPropertyChanged(nameof(Series));
+
+        bool showChart = history.Count >= 3;
+        if (showChart && Series.Length == 0)
+        {
+            var (glow, core) = StorageViewModel.TrendLineOf(_freeBytesHistory, chartColor, "Free space");
+            Series = new ISeries[] { glow, core };
+            OnPropertyChanged(nameof(Series));
+        }
+        else if (!showChart && Series.Length > 0)
+        {
+            Series = Array.Empty<ISeries>();
+            OnPropertyChanged(nameof(Series));
+        }
+        ShowChart = showChart;
 
         ProjectionText = ComputeProjection(history);
         ShowProjection = ProjectionText.Length > 0;
@@ -3142,14 +3154,19 @@ public sealed class StorageViewModel : ObservableObject
             // informational afterwards.
             if (success && SurfaceScanResults.Count > 0)
             {
-                var volume = await Task.Run(() => ClusterMappingService.ResolveVolumeForDisk(disk.Index));
-                if (volume is { } v)
+                var partitions = await Task.Run(() => ClusterMappingService.ReadLetteredPartitions(disk.Index));
+                if (partitions.Count > 0)
                 {
                     var resolved = new List<SurfaceScanResult>();
                     foreach (var r in SurfaceScanResults)
                     {
                         token.ThrowIfCancellationRequested();
-                        r.OwningFile = await ClusterMappingService.ResolveOwningFileAsync(v.DriveLetter, r.StartLba, 512, v.BytesPerCluster);
+                        // The scan's LBAs are disk-relative 512-byte sectors; only an LBA inside a
+                        // lettered partition can be handed to fsutil, shifted by that partition's start.
+                        var partition = partitions.FirstOrDefault(p => p.Contains(r.StartLba * 512));
+                        r.OwningFile = partition is null
+                            ? "Outside any lettered partition (EFI/MSR/recovery or unallocated)"
+                            : await ClusterMappingService.ResolveOwningFileAsync(partition, r.StartLba, 512);
                         resolved.Add(r);
                     }
                     SurfaceScanResults.Clear();
@@ -3465,10 +3482,12 @@ public sealed class StorageViewModel : ObservableObject
                 Summary = verdict,
             });
             UpdateChkdskLastScanText(drive);
+            JournalOneShotRun($"{drive}:", "Ran chkdsk /scan (online repair)", $"chkdsk {drive}: /scan", success: true);
         }
         catch (OperationCanceledException)
         {
             ChkdskScanStatusText = $"Scan cancelled - {logBuilder.ToString().Split('\n').Length} line(s) logged before cancelling.";
+            JournalOneShotRun($"{drive}:", "Ran chkdsk /scan (cancelled part-way)", $"chkdsk {drive}: /scan", success: false);
         }
         catch (Exception ex)
         {
@@ -3480,6 +3499,23 @@ public sealed class StorageViewModel : ObservableObject
             _chkdskScanCts?.Dispose();
             _chkdskScanCts = null;
         }
+    }
+
+    /// <summary>Records a repair/cleanup tool run in the change journal like every other
+    /// system-mutating action - a one-shot run, so there's nothing to undo.</summary>
+    private static void JournalOneShotRun(string target, string action, string command, bool success)
+    {
+        ChangeJournalService.Append(new ChangeJournalEntry
+        {
+            Kind = ChangeKind.OneShotToolRun,
+            Target = target,
+            ActionDescription = action,
+            AfterValue = command,
+            TriggeredBy = "Storage tab",
+            Success = success,
+            IsUndoable = false,
+            NotUndoableReason = "One-shot tool run - nothing to reverse.",
+        });
     }
 
     private void UpdateChkdskLastScanText(string driveLetter)
@@ -3527,6 +3563,9 @@ public sealed class StorageViewModel : ObservableObject
                 Summary = VolumeRepairStatusText,
             });
             UpdateChkdskLastScanText(drive);
+            // Scan mode only scans and logs; SpotFix/OfflineScanAndFix change the volume.
+            if (mode != VolumeRepairMode.Scan)
+                JournalOneShotRun($"{drive}:", $"Ran volume repair ({mode})", $"MSFT_Volume.Repair ({mode}) on {drive}:", success);
         }
         catch (Exception ex)
         {
@@ -4156,8 +4195,10 @@ public sealed class StorageViewModel : ObservableObject
         ComponentStoreActionStatusText = "Cleaning up (this can take several minutes)...";
         try
         {
-            var (_, message) = await ReclaimableSpaceService.StartComponentCleanupAsync();
+            var (cleanupSuccess, message) = await ReclaimableSpaceService.StartComponentCleanupAsync();
             ComponentStoreActionStatusText = message;
+            JournalOneShotRun("Windows component store", "Ran DISM component store cleanup",
+                "DISM /Online /Cleanup-Image /StartComponentCleanup", cleanupSuccess);
         }
         catch (Exception ex)
         {
@@ -4606,10 +4647,13 @@ public sealed class StorageViewModel : ObservableObject
             maxSizeArg = "UNBOUNDED";
             maxSizeDisplay = "UNBOUNDED (no cap - can grow to fill the volume)";
         }
-        else if (double.TryParse(input, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out double gb) && gb > 0)
+        // A typed value follows the user's locale ("10,5" on de-DE); vssadmin gets a whole-MB
+        // figure so no decimal separator ever reaches its argument.
+        else if (double.TryParse(input, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.CurrentCulture, out double gb) && gb > 0)
         {
-            maxSizeArg = $"{gb.ToString(System.Globalization.CultureInfo.InvariantCulture)}GB";
-            maxSizeDisplay = $"{gb.ToString(System.Globalization.CultureInfo.InvariantCulture)} GB";
+            long mb = (long)Math.Round(gb * 1024);
+            maxSizeArg = $"{mb.ToString(System.Globalization.CultureInfo.InvariantCulture)}MB";
+            maxSizeDisplay = $"{gb.ToString(System.Globalization.CultureInfo.CurrentCulture)} GB";
         }
         else
         {

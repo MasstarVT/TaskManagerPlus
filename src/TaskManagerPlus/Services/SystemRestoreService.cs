@@ -197,6 +197,8 @@ public static class SystemRestoreService
         {
             try
             {
+                uint? newestBefore = ReadNewestSequenceNumber();
+
                 using var restoreClass = new ManagementClass(@"\\.\root\default:SystemRestore");
                 using var inParams = restoreClass.GetMethodParameters("CreateRestorePoint");
                 inParams["Description"] = description;
@@ -205,15 +207,49 @@ public static class SystemRestoreService
 
                 using var outParams = restoreClass.InvokeMethod("CreateRestorePoint", inParams, null);
                 uint returnValue = outParams?["ReturnValue"] is { } rv ? Convert.ToUInt32(rv) : 1;
-                return returnValue == 0
-                    ? (true, "Restore point created.")
-                    : (false, $"CreateRestorePoint returned code {returnValue} - System Protection may be off for the system volume, or Windows coalesced this into a recent existing point.");
+                if (returnValue != 0)
+                    return (false, $"CreateRestorePoint returned code {returnValue} - System Protection may be off for the system volume.");
+
+                // Windows returns success but silently skips the point when one was already created
+                // inside the SystemRestorePointCreationFrequency window (24h by default) - only a
+                // new, higher sequence number shows a point was really made.
+                uint? newestAfter = ReadNewestSequenceNumber();
+                if (newestBefore is { } before && newestAfter is { } after && after <= before)
+                    return (false, "Windows skipped it - a restore point was already created within the last 24 hours (the SystemRestorePointCreationFrequency throttle), so no new point was made. The existing point is unchanged.");
+                return (true, "Restore point created.");
             }
             catch (Exception ex)
             {
                 return (false, ex.Message);
             }
         }).ConfigureAwait(false);
+    }
+
+    /// <summary>Highest SystemRestore.SequenceNumber, or null when there are no points or the read
+    /// fails.</summary>
+    private static uint? ReadNewestSequenceNumber()
+    {
+        try
+        {
+            uint? newest = null;
+            using var searcher = new ManagementObjectSearcher(@"root\default", "SELECT SequenceNumber FROM SystemRestore");
+            foreach (ManagementObject rp in searcher.Get())
+            {
+                using (rp)
+                {
+                    if (rp["SequenceNumber"] is { } seq)
+                    {
+                        uint n = Convert.ToUInt32(seq);
+                        if (newest is null || n > newest) newest = n;
+                    }
+                }
+            }
+            return newest;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>#790: launches the built-in System Restore wizard - same UseShellExecute=true GUI

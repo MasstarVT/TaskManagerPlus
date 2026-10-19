@@ -106,7 +106,7 @@
                                 <UniformGrid Columns="3" Margin="0,0,0,10" Visibility="{Binding UpgradeReadiness.Activation.GracePeriodRemaining, Converter={StaticResource NullToVisibilityConverter}}">
                                     <StackPanel Margin="0,0,10,0">
                                         <TextBlock Text="GRACE PERIOD REMAINING" Style="{StaticResource SpecLabel}" />
-                                        <TextBlock Style="{StaticResource SpecValue}" Foreground="{DynamicResource DangerBrush}" Text="{Binding UpgradeReadiness.Activation.GracePeriodRemaining.Value.TotalHours, StringFormat={}{0:0} hour(s)}" />
+                                        <TextBlock Style="{StaticResource SpecValue}" Foreground="{DynamicResource DangerBrush}" Text="{Binding UpgradeReadiness.Activation.GracePeriodRemaining.TotalHours, StringFormat={}{0:0} hour(s)}" />
                                     </StackPanel>
                                 </UniformGrid>
                                 <TextBlock Margin="0,0,0,10" TextWrapping="Wrap" FontSize="{StaticResource FontBody}"

@@ -33,9 +33,15 @@ public static class SystemRepairService
     /// <summary>Item 99: `sfc /scannow` - verifies and repairs protected system files. Exit code 0
     /// covers both "no integrity violations found" and "violations found and successfully
     /// repaired"; sfc's own textual summary (in Output) is what actually distinguishes the two, so
-    /// the caller shows the full output, not just the pass/fail flag.</summary>
-    public static Task<(bool Ok, string Output)> RunSfcAsync() =>
-        RunCapturedAsync("sfc.exe", "/scannow", RepairTimeoutMs);
+    /// the caller shows the full output, not just the pass/fail flag.
+    /// sfc writes UTF-16LE to a redirected pipe while ToolRunner decodes with the default 8-bit
+    /// encoding, so every character arrives followed by a NUL - stripping those recovers the
+    /// (ASCII-range) text; see SfcIntegrityService for the Encoding.Unicode reader.</summary>
+    public static async Task<(bool Ok, string Output)> RunSfcAsync()
+    {
+        var (ok, output) = await RunCapturedAsync("sfc.exe", "/scannow", RepairTimeoutMs);
+        return (ok, output.Replace("\0", string.Empty));
+    }
 
     /// <summary>Item 99: `DISM /Online /Cleanup-Image /RestoreHealth` - repairs the Windows
     /// component store itself (what sfc's own repairs pull clean copies from), using Windows

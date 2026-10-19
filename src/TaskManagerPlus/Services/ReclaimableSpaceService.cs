@@ -20,17 +20,18 @@ namespace TaskManagerPlus.Services;
 public static class ReclaimableSpaceService
 {
     /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/>, keeping this service's
-    /// degrade-to-empty shape (empty output, Completed=false on timeout or start failure).</summary>
-    private static async Task<(string Output, bool Completed)> RunProcessAsync(string exe, string arguments, int timeoutMs)
+    /// degrade-to-empty shape (empty output, Completed=false on timeout or start failure). ExitCode
+    /// is null whenever Completed is false.</summary>
+    private static async Task<(string Output, bool Completed, int? ExitCode)> RunProcessAsync(string exe, string arguments, int timeoutMs)
     {
         try
         {
             var (output, exitCode) = await ToolRunner.RunCapturedAsync(exe, arguments, timeoutMs, timeoutOutput: string.Empty);
-            return exitCode is null ? (string.Empty, false) : (output, true);
+            return exitCode is null ? (string.Empty, false, null) : (output, true, exitCode);
         }
         catch
         {
-            return (string.Empty, false);
+            return (string.Empty, false, null);
         }
     }
 
@@ -51,7 +52,7 @@ public static class ReclaimableSpaceService
     /// readable) rather than reimplementing WinSxS's own accounting.</summary>
     public static async Task<ComponentStoreAnalysis> AnalyzeComponentStoreAsync()
     {
-        var (output, completed) = await RunProcessAsync("dism.exe", "/Online /Cleanup-Image /AnalyzeComponentStore", 300_000);
+        var (output, completed, _) = await RunProcessAsync("dism.exe", "/Online /Cleanup-Image /AnalyzeComponentStore", 300_000);
         if (!completed || output.Length == 0)
             return new ComponentStoreAnalysis { Available = false, UnavailableReason = "dism.exe did not complete (timed out, or couldn't be started - this requires an elevated process, which this app already is)." };
 
@@ -75,10 +76,11 @@ public static class ReclaimableSpaceService
     /// </summary>
     public static async Task<(bool Success, string Message)> StartComponentCleanupAsync()
     {
-        var (output, completed) = await RunProcessAsync("dism.exe", "/Online /Cleanup-Image /StartComponentCleanup", 600_000);
+        var (output, completed, exitCode) = await RunProcessAsync("dism.exe", "/Online /Cleanup-Image /StartComponentCleanup", 600_000);
         if (!completed)
             return (false, "Cleanup did not complete (timed out or couldn't be started).");
-        bool success = output.Contains("The operation completed successfully", StringComparison.OrdinalIgnoreCase);
+        // Exit code 0 is the language-neutral success signal; the English phrase is a second check.
+        bool success = exitCode == 0 || output.Contains("The operation completed successfully", StringComparison.OrdinalIgnoreCase);
         return (success,
             success
                 ? "Component cleanup completed. Re-run Analyze above to see the updated size."
@@ -201,7 +203,7 @@ public static class ReclaimableSpaceService
     /// word appears before that "not available" marker.</summary>
     public static async Task<HibernationInfo> ReadHibernationInfoAsync()
     {
-        var (output, completed) = await RunProcessAsync("powercfg.exe", "/a", 15_000);
+        var (output, completed, _) = await RunProcessAsync("powercfg.exe", "/a", 15_000);
         if (!completed)
             return new HibernationInfo { Available = false, UnavailableReason = "powercfg.exe did not respond." };
 
@@ -259,17 +261,27 @@ public static class ReclaimableSpaceService
     /// per this round's brief.</summary>
     public static async Task<(bool Success, string Message)> DisableHibernationAsync()
     {
-        var (_, completed) = await RunProcessAsync("powercfg.exe", "/hibernate off", 15_000);
-        return (completed,
-            completed
+        // Finishing in time isn't success - powercfg exits non-zero when it refuses the change.
+        var (output, _, exitCode) = await RunProcessAsync("powercfg.exe", "/hibernate off", 15_000);
+        bool success = exitCode == 0;
+        return (success,
+            success
                 ? "Hibernation disabled (Fast Startup is now disabled too, since it depends on hibernation)."
-                : "Failed to disable hibernation.");
+                : PowercfgFailureText("Failed to disable hibernation.", output, exitCode));
     }
 
     public static async Task<(bool Success, string Message)> EnableHibernationAsync()
     {
-        var (_, completed) = await RunProcessAsync("powercfg.exe", "/hibernate on", 15_000);
-        return (completed, completed ? "Hibernation enabled." : "Failed to enable hibernation.");
+        var (output, _, exitCode) = await RunProcessAsync("powercfg.exe", "/hibernate on", 15_000);
+        bool success = exitCode == 0;
+        return (success, success ? "Hibernation enabled." : PowercfgFailureText("Failed to enable hibernation.", output, exitCode));
+    }
+
+    private static string PowercfgFailureText(string prefix, string output, int? exitCode)
+    {
+        string detail = output.Trim();
+        if (detail.Length > 0) return $"{prefix} {detail}";
+        return exitCode is null ? $"{prefix} (timed out, or powercfg couldn't be started)" : $"{prefix} (exit code {exitCode})";
     }
 
     /// <summary>`/hibernate /size &lt;percent&gt;` - also turns hibernation on if it was off.
@@ -278,7 +290,7 @@ public static class ReclaimableSpaceService
     /// (if any) is returned rather than this app second-guessing the valid range.</summary>
     public static async Task<(bool Success, string Message)> SetHibernateFileSizeAsync(int percent)
     {
-        var (output, completed) = await RunProcessAsync("powercfg.exe", $"/hibernate /size {percent}", 15_000);
+        var (output, completed, _) = await RunProcessAsync("powercfg.exe", $"/hibernate /size {percent}", 15_000);
         if (!completed) return (false, "Failed to set hibernation file size.");
         return output.Trim().Length == 0
             ? (true, $"Hibernation file size set to {percent}% of RAM.")

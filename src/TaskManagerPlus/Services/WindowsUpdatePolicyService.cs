@@ -346,10 +346,13 @@ public static class WindowsUpdatePolicyService
     {
         try
         {
+            // Windows writes these as UTC ("2024-01-15T08:00:00Z"); everything that consumes them
+            // compares against DateTime.Now and formats for display, so hand back local time.
             if (key?.GetValue(valueName) is string s && !string.IsNullOrWhiteSpace(s) &&
-                DateTime.TryParse(s, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
+                DateTime.TryParse(s, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var dt))
             {
-                return dt;
+                return dt.ToLocalTime();
             }
         }
         catch { /* ignore - treat as unset */ }

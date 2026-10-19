@@ -161,11 +161,14 @@ public static class UsnJournalService
 
         var cutoff = DateTime.Now.AddMinutes(-Math.Max(1, minutes));
         var byFile = new Dictionary<string, HotSpotAccumulator>(StringComparer.OrdinalIgnoreCase);
-        int totalRecords = 0;
+        int parsedRecords = 0;
+        int unparsedTimestamps = 0;
         int inWindow = 0;
         bool timedOut = false;
         bool capped = false;
         var errorBuilder = new StringBuilder();
+        // fsutil reports failures ("Error 5: Access is denied.") on stdout, not stderr.
+        var nonRecordLines = new List<string>();
 
         var psi = new ProcessStartInfo("fsutil.exe", $"usn readjournal {driveLetter}: csv startUsn=0x{startUsn:X}")
         {
@@ -180,15 +183,27 @@ public static class UsnJournalService
         void HandleOutput(object? sender, DataReceivedEventArgs e)
         {
             if (e.Data is null) return;
-            totalRecords++;
             if (capped) return;
 
             var rec = ParseCsvLine(e.Data);
-            if (rec is null) return; // header row, or a line this parse couldn't make sense of
+            if (rec is null)
+            {
+                // Header row, a record shape without a file name, or an error message. Only the
+                // last kind doesn't start with a USN number.
+                string text = e.Data.Trim();
+                if (text.Length > 0 && !char.IsDigit(text[0]) && !text.StartsWith("Usn,", StringComparison.OrdinalIgnoreCase) && nonRecordLines.Count < 3)
+                    nonRecordLines.Add(text);
+                return;
+            }
+            parsedRecords++;
+
+            // A record whose time can't be read can't be placed in the window - counted, not
+            // silently treated as recent.
+            if (rec.Value.Timestamp is not { } ts) { unparsedTimestamps++; return; }
 
             // The journal reads oldest-first, so the in-window records are the last ones out;
             // only those count against the cap, or a long pre-window run would use it all up.
-            if (rec.Value.Timestamp is { } ts && ts < cutoff) return; // outside the requested window
+            if (ts < cutoff) return; // outside the requested window
             if (inWindow >= HotSpotMaxRecordsScanned) { capped = true; return; }
             inWindow++;
 
@@ -243,8 +258,18 @@ public static class UsnJournalService
             try { proc.CancelErrorRead(); } catch { /* best-effort */ }
         }
 
-        if (totalRecords == 0 && errorBuilder.Length > 0)
-            return new UsnHotSpotResult { StatusText = $"Failed: {errorBuilder.ToString().Trim()}" };
+        if (parsedRecords == 0)
+        {
+            string detail = errorBuilder.ToString().Trim();
+            if (detail.Length == 0) detail = string.Join(" ", nonRecordLines);
+            int? exitCode = null;
+            if (!timedOut) { try { exitCode = proc.ExitCode; } catch { /* leave null */ } }
+            if (detail.Length > 0 || exitCode is not (null or 0))
+                return new UsnHotSpotResult { StatusText = detail.Length > 0 ? $"Failed: {detail}" : $"Failed: fsutil exited with code {exitCode}." };
+        }
+
+        if (inWindow == 0 && unparsedTimestamps > 0)
+            return new UsnHotSpotResult { StatusText = $"Read {parsedRecords:N0} USN record(s) on {driveLetter}: but couldn't interpret {unparsedTimestamps:N0} of their timestamps in this system's date format, so the {minutes}-minute window couldn't be applied." };
 
         var top = byFile.Values
             .OrderByDescending(a => a.Count)
@@ -323,29 +348,41 @@ public static class UsnJournalService
 
     private readonly record struct UsnCsvRecord(string FileName, uint Reason, DateTime? Timestamp, ulong ParentFileId);
 
-    /// <summary>Column order follows the documented USN_RECORD field order `fsutil usn readjournal
-    /// ... csv` mirrors: USN, File name, Reason, Time stamp, File attributes, File ID, Parent File
-    /// ID, Security ID, Major version, Minor version, Record length. A header row (or any line whose
-    /// first field isn't a parseable USN) is skipped rather than mis-recorded as a real change.</summary>
+    /// <summary>Column order is fsutil's own csv header (its row format string is
+    /// `%I64d,"%.*ws",%d,0x%08x,"%s","%s",0x%08x,"%s",%s,%s,...`): Usn, File name, File name
+    /// length, Reason #, Reason, Time stamp, File attributes #, File attributes, File ID, Parent
+    /// file ID, Source info #, Source info, Security ID, Major version, Minor version, Record
+    /// length. A header row (or any line whose first field isn't a parseable USN) is skipped rather
+    /// than mis-recorded as a real change.</summary>
     private static UsnCsvRecord? ParseCsvLine(string line)
     {
         var fields = SplitCsvLine(line);
-        if (fields.Count < 7) return null;
+        if (fields.Count < 10) return null;
         if (!TryParseHexOrDecimal(fields[0], out _)) return null;
 
         string fileName = fields[1].Trim();
         if (fileName.Length == 0) return null;
 
-        uint reason = TryParseHexOrDecimal(fields[2], out ulong reasonRaw) ? (uint)reasonRaw : 0;
+        uint reason = TryParseHexOrDecimal(fields[3], out ulong reasonRaw) ? (uint)reasonRaw : 0;
         // #1058: fsutil renders the timestamp column in the machine's own locale format (like
         // vssadmin's creation times - see VssService), so CurrentCulture is correct here, unlike
         // the invariant hex/decimal fields above. Parsing it invariant returned null on any
         // non-US locale, and a null timestamp bypasses FindHotSpotsAsync's window filter - every
         // record then counted as "in the last N minutes" while StatusText claimed a windowed count.
-        DateTime? timestamp = DateTime.TryParse(fields[3].Trim(), CultureInfo.CurrentCulture, DateTimeStyles.None, out var dt) ? dt : null;
-        ulong parentFrn = TryParseHexOrDecimal(fields[6], out ulong pf) ? pf : 0;
+        DateTime? timestamp = DateTime.TryParse(fields[5].Trim(), CultureInfo.CurrentCulture, DateTimeStyles.None, out var dt) ? dt : null;
+        ulong parentFrn = TryParseFileId(fields[9], out ulong pf) ? pf : 0;
 
         return new UsnCsvRecord(fileName, reason, timestamp, parentFrn);
+    }
+
+    /// <summary>File IDs are printed as hex and can be 128-bit (USN_RECORD_V3); on NTFS the upper
+    /// half is zero, so the low 64 bits are the file reference number.</summary>
+    private static bool TryParseFileId(string field, out ulong value)
+    {
+        string s = field.Trim().Trim('"');
+        if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) s = s[2..];
+        if (s.Length > 16) s = s[^16..];
+        return ulong.TryParse(s, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value);
     }
 
     private static bool TryParseHexOrDecimal(string field, out ulong value)

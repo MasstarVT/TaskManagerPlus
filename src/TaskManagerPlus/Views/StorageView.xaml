@@ -1242,10 +1242,10 @@
                                                         <ColumnDefinition Width="Auto" />
                                                     </Grid.ColumnDefinitions>
                                                     <TextBox Grid.Column="0" Margin="0,0,4,0" Padding="4,2" FontSize="{StaticResource FontBody}" VerticalContentAlignment="Center"
-                                                             Text="{Binding DataContext.UsnMaxSizeMbInput, RelativeSource={RelativeSource AncestorType=UserControl}, UpdateSourceTrigger=PropertyChanged}"
+                                                             Text="{Binding UsnMaxSizeMbInput, UpdateSourceTrigger=PropertyChanged}"
                                                              ToolTip="Maximum size in MB (blank = fsutil default)" />
                                                     <TextBox Grid.Column="1" Margin="0,0,4,0" Padding="4,2" FontSize="{StaticResource FontBody}" VerticalContentAlignment="Center"
-                                                             Text="{Binding DataContext.UsnAllocationDeltaMbInput, RelativeSource={RelativeSource AncestorType=UserControl}, UpdateSourceTrigger=PropertyChanged}"
+                                                             Text="{Binding UsnAllocationDeltaMbInput, UpdateSourceTrigger=PropertyChanged}"
                                                              ToolTip="Allocation delta in MB (blank = fsutil default)" />
                                                     <Button Grid.Column="2" Content="Create/resize" Padding="8,3" FontSize="{StaticResource FontBody}" Margin="0,0,8,0"
                                                             Command="{Binding DataContext.CreateOrResizeUsnJournalCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"

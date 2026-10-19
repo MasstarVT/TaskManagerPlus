@@ -22,11 +22,13 @@ public static class RemovalPolicyService
                 "SELECT Index, Model, Size, MediaType, InterfaceType, PNPDeviceID FROM Win32_DiskDrive");
             foreach (ManagementObject mo in searcher.Get())
             {
-                // Win32_DiskDrive.MediaType reads "Removable Media" for USB mass-storage disks -
-                // the same field SystemSpecsService.ReadDisks already surfaces for the System tab's
-                // disk list, used here to filter down to just removable disks.
+                // Win32_DiskDrive.MediaType reads "Removable Media" for USB flash drives and
+                // "External hard disk media" for USB SSDs/HDDs (UASP enclosures) - the same field
+                // SystemSpecsService.ReadDisks already surfaces for the System tab's disk list, used
+                // here to filter down to just removable disks.
                 string mediaType = (mo["MediaType"] as string ?? string.Empty).Trim();
-                if (!mediaType.Contains("Removable", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!mediaType.Contains("Removable", StringComparison.OrdinalIgnoreCase) &&
+                    !mediaType.Contains("External", StringComparison.OrdinalIgnoreCase)) continue;
 
                 int index = -1;
                 try { index = Convert.ToInt32(mo["Index"] ?? -1); } catch { /* leave -1 */ }
@@ -66,7 +68,9 @@ public static class RemovalPolicyService
 
     /// <summary>
     /// The Device Manager "Policies" tab's Quick removal/Better performance radio writes a DWORD
-    /// "UserRemovalPolicy" value (1 = quick removal, 2 = better performance) somewhere under the
+    /// "UserRemovalPolicy" value (a DEVICE_REMOVAL_POLICY: 3 = surprise removal expected = quick
+    /// removal, 2 = orderly removal = better performance; seen live as 3 on a USB SSD, matching its
+    /// DEVPKEY_Device_RemovalPolicy) somewhere under the
     /// device's "Device Parameters" registry key - but not at one single documented subkey; it's
     /// been observed directly under "Device Parameters" on some driver/Windows-version combinations
     /// and one level further under "Device Parameters\Classpnp" on others, so both plausible spots

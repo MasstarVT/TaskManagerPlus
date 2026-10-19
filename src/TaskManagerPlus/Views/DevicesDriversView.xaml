@@ -358,7 +358,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="{Binding SelectedDriver.DisplayName, StringFormat=Installed files - {0}, TargetNullValue='Installed files'}"
+                        <TextBlock Grid.Column="0" Text="{Binding SelectedDriver.DisplayName, StringFormat=Installed files - {0}, TargetNullValue='Installed files', FallbackValue='Installed files'}"
                                    Style="{StaticResource CardTitle}" Margin="0" />
                     </Grid>
                     <TextBlock Text="{Binding SelectedDriverFilesStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,8" TextWrapping="Wrap" />
@@ -508,31 +508,33 @@
                                Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
 
                     <TextBlock Text="setupapi.dev.log failures" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
-                    <ItemsControl ItemsSource="{Binding InstallFailures}" MaxHeight="180" Margin="0,0,0,10">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Padding="8,6" Margin="0,0,0,6" Background="{DynamicResource DangerMutedBrush}" CornerRadius="6">
-                                    <StackPanel>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
-                                                       Text="{Binding Category}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Column="1" Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}"
-                                                       FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        </Grid>
-                                        <TextBlock Text="{Binding Target}" FontSize="{StaticResource FontCaption}" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                        <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,3,0,0">
-                                            <Run Text="{Binding ErrorCode, TargetNullValue='Unknown code', Mode=OneWay}" FontWeight="SemiBold" />
-                                            <Run Text=" - " /><Run Text="{Binding ErrorText, Mode=OneWay}" />
-                                        </TextBlock>
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                    <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10">
+                        <ItemsControl ItemsSource="{Binding InstallFailures}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Padding="8,6" Margin="0,0,0,6" Background="{DynamicResource DangerMutedBrush}" CornerRadius="6">
+                                        <StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Foreground="{DynamicResource DangerBrush}"
+                                                           Text="{Binding Category}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Timestamp, StringFormat={}{0:g}, Mode=OneWay}"
+                                                           FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            </Grid>
+                                            <TextBlock Text="{Binding Target}" FontSize="{StaticResource FontCaption}" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            <TextBlock FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="0,3,0,0">
+                                                <Run Text="{Binding ErrorCode, TargetNullValue='Unknown code', Mode=OneWay}" FontWeight="SemiBold" />
+                                                <Run Text=" - " /><Run Text="{Binding ErrorText, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
                     <TextBlock Text="No setupapi.dev.log failures found - click Load above to parse the log." Margin="0,0,0,10">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
@@ -547,25 +549,27 @@
                     </TextBlock>
 
                     <TextBlock Text="Kernel-PnP/Configuration events" FontSize="{StaticResource FontBody}" FontWeight="SemiBold" Margin="0,0,0,4" />
-                    <ItemsControl ItemsSource="{Binding PnpConfigurationFailures}" MaxHeight="180">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" ToolTip="{Binding Message}">
-                                        <Run Text="Event " /><Run Text="{Binding EventId, Mode=OneWay}" />
-                                        <Run Text=" (" /><Run Text="{Binding Level, Mode=OneWay}" /><Run Text=") - " />
-                                        <Run Text="{Binding Message, Mode=OneWay}" />
-                                    </TextBlock>
-                                    <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
-                                               FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                    <ScrollViewer MaxHeight="180" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding PnpConfigurationFailures}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" ToolTip="{Binding Message}">
+                                            <Run Text="Event " /><Run Text="{Binding EventId, Mode=OneWay}" />
+                                            <Run Text=" (" /><Run Text="{Binding Level, Mode=OneWay}" /><Run Text=") - " />
+                                            <Run Text="{Binding Message, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Grid.Column="1" Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}"
+                                                   FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
                     <TextBlock Text="No Kernel-PnP/Configuration events found (or the channel is disabled on this system).">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
@@ -651,7 +655,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- #465: best-effort logman NT Kernel Logger driver-load capture. -->
+            <!-- #465: best-effort logman kernel process/image-load trace (driver loads). -->
             <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
                 <StackPanel>
                     <TextBlock Text="Watch driver loads" Style="{StaticResource CardTitle}" />
@@ -900,7 +904,7 @@
                                     <Setter Property="Text" Value="Off" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsSafeBootConfigured}" Value="True">
-                                            <Setter Property="Text" Value="{Binding SafeBootModeText, StringFormat='On ({0})'}" />
+                                            <Setter Property="Text" Value="{Binding SafeBootModeText, Mode=OneWay, StringFormat='On ({0})'}" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
@@ -1299,7 +1303,7 @@
                  is selected above. -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
-                    <TextBlock Text="{Binding SelectedDeviceNode.Name, TargetNullValue='Select a device above for details'}"
+                    <TextBlock Text="{Binding SelectedDeviceNode.Name, TargetNullValue='Select a device above for details', FallbackValue='Select a device above for details'}"
                                Style="{StaticResource CardTitle}" TextWrapping="Wrap" />
                     <StackPanel Visibility="{Binding SelectedDeviceNode, Converter={StaticResource NullToVisibilityConverter}}">
                         <TextBlock FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,2,0,10" TextWrapping="Wrap"

@@ -317,13 +317,13 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
 
     public AsyncRelayCommand LoadTimelineCommand { get; }
 
-    // --- #465: best-effort logman NT Kernel Logger driver-load capture - see
-    // DriverLoadTraceService's remarks for why the .etl isn't parsed in-app. ---
+    // --- #465: best-effort logman kernel process/image-load trace (Microsoft-Windows-Kernel-Process,
+    // its own session) - see DriverLoadTraceService's remarks for why the .etl isn't parsed in-app. ---
     private bool _isDriverLoadTraceRunning;
     public bool IsDriverLoadTraceRunning { get => _isDriverLoadTraceRunning; private set => SetProperty(ref _isDriverLoadTraceRunning, value); }
 
     private string _driverLoadTraceStatusText =
-        "Not running. Starts a best-effort NT Kernel Logger capture (logman) of driver/module load and unload events to a .etl file - open it in Windows Performance Analyzer, since this app doesn't parse ETW events in-app.";
+        "Not running. Starts a best-effort kernel process/image-load trace (logman) of driver/module load and unload events to a .etl file - open it in Windows Performance Analyzer, since this app doesn't parse ETW events in-app.";
     public string DriverLoadTraceStatusText { get => _driverLoadTraceStatusText; private set => SetProperty(ref _driverLoadTraceStatusText, value); }
 
     private string? _driverLoadTraceFilePath;
@@ -371,7 +371,13 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         set
         {
             if (!SetProperty(ref _showNonPresentDevices, value)) return;
-            if (value && _nonPresentDeviceNodes is null) _ = LoadNonPresentDevicesAsync();
+            if (value && _nonPresentDeviceNodes is null)
+            {
+                // The non-present set is "every devnode minus the present list", so it needs the
+                // present list first - a Load already in flight picks the toggle up when it lands.
+                if (_presentDeviceNodes.Count > 0) _ = LoadNonPresentDevicesAsync();
+                else if (!IsLoadingDeviceTree) _ = LoadDeviceTreeAsync();
+            }
             else RebuildDeviceTree();
         }
     }
@@ -687,20 +693,26 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsSecurityPostureConcerning));
     }
 
+    private int _driverFilesGeneration;
+
     /// <summary>#459: lists the files SelectedDriver's package installed. Guards against a stale
     /// response landing after the user has already clicked a different row while this was in
-    /// flight.</summary>
+    /// flight - by call generation, not by row identity, since A -> B -> A leaves two in-flight
+    /// loads for the same row that would both append.</summary>
     private async Task LoadSelectedDriverFilesAsync()
     {
+        int generation = ++_driverFilesGeneration;
         SelectedDriverFiles.Clear();
         var driver = SelectedDriver;
         if (driver is null)
         {
+            IsLoadingDriverFiles = false;
             SelectedDriverFilesStatusText = "Select a driver above to list the files its package installed.";
             return;
         }
         if (driver.PnpDeviceId is not { Length: > 0 } deviceId)
         {
+            IsLoadingDriverFiles = false;
             SelectedDriverFilesStatusText = "No PnP device association found for this driver - can't list installed files.";
             return;
         }
@@ -710,19 +722,19 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         try
         {
             var files = await DriverInventoryService.ListDriverFilesAsync(deviceId);
-            if (!ReferenceEquals(SelectedDriver, driver)) return; // selection moved on while awaiting
+            if (generation != _driverFilesGeneration) return; // selection moved on while awaiting
 
             foreach (var f in files) SelectedDriverFiles.Add(f);
             SelectedDriverFilesStatusText = files.Count == 0 ? "No files found for this driver package." : string.Empty;
         }
         catch (Exception ex)
         {
-            if (ReferenceEquals(SelectedDriver, driver))
+            if (generation == _driverFilesGeneration)
                 SelectedDriverFilesStatusText = $"Couldn't list installed files: {ex.Message}";
         }
         finally
         {
-            if (ReferenceEquals(SelectedDriver, driver)) IsLoadingDriverFiles = false;
+            if (generation == _driverFilesGeneration) IsLoadingDriverFiles = false;
         }
     }
 
@@ -1240,6 +1252,14 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
             _nonPresentDeviceNodes = null;
             RebuildDeviceTree();
 
+            // ListPresentAsync swallows a WMI failure into an empty list - no PC really has zero
+            // devices, and the non-present diff must never run against an empty present set.
+            if (_presentDeviceNodes.Count == 0)
+            {
+                DeviceTreeStatusText = "Couldn't load the device tree: the Win32_PnPEntity query returned no devices.";
+                return;
+            }
+
             if (ShowNonPresentDevices) await LoadNonPresentDevicesAsync();
 
             int problemCount = _presentDeviceNodes.Count(d => d.HasProblem);
@@ -1263,6 +1283,14 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
     /// <summary>#471: the one-time (per Load) SetupDiGetClassDevs sweep for non-present devices.</summary>
     private async Task LoadNonPresentDevicesAsync()
     {
+        // Against an empty present list every devnode would be listed "Not present" - and offered
+        // for pnputil /remove-device.
+        if (_presentDeviceNodes.Count == 0)
+        {
+            DeviceTreeStatusText = "Non-present devices weren't listed: load the present-device tree first.";
+            return;
+        }
+
         IsLoadingDeviceTree = true;
         try
         {

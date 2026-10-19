@@ -82,6 +82,8 @@ public static class SmartHistoryService
         if (previous != current) changes.Add(new SmartHistoryChange(label, previous, current));
     }
 
+    private static readonly TimeSpan RecentCrcWindow = TimeSpan.FromDays(30);
+
     /// <summary>
     /// #380: is UDMA CRC Error Count (0xC7) non-zero, and is it rising, across this disk's
     /// persisted #325 history - reusing the same journal SmartHistoryEntry.UdmaCrcErrors already
@@ -99,20 +101,20 @@ public static class SmartHistoryService
         if (last.UdmaCrcErrors == 0)
             return (false, false, "0 UDMA CRC errors recorded - no cable/connector concern from this signal.");
 
-        // "Rising" needs at least two points and a genuine increase somewhere across the recorded
-        // history, not just a nonzero latest value - a count that jumped once years ago and has sat
-        // flat ever since is a different (much less urgent) story than one still climbing.
-        bool rising = false;
-        for (int i = 1; i < history.Count; i++)
-        {
-            if (history[i].UdmaCrcErrors > history[i - 1].UdmaCrcErrors) { rising = true; break; }
-        }
+        // "Rising" needs at least two points and an increase over the recent window, not just a
+        // nonzero latest value or an increase anywhere in up to 200 snapshots - a count that jumped
+        // once years ago and has sat flat ever since is a different (much less urgent) story than
+        // one still climbing. The baseline is the count as of the window's start (the last snapshot
+        // before it), or the window's first snapshot when the whole history is recent.
+        var windowStart = last.Timestamp - RecentCrcWindow;
+        int baselineIndex = Math.Max(0, history.FindLastIndex(e => e.Timestamp < windowStart));
+        bool rising = baselineIndex < history.Count - 1 && last.UdmaCrcErrors > history[baselineIndex].UdmaCrcErrors;
 
         string description = history.Count < 2
             ? $"{last.UdmaCrcErrors} UDMA CRC error(s) recorded - only one snapshot exists so far, so a rising-vs-static trend can't be judged yet. A static historical count usually doesn't indicate an active problem; a count that keeps climbing on future snapshots would."
             : rising
-                ? $"{last.UdmaCrcErrors} UDMA CRC error(s), and this count has been rising across {history.Count} recorded snapshots - a rising CRC count usually means the SATA cable/connector is failing right now, worth reseating or replacing the cable."
-                : $"{last.UdmaCrcErrors} UDMA CRC error(s), but this count has been flat across {history.Count} recorded snapshots (non-zero, not currently rising) - a static historical count usually doesn't indicate an active cable/connector problem, unlike a rising one.";
+                ? $"{last.UdmaCrcErrors} UDMA CRC error(s), up from {history[baselineIndex].UdmaCrcErrors} over the last {RecentCrcWindow.TotalDays:0} days of snapshots - a rising CRC count usually means the SATA cable/connector is failing right now, worth reseating or replacing the cable."
+                : $"{last.UdmaCrcErrors} UDMA CRC error(s), but this count hasn't risen over the last {RecentCrcWindow.TotalDays:0} days of snapshots (non-zero, not currently rising) - a static historical count usually doesn't indicate an active cable/connector problem, unlike a rising one.";
 
         return (true, rising, description);
     }

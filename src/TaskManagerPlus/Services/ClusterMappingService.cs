@@ -8,13 +8,12 @@ namespace TaskManagerPlus.Services;
 /// #335: maps a disk-relative LBA (from a #332 surface scan) back to an owning file, via
 /// `fsutil volume querycluster` - the documented tool for this, rather than parsing the MFT
 /// directly (the same "known tool over raw struct interop" tradeoff every other fsutil-based
-/// feature in this app already takes). Necessarily approximate: `fsutil volume querycluster` takes
-/// a volume-relative cluster number, but a surface scan reads whole-disk-relative LBAs, and a disk
-/// can have partitions (EFI System Partition, MSR, ...) before the data volume that shift every LBA
-/// on it. This resolves the disk's first fixed NTFS volume and assumes the scanned disk is that
-/// volume's only partition (true for most secondary/data-only disks, not guaranteed on a
-/// multi-partition boot disk) - captioned as an approximation wherever it's shown, never presented
-/// as exact.
+/// feature in this app already takes). `fsutil volume querycluster` takes a volume-relative
+/// cluster number, but a surface scan reads whole-disk-relative LBAs, so each LBA is first matched
+/// to the lettered partition that contains it and shifted by that partition's StartingOffset
+/// (every partition starts past LBA 0 - 1 MiB on a single-partition disk, further on a boot disk
+/// behind its EFI/MSR partitions). Still captioned as an approximation wherever it's shown: a
+/// dynamic/Storage Spaces disk or a volume spanning several partitions doesn't map this simply.
 /// </summary>
 public static class ClusterMappingService
 {
@@ -37,24 +36,66 @@ public static class ClusterMappingService
                     string letter = (logical["Name"] as string ?? string.Empty).Trim().TrimEnd(':');
                     if (letter.Length == 0) continue;
 
-                    int blockSize = 4096; // NTFS's near-universal default - overridden below when Win32_Volume reports one
-                    try
-                    {
-                        using var volSearcher = new ManagementObjectSearcher(
-                            $"SELECT BlockSize FROM Win32_Volume WHERE DriveLetter = '{letter}:'");
-                        foreach (ManagementObject vol in volSearcher.Get())
-                        {
-                            if (vol["BlockSize"] is not null) blockSize = Convert.ToInt32(vol["BlockSize"]);
-                        }
-                    }
-                    catch { /* fall back to the NTFS default above */ }
-
-                    return (letter, blockSize);
+                    return (letter, ReadClusterSize(letter));
                 }
             }
         }
         catch { /* fall through to null */ }
         return null;
+    }
+
+    /// <summary>One lettered partition on a physical disk, with its disk-relative byte range.</summary>
+    public sealed record LetteredPartition(string DriveLetter, int BytesPerCluster, long StartingOffset, long Size)
+    {
+        public bool Contains(long diskByteOffset) => diskByteOffset >= StartingOffset && diskByteOffset < StartingOffset + Size;
+    }
+
+    /// <summary>Every partition on disk <paramref name="diskIndex"/> that has a drive letter, with
+    /// its Win32_DiskPartition StartingOffset/Size - what a disk-relative LBA has to be matched
+    /// against and shifted by before it means anything to `fsutil volume querycluster`. Empty on
+    /// any failure or when no partition on the disk has a letter.</summary>
+    public static IReadOnlyList<LetteredPartition> ReadLetteredPartitions(int diskIndex)
+    {
+        var result = new List<LetteredPartition>();
+        try
+        {
+            using var partitions = new ManagementObjectSearcher(
+                $"ASSOCIATORS OF {{Win32_DiskDrive.DeviceID='\\\\\\\\.\\\\PHYSICALDRIVE{diskIndex}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition");
+            foreach (ManagementObject partition in partitions.Get())
+            {
+                if (partition["StartingOffset"] is null || partition["Size"] is null) continue;
+                long start = Convert.ToInt64(partition["StartingOffset"]);
+                long size = Convert.ToInt64(partition["Size"]);
+
+                using var logicalDisks = new ManagementObjectSearcher(
+                    $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_LogicalDiskToPartition");
+                foreach (ManagementObject logical in logicalDisks.Get())
+                {
+                    string letter = (logical["Name"] as string ?? string.Empty).Trim().TrimEnd(':');
+                    if (letter.Length == 0) continue;
+                    result.Add(new LetteredPartition(letter, ReadClusterSize(letter), start, size));
+                    break;
+                }
+            }
+        }
+        catch { /* return whatever resolved before the failure */ }
+        return result;
+    }
+
+    private static int ReadClusterSize(string letter)
+    {
+        int blockSize = 4096; // NTFS's near-universal default - overridden below when Win32_Volume reports one
+        try
+        {
+            using var volSearcher = new ManagementObjectSearcher(
+                $"SELECT BlockSize FROM Win32_Volume WHERE DriveLetter = '{letter}:'");
+            foreach (ManagementObject vol in volSearcher.Get())
+            {
+                if (vol["BlockSize"] is not null) blockSize = Convert.ToInt32(vol["BlockSize"]);
+            }
+        }
+        catch { /* fall back to the NTFS default above */ }
+        return blockSize;
     }
 
     /// <summary>#359: the reverse of ResolveVolumeForDisk above - the Win32_DiskDrive.Index of the
@@ -91,14 +132,18 @@ public static class ClusterMappingService
     // as a fallback label in case some build formats it that way.
     private static readonly Regex ClusterFileRegex = new(@"(?:used by\s+\S+\s+|File Name\s*:\s*)(.+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// <summary>Resolves one disk-relative LBA to an owning file name (or a metadata-stream name
-    /// like $Mft/$LogFile), or a short "why not" string - never throws, degrades to "Not resolved"
-    /// on any failure, same tier as every other on-demand shell-out in this app.</summary>
-    public static async Task<string> ResolveOwningFileAsync(string driveLetter, long diskRelativeLba, int bytesPerSector, int bytesPerCluster)
+    /// <summary>Resolves one disk-relative LBA inside <paramref name="partition"/> to an owning file
+    /// name (or a metadata-stream name like $Mft/$LogFile), or a short "why not" string - never
+    /// throws, degrades to "Not resolved" on any failure, same tier as every other on-demand
+    /// shell-out in this app.</summary>
+    public static async Task<string> ResolveOwningFileAsync(LetteredPartition partition, long diskRelativeLba, int bytesPerSector)
     {
         try
         {
-            long clusterNumber = diskRelativeLba * bytesPerSector / Math.Max(bytesPerCluster, 1);
+            long volumeByteOffset = diskRelativeLba * bytesPerSector - partition.StartingOffset;
+            if (volumeByteOffset < 0 || volumeByteOffset >= partition.Size) return "Not resolved";
+            long clusterNumber = volumeByteOffset / Math.Max(partition.BytesPerCluster, 1);
+            string driveLetter = partition.DriveLetter;
             var psi = new ProcessStartInfo("fsutil.exe", $"volume querycluster {driveLetter}: {clusterNumber}")
             {
                 RedirectStandardOutput = true,

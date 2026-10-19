@@ -245,13 +245,22 @@ public static class RestorePointService
             }
             if (string.IsNullOrEmpty(systemVolumeDeviceId)) return null;
 
+            // Win32_ShadowStorage.Volume is a WMI object path with its backslashes escaped
+            // (Win32_Volume.DeviceID="\\\\?\\Volume{guid}\\"), so the raw DeviceID is never a
+            // substring of it - match on the backslash-free "Volume{guid}" part instead.
+            int guidStart = systemVolumeDeviceId.IndexOf("Volume{", StringComparison.OrdinalIgnoreCase);
+            int guidEnd = guidStart < 0 ? -1 : systemVolumeDeviceId.IndexOf('}', guidStart);
+            string volumeKey = guidStart >= 0 && guidEnd > guidStart
+                ? systemVolumeDeviceId[guidStart..(guidEnd + 1)]
+                : systemVolumeDeviceId;
+
             using var shadowSearcher = new ManagementObjectSearcher("SELECT Volume FROM Win32_ShadowStorage");
             foreach (ManagementObject mo in shadowSearcher.Get())
             {
                 using (mo)
                 {
                     string? volumeRef = mo["Volume"]?.ToString();
-                    if (volumeRef is not null && volumeRef.Contains(systemVolumeDeviceId, StringComparison.OrdinalIgnoreCase))
+                    if (volumeRef is not null && volumeRef.Contains(volumeKey, StringComparison.OrdinalIgnoreCase))
                         return true;
                 }
             }

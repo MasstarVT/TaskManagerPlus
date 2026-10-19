@@ -399,22 +399,28 @@ public static class VssService
     }
 
     /// <summary>#397: `vssadmin resize shadowstorage /for=&lt;vol&gt; /on=&lt;vol&gt;
-    /// /maxsize=&lt;NN&gt;GB` (or /maxsize=UNBOUNDED). Caller (StorageViewModel) confirms with the
+    /// /maxsize=&lt;NN&gt;MB` (or /maxsize=UNBOUNDED). Caller (StorageViewModel) confirms with the
     /// user first, same Yes/No MessageBox.Show pattern this app's other disruptive
     /// actions (chkdsk repair, USN journal delete, ...) already use - shrinking below the current
     /// usage makes Windows delete older shadow copies on the volume to fit.</summary>
     public static async Task<(bool Success, string Message)> ResizeShadowStorageAsync(string forVolume, string onVolume, string maxSizeArg)
     {
         string args = $"resize shadowstorage /for={forVolume} /on={onVolume} /maxsize={maxSizeArg}";
-        string output = await RunVssAdminAsync(args, 20000);
-        if (output.Length == 0) return (false, "vssadmin did not respond (timed out, or failed to start).");
-
-        if (output.Contains("Successfully resized", StringComparison.OrdinalIgnoreCase))
-            return (true, "Shadow copy storage resized successfully.");
+        string output;
+        int? exitCode;
+        try { (output, exitCode) = await ToolRunner.RunCapturedAsync("vssadmin.exe", args, 20000, timeoutOutput: string.Empty); }
+        catch { return (false, "vssadmin failed to start."); }
+        if (exitCode is null) return (false, "vssadmin did not respond (timed out).");
 
         var errorLine = output.Split('\n')
             .Select(l => l.Trim())
             .FirstOrDefault(l => l.StartsWith("Error:", StringComparison.OrdinalIgnoreCase));
+
+        // The exit code is the language-neutral signal (vssadmin exits 2 on an "Error:" line); the
+        // English phrase is kept as a second check rather than the only one.
+        if ((exitCode == 0 && errorLine is null) || output.Contains("Successfully resized", StringComparison.OrdinalIgnoreCase))
+            return (true, "Shadow copy storage resized successfully.");
+
         return (false, errorLine ?? Truncate(output.Trim(), 300));
     }
 

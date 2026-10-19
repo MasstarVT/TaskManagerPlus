@@ -171,6 +171,15 @@
                                     Style="{StaticResource PrimaryButton}" Margin="0,0,0,16" />
                         </StackPanel>
                     </Grid>
+                    <!-- Loading/failure state - without these the blank defaults below read as a
+                         real (empty) inventory while the query runs or after it fails. -->
+                    <TextBlock Text="Reading system inventory…" Style="{StaticResource SubStat}" Margin="0,0,0,12"
+                               Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16"
+                            Visibility="{Binding RefreshErrorText, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Text="{Binding RefreshErrorText}" />
+                    </Border>
                     <!-- Summary tiles -->
                     <UniformGrid Columns="3">
                         <Border Style="{StaticResource CardStyle}" Margin="0,0,8,16">
@@ -733,25 +742,27 @@
                             <TextBlock Text="Display connect/disconnect history" Style="{StaticResource CardTitle}" />
                             <TextBlock Style="{StaticResource SubStat}" Margin="0,-2,0,10" TextWrapping="Wrap"
                                        Text="Monitor arrival/removal and display-configuration changes, last 30 days plus anything recorded this session. Repeated disconnects at a regular interval point at a cable or a DisplayPort link-training problem." />
-                            <ItemsControl ItemsSource="{Binding DisplayChangeHistory}" MaxHeight="240">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,8,0">
-                                                <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
-                                                <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
-                                            </TextBlock>
-                                            <Border Grid.Column="1" Background="{DynamicResource AccentMutedBrush}" CornerRadius="4" Padding="4,0" VerticalAlignment="Top">
-                                                <TextBlock Text="{Binding Source}" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
-                                            </Border>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding DisplayChangeHistory}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,8,0">
+                                                    <Run Text="{Binding TimeCreated, StringFormat={}{0:g}, Mode=OneWay}" />
+                                                    <Run Text=" — " /><Run Text="{Binding Description, Mode=OneWay}" />
+                                                </TextBlock>
+                                                <Border Grid.Column="1" Background="{DynamicResource AccentMutedBrush}" CornerRadius="4" Padding="4,0" VerticalAlignment="Top">
+                                                    <TextBlock Text="{Binding Source}" FontSize="{StaticResource FontCaption}" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}" />
+                                                </Border>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                             <TextBlock Text="No display connect/disconnect events recorded yet.">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">

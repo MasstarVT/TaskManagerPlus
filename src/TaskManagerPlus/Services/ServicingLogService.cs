@@ -37,7 +37,7 @@ public static class ServicingLogService
     private static readonly Regex LeadingTimestampRegex = new(@"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", RegexOptions.Compiled);
     private static readonly Regex ErrorCodeRegex = new(@"0x[0-9A-Fa-f]{8}", RegexOptions.Compiled);
     private static readonly Regex CannotRepairPathRegex = new(@"Cannot repair member file\s*\[[^\]]*\]\s*""?([^""\r\n]+)""?", RegexOptions.Compiled);
-    private static readonly Regex VerifyingCountRegex = new(@"Verifying\s+(\d+)\s*\(", RegexOptions.Compiled);
+    private static readonly Regex VerifyingCountRegex = new(@"Verifying\s+(\d+)\s*(?:\(|components)", RegexOptions.Compiled);
     private static readonly Regex DismLevelRegex = new(@"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\s*(Info|Warning|Error)\b", RegexOptions.Compiled);
     private static readonly Regex DismPrefixRegex = new(@"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\s*(?:Info|Warning|Error)\s*", RegexOptions.Compiled);
     private static readonly Regex DismHResultRegex = new(@"(?:hr|HRESULT)\s*[:=]\s*(0x[0-9A-Fa-f]{8})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -122,9 +122,10 @@ public static class ServicingLogService
 
     // ==================== #176: SFC result summary (+ CbsPersist_*.log archive expansion) ====================
 
-    /// <summary>Summarizes the CBS `[SR]` block into "N files scanned, M corrupt, K repaired, list
-    /// of unrepairable files." <see cref="SfcResultSummary.FilesScanned"/> is left null when no
-    /// "Verifying N (...) components" line is found - CBS.log doesn't always log an explicit scan
+    /// <summary>Summarizes the most recent sfc run's CBS `[SR]` block into "N components verified,
+    /// M corrupt, K repaired, list of unrepairable files" (N is the sum of that run's "Verifying N
+    /// (...) components" batch lines, carried in <see cref="SfcResultSummary.FilesScanned"/>).
+    /// FilesScanned is left null when no such line is found - CBS.log doesn't always log an explicit scan
     /// count (sfc.exe prints its live progress to the console, not to the log), so this is never
     /// guessed. If the live CBS.log has no `[SR]` activity at all (it rolls over at ~128 MB, so an
     /// older sfc run may have already scrolled out of it), this falls back to scanning
@@ -199,6 +200,11 @@ public static class ServicingLogService
         public DateTime? LastActivityUtc { get; init; }
     }
 
+    // One sfc run logs [SR] lines every few seconds (one "Verifying 100 (...) components" batch
+    // after another), while CBS.log keeps every run since it last rolled over - so a long quiet gap
+    // between [SR] lines starts a new run, and only the most recent run is summarized.
+    private static readonly TimeSpan SfcRunGap = TimeSpan.FromMinutes(10);
+
     private static SfcScanStats ScanForSfcStats(string path, CancellationToken ct)
     {
         bool hasActivity = false;
@@ -217,10 +223,21 @@ public static class ServicingLogService
             hasActivity = true;
 
             var ts = ParseLeadingTimestamp(line);
-            if (ts is not null) lastActivity = ts;
+            if (ts is { } t)
+            {
+                if (lastActivity is { } previous && t - previous > SfcRunGap)
+                {
+                    filesScanned = null;
+                    repaired = 0;
+                    unrepairable.Clear();
+                }
+                lastActivity = t;
+            }
 
+            // Each batch line counts its own components - the run's total is their sum.
             var vm = VerifyingCountRegex.Match(line);
-            if (vm.Success && int.TryParse(vm.Groups[1].Value, out int n)) filesScanned = n;
+            if (vm.Success && int.TryParse(vm.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n))
+                filesScanned = (filesScanned ?? 0) + n;
 
             if (line.Contains("Cannot repair member file", StringComparison.OrdinalIgnoreCase))
             {

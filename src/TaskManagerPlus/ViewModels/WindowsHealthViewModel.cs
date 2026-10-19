@@ -1534,6 +1534,9 @@ public sealed class WindowsHealthViewModel : ObservableObject
         try
         {
             UpgradeReadiness = await UpgradeReadinessService.ReadSnapshotAsync(measureEsp).ConfigureAwait(true);
+            // A fresh snapshot carries only the placeholder servicing-stack text - re-derive it from
+            // the package list when that has already been loaded.
+            if (HasLoadedPackages) RefreshServicingStackVersionText();
             MeasureEspForReadinessCommand.RaiseCanExecuteChanged();
         }
         catch (Exception ex)
