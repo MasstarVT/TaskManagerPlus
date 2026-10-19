@@ -2069,9 +2069,11 @@ public sealed class SecurityViewModel : ObservableObject
     /// the SAME toggle method again with the opposite state, or moves a quarantined file back.</summary>
     private async Task UndoJournalEntryAsync(SecurityActionJournalEntry? entry)
     {
-        if (entry is null || !entry.CanUndo) return;
-        var payload = SecurityActionJournalService.ParseUndoPayload(entry.UndoPayload);
-        if (payload is null) { StatusMessage = "This entry has no undo information."; return; }
+        if (entry is null || entry.IsUndone) return;
+        // security-actions.json is user-writable: the payload is only used once the entry's MAC
+        // proves this app wrote it (an unverified entry's Undo button is already disabled).
+        var payload = SecurityActionJournalService.TryGetVerifiedUndoPayload(entry, out var payloadError);
+        if (payload is null) { StatusMessage = payloadError; return; }
 
         bool success;
         string? error = null;

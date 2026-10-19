@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text;
+using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
 
@@ -25,7 +26,12 @@ public static class RegistryBackupService
         {
             string safeName = SanitizeFileName(keyPath);
             string dir = AppPaths.GetPath("Undo", DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
-            Directory.CreateDirectory(dir);
+            Directory.CreateDirectory(AppPaths.GetPath("Undo"));
+            // Admin-only, so the backup's content can't be swapped before a restore imports it. A
+            // same-second folder that already exists must pass the same check.
+            var backupDir = QuarantineService.CreateAdminOnlyDirectory(dir);
+            if ((QuarantineService.FindReparsePoint(dir) ?? QuarantineService.CheckAdminOnly(backupDir)) is { } problem)
+                return (false, null, $"Couldn't create a protected backup folder ({problem}).");
             string filePath = Path.Combine(dir, safeName + ".reg");
 
             var (output, exitCode) = await TroubleshootService.RunCapturedAsync(
@@ -49,9 +55,16 @@ public static class RegistryBackupService
     /// own %AppData%, both writable by any unelevated process, while reg import runs elevated. So
     /// the file must be under Undo\ with no junctions, every key it names must be one this app
     /// backs up, and what reg.exe imports is a copy of the checked text in an admin-only folder
-    /// (it re-reads by path, so importing the original would let it change after the check).</remarks>
-    public static async Task<(bool Success, string? Error)> RestoreKeyAsync(string regFilePath)
+    /// (it re-reads by path, so importing the original would let it change after the check).
+    /// Before any of that, the entry itself must carry this app's MAC (JournalIntegrityService),
+    /// and the backup's folder must be admin-only as BackupKeyAsync creates it.</remarks>
+    public static async Task<(bool Success, string? Error)> RestoreKeyAsync(ChangeJournalEntry entry)
     {
+        if (entry.RegistryBackupPath is not { Length: > 0 } regFilePath)
+            return (false, "This entry has no registry backup.");
+        if (!ChangeJournalService.Verify(entry))
+            return (false, JournalIntegrityService.UnverifiedMessage);
+
         string? importDir = null;
         FileStream? pin = null;
         try
@@ -64,8 +77,9 @@ public static class RegistryBackupService
 
             if (!File.Exists(fullPath))
                 return (false, "That backup file no longer exists.");
-            if (QuarantineService.FindReparsePoint(fullPath) is { } reparse)
-                return (false, $"Not importing: {reparse}.");
+            if ((QuarantineService.FindReparsePoint(fullPath)
+                 ?? QuarantineService.CheckAdminOnly(new DirectoryInfo(Path.GetDirectoryName(fullPath)!))) is { } unsafeReason)
+                return (false, $"Not importing: {unsafeReason}.");
 
             string content = await File.ReadAllTextAsync(fullPath);
             if (ValidateBackupContent(content) is { } refusal)

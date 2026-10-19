@@ -41,7 +41,20 @@ public sealed class SecurityActionJournalEntry
 
     public bool IsUndone { get; set; }
 
-    public bool CanUndo => !IsUndone && UndoPayload is not null;
+    /// <summary>HMAC over the fields Undo reads (see JournalIntegrityService) - null on entries
+    /// written before it existed or without a trusted key, which makes them not undoable.</summary>
+    public string? Mac { get; set; }
 
-    public string StatusText => IsUndone ? "Undone" : "Active";
+    /// <summary>Set by SecurityActionJournalService from <see cref="Mac"/>, never read from the
+    /// file. Undo re-verifies (TryGetVerifiedUndoPayload) rather than trusting this flag.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsVerified { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool CanUndo => !IsUndone && UndoPayload is not null && IsVerified;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string StatusText => IsUndone ? "Undone"
+        : UndoPayload is not null && !IsVerified ? "Unverified - undo disabled"
+        : "Active";
 }

@@ -19,7 +19,7 @@ public sealed class ChangeJournalRow : ObservableObject
 
     /// <summary>#971: a secondary restore option alongside the primary same-service-method Undo,
     /// offered only when this entry's action backed up a registry key first.</summary>
-    public bool HasRegistryBackup => Entry.RegistryBackupPath is { Length: > 0 };
+    public bool HasRegistryBackup => Entry.RegistryBackupPath is { Length: > 0 } && Entry.IsVerified;
 
     private bool _isBusy;
     public bool IsBusy { get => _isBusy; set => SetProperty(ref _isBusy, value); }
@@ -125,6 +125,8 @@ public sealed class ChangeJournalViewModel : ObservableObject
         if (entry.Undone) return (false, "Already undone.");
         if (!entry.Success) return (false, "The original action didn't succeed - nothing to undo.");
         if (!entry.IsUndoable) return (false, entry.NotUndoableReason ?? "Not reversible.");
+        // The journal is user-writable; only entries carrying this app's MAC may run an inverse.
+        if (!ChangeJournalService.Verify(entry)) return (false, JournalIntegrityService.UnverifiedMessage);
 
         switch (entry.Kind)
         {
@@ -206,12 +208,12 @@ public sealed class ChangeJournalViewModel : ObservableObject
 
     private async Task RestoreFromBackupAsync(ChangeJournalRow? row)
     {
-        if (row?.Entry.RegistryBackupPath is not { Length: > 0 } path) return;
+        if (row?.Entry.RegistryBackupPath is not { Length: > 0 }) return;
 
         row.IsBusy = true;
         try
         {
-            var (success, error) = await RegistryBackupService.RestoreKeyAsync(path);
+            var (success, error) = await RegistryBackupService.RestoreKeyAsync(row.Entry);
             row.ResultText = success ? "Registry key restored from backup." : $"Couldn't restore from backup: {error}";
         }
         finally
@@ -225,6 +227,9 @@ public sealed class ChangeJournalViewModel : ObservableObject
     /// funnel through the same ChangeKind values (see ChangeJournalEntry's remarks).</summary>
     private static async Task<(bool Success, string Message)> RunInverseAsync(ChangeJournalEntry entry)
     {
+        // Checked again here, right before acting, not just when the row was rendered.
+        if (!ChangeJournalService.Verify(entry)) return (false, JournalIntegrityService.UnverifiedMessage);
+
         switch (entry.Kind)
         {
             case ChangeKind.ServiceStateChange:

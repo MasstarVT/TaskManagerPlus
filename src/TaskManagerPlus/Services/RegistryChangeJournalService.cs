@@ -49,12 +49,29 @@ public static class RegistryChangeJournalService
     {
         lock (FileLock)
         {
+            // Only the app can produce this MAC, so an entry forged into the file can't be undone.
+            entry.Mac = JournalIntegrityService.Sign(MacDomain, MacFields(entry));
+            entry.IsVerified = entry.Mac is not null;
             var history = LoadHistoryUnlocked();
             history.Add(entry);
             SaveUnlocked(history);
             return history;
         }
     }
+
+    private const string MacDomain = "registry-changes";
+
+    /// <summary>True when the entry's MAC proves this app wrote exactly these fields.</summary>
+    public static bool Verify(RegistryChangeEntry entry) =>
+        JournalIntegrityService.Verify(MacDomain, entry.Mac, MacFields(entry));
+
+    // Everything Undo reads, plus the text shown beside the Undo button. Undone is excluded:
+    // MarkUndone flips it in place. Null stays distinct from empty (null OldValueText = delete).
+    private static string?[] MacFields(RegistryChangeEntry e) => new[]
+    {
+        e.Id.ToString("D"), JournalIntegrityService.Instant(e.Timestamp), e.Source, e.Description,
+        e.Hive, e.SubKeyPath, e.ValueName, e.ValueKind, e.OldValueKind, e.OldValueText, e.NewValueText,
+    };
 
     /// <summary>Convenience for callers that already read the old value themselves - builds the
     /// entry and appends it in one call, swallowing any journal-write failure (a failed journal
@@ -95,7 +112,10 @@ public static class RegistryChangeJournalService
     public static (bool Success, string? Error) Undo(RegistryChangeEntry entry)
     {
         // The journal file lives in the user's own %AppData%, so an unelevated process can forge
-        // entries in it - only (key, value) pairs this app itself journals are ever written back.
+        // entries in it: an entry must carry this app's MAC, and (defence in depth) only (key,
+        // value) pairs this app itself journals are ever written back.
+        if (!Verify(entry))
+            return (false, JournalIntegrityService.UnverifiedMessage);
         if (!IsKnownAppWrite(entry))
             return (false, $"{entry.FullKeyText}\\{entry.ValueName} isn't a value this app writes, so it won't be changed from this journal.");
 
@@ -259,9 +279,11 @@ public static class RegistryChangeJournalService
             string json = File.ReadAllText(FilePath);
             // Valid JSON can still carry null elements or null strings; drop those rows so no
             // consumer (MarkUndone's e.Id, FullKeyText, Undo) can throw on them.
-            return (JsonSerializer.Deserialize<List<RegistryChangeEntry>>(json) ?? new List<RegistryChangeEntry>())
+            var entries = (JsonSerializer.Deserialize<List<RegistryChangeEntry>>(json) ?? new List<RegistryChangeEntry>())
                 .Where(e => e is not null && e.Hive is not null && e.SubKeyPath is not null && e.ValueName is not null && e.ValueKind is not null)
                 .ToList();
+            foreach (var e in entries) e.IsVerified = Verify(e);
+            return entries;
         }
         catch
         {

@@ -26,7 +26,12 @@ public static class SecurityActionJournalService
                 var json = File.ReadAllText(JournalPath);
                 var entries = JsonSerializer.Deserialize<List<SecurityActionJournalEntry>>(json);
                 // Valid JSON can still hold null rows or null ids - drop those rows only.
-                if (entries is not null) return entries.Where(e => e is not null && !string.IsNullOrEmpty(e.Id)).ToList();
+                if (entries is not null)
+                {
+                    var kept = entries.Where(e => e is not null && !string.IsNullOrEmpty(e.Id)).ToList();
+                    foreach (var e in kept) e.IsVerified = Verify(e);
+                    return kept;
+                }
             }
         }
         catch
@@ -61,6 +66,9 @@ public static class SecurityActionJournalService
     /// callers can reset their in-memory ObservableCollection from the authoritative saved state.</summary>
     public static List<SecurityActionJournalEntry> Append(List<SecurityActionJournalEntry> current, SecurityActionJournalEntry entry)
     {
+        // Only the app can produce this MAC, so an entry forged into the file can't be undone.
+        entry.Mac = JournalIntegrityService.Sign(MacDomain, MacFields(entry));
+        entry.IsVerified = entry.Mac is not null;
         var updated = new List<SecurityActionJournalEntry>(current) { entry };
         if (updated.Count > MaxEntries) updated = updated.Skip(updated.Count - MaxEntries).ToList();
         Save(updated);
@@ -83,7 +91,36 @@ public static class SecurityActionJournalService
         Target = e.Target,
         UndoPayload = e.UndoPayload,
         IsUndone = true,
+        Mac = e.Mac,
+        IsVerified = e.IsVerified,
     };
+
+    private const string MacDomain = "security-actions";
+
+    /// <summary>True when the entry's MAC proves this app wrote exactly these fields.</summary>
+    public static bool Verify(SecurityActionJournalEntry entry) =>
+        JournalIntegrityService.Verify(MacDomain, entry.Mac, MacFields(entry));
+
+    // Everything Undo reads (Kind picks the inverse, UndoPayload is its arguments) plus the text
+    // shown beside the Undo button. IsUndone is excluded: MarkUndone flips it.
+    private static string?[] MacFields(SecurityActionJournalEntry e) => new[]
+    {
+        e.Id, JournalIntegrityService.Instant(e.TimestampUtc), e.Kind.ToString(), e.ActionDescription, e.Target, e.UndoPayload,
+    };
+
+    /// <summary>The undo arguments for an entry, only when its MAC verifies - the one way
+    /// SecurityViewModel's Undo gets them, right before it runs the inverse.</summary>
+    public static Dictionary<string, string>? TryGetVerifiedUndoPayload(SecurityActionJournalEntry entry, out string? error)
+    {
+        if (!Verify(entry))
+        {
+            error = JournalIntegrityService.UnverifiedMessage;
+            return null;
+        }
+        var payload = ParseUndoPayload(entry.UndoPayload);
+        error = payload is null ? "This entry has no undo information." : null;
+        return payload;
+    }
 
     // ==================================================================================
     // Kind-specific UndoPayload builders/readers - a tiny JSON object per Kind, so

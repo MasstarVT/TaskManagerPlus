@@ -487,6 +487,15 @@ public sealed class RegistryChangeEntry
     public string? NewValueText { get; init; }
     public bool Undone { get; set; }
 
+    /// <summary>HMAC over the fields Undo reads (see JournalIntegrityService) - null on entries
+    /// written before it existed or without a trusted key, which makes them not undoable.</summary>
+    public string? Mac { get; set; }
+
+    /// <summary>Set on load from <see cref="Mac"/>, never read from the file; gates the Undo
+    /// button. RegistryChangeJournalService.Undo re-verifies rather than trusting it.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsVerified { get; set; }
+
     public string FullKeyText => $@"{Hive}\{SubKeyPath}";
 }
 

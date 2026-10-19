@@ -94,4 +94,13 @@ public sealed class ChangeJournalEntry
 
     public bool Undone { get; set; }
     public DateTime? UndoneAtUtc { get; set; }
+
+    /// <summary>HMAC over the fields Undo reads (see JournalIntegrityService) - null on entries
+    /// written before it existed or without a trusted key, which makes them not undoable.</summary>
+    public string? Mac { get; set; }
+
+    /// <summary>Set by ChangeJournalService.LoadAll from <see cref="Mac"/>; never read from the
+    /// file. Undo re-verifies rather than trusting this flag.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsVerified { get; set; }
 }

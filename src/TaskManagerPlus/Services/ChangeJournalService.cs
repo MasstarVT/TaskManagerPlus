@@ -34,6 +34,9 @@ public static class ChangeJournalService
         {
             try
             {
+                // Only the app can produce this MAC, so a line forged into the file can't be undone.
+                entry.Mac = JournalIntegrityService.Sign(MacDomain, MacFields(entry));
+                entry.IsVerified = entry.Mac is not null;
                 var dir = Path.GetDirectoryName(JournalPath)!;
                 Directory.CreateDirectory(dir);
                 File.AppendAllText(JournalPath, JsonSerializer.Serialize(entry, JsonOpts) + Environment.NewLine);
@@ -78,6 +81,7 @@ public static class ChangeJournalService
                         entry.IsUndoable = false;
                         entry.NotUndoableReason ??= "This journal entry has no id.";
                     }
+                    entry.IsVerified = Verify(entry);
                     result.Add(entry);
                 }
                 catch
@@ -94,6 +98,25 @@ public static class ChangeJournalService
         result.Reverse(); // newest first
         return result;
     }
+
+    private const string MacDomain = "change-journal";
+
+    /// <summary>True when the entry's MAC proves this app wrote exactly these undo fields. Undo
+    /// (ChangeJournalViewModel's inverse, RegistryBackupService's restore) calls this right before
+    /// acting - an unverified entry gets JournalIntegrityService.UnverifiedMessage instead.</summary>
+    public static bool Verify(ChangeJournalEntry entry) =>
+        JournalIntegrityService.Verify(MacDomain, entry.Mac, MacFields(entry));
+
+    // Everything an inverse reads (TimestampUtc too - the PID-reuse check compares against it),
+    // plus the text shown beside the Undo button. Undone/UndoneAtUtc are excluded: MarkUndone
+    // flips them in place.
+    private static string?[] MacFields(ChangeJournalEntry e) => new[]
+    {
+        e.Id, e.Kind.ToString(), JournalIntegrityService.Instant(e.TimestampUtc), e.Target, e.ActionDescription,
+        e.BeforeValue, e.AfterValue, e.TriggeredBy, JournalIntegrityService.Flag(e.Success), JournalIntegrityService.Flag(e.IsUndoable),
+        e.ServiceName, e.Pid?.ToString(System.Globalization.CultureInfo.InvariantCulture), e.ProcessName,
+        e.StartupItemName, e.StartupItemCommand, e.StartupItemSource, e.PowerPlanGuidBefore, e.RegistryBackupPath,
+    };
 
     /// <summary>#973: flips Undone/UndoneAtUtc on the matching entry once its inverse operation has
     /// actually run successfully. JSONL has no in-place edit, so this rewrites the whole file - fine

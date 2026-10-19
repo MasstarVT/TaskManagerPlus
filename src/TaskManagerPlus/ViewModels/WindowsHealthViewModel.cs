@@ -495,7 +495,8 @@ public sealed class WindowsHealthViewModel : ObservableObject
         LoadRegistryHealthCommand = new AsyncRelayCommand(LoadRegistryHealthAsync, () => !IsLoadingRegistryHealth);
         EnablePeriodicBackupCommand = new AsyncRelayCommand(EnablePeriodicBackupAsync, () => RegistryBackupStatus?.PeriodicBackupEnabled != true && !ReadOnlyModeService.IsReadOnly);
 
-        UndoRegistryChangeCommand = new RelayCommand(param => _ = UndoRegistryChangeAsync(param as RegistryChangeEntry), param => param is RegistryChangeEntry { Undone: false } && !ReadOnlyModeService.IsReadOnly);
+        // IsVerified: only entries carrying this app's MAC can be undone (the journal is user-writable).
+        UndoRegistryChangeCommand = new RelayCommand(param => _ = UndoRegistryChangeAsync(param as RegistryChangeEntry), param => param is RegistryChangeEntry { Undone: false, IsVerified: true } && !ReadOnlyModeService.IsReadOnly);
         ExportRegistryChangeCommand = new RelayCommand(param => ExportRegistryChange(param as RegistryChangeEntry), param => param is RegistryChangeEntry);
 
         RunPathDoctorCommand = new AsyncRelayCommand(RunPathDoctorAsync, () => !IsRunningPathDoctor);
