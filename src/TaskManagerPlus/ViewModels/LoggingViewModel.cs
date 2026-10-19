@@ -55,9 +55,12 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     private int _rollingCoreCountAtStart;
     private List<(string Identifier, SensorType Type)> _rollingSensorColumnsAtStart = new();
     private int _rollingFlushCountdown;
-    private DateTime _rollingBufferStartedUtc;
-    // How long after the buffer starts its column set may still widen - see WriteRollingBufferRow.
-    private static readonly TimeSpan RollingColumnSettleWindow = TimeSpan.FromMinutes(2);
+    // Rows the buffer has written since it started - its column set may only widen during the
+    // first ~2 minutes' worth of them (see WriteRollingBufferRow). Counted in rows rather than wall
+    // time so a manual session started right after launch (which pauses the buffer) can't use up
+    // the window before the first samples have landed.
+    private int _rollingRowsSinceStart;
+    private const int RollingColumnSettleSeconds = 120;
     // Round 12, #87: routed through AppPaths so portable mode redirects this next to the exe.
     private static string RollingBufferPath => AppPaths.GetPath("Logs", "rolling-buffer.csv");
 
@@ -254,7 +257,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
 
     private void StartRollingBuffer()
     {
-        _rollingBufferStartedUtc = DateTime.UtcNow;
+        _rollingRowsSinceStart = 0;
         SnapshotRollingColumns();
     }
 
@@ -281,7 +284,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
         // which is why this only happens while the buffer is new. Later, a sensor appearing (a
         // power reading leaving 0 or a dGPU waking - i.e. exactly when load starts) would wipe the
         // lead-up the buffer exists to keep, so the columns then stay fixed like a manual session's.
-        if (DateTime.UtcNow - _rollingBufferStartedUtc < RollingColumnSettleWindow &&
+        if (_rollingRowsSinceStart++ < RollingColumnSettleSeconds / Math.Max(1, _loggingSettings.SampleIntervalSeconds) &&
             (_performance.Cores.Count > _rollingCoreCountAtStart ||
              CurrentSensorColumns().Count > _rollingSensorColumnsAtStart.Count))
         {
