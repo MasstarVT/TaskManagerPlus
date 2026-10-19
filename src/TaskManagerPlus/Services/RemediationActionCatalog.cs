@@ -248,7 +248,8 @@ public static class RemediationActionCatalog
             SupportsDeferredQueue = true,
             // No time limit: killing chkdsk /f mid-repair is what Microsoft advises against, and a
             // big volume routinely needs far longer than any fixed ceiling. Only the user's Cancel
-            // stops it, so the non-streaming twin runs the same cancellable path.
+            // stops it, so the non-streaming twin runs the same cancellable path. On a volume in
+            // use chkdsk waits at its dismount prompt until then, which is harmless: nothing has run.
             Execute = ct => RunToolStreamingAsync("chkdsk.exe", $"{drive} /f", _ => { }, ct, timeoutMs: Timeout.Infinite),
             ExecuteStreaming = (ct, onLine) => RunToolStreamingAsync("chkdsk.exe", $"{drive} /f", onLine, ct, timeoutMs: Timeout.Infinite),
             ParseProgressPercent = ParseChkdskProgressPercent,
@@ -451,9 +452,6 @@ public static class RemediationActionCatalog
     {
         var psi = new ProcessStartInfo(exe, args)
         {
-            // No tool here should wait on input: a Y/N prompt (chkdsk on a volume in use) reads
-            // end-of-input instead of blocking forever on the hidden console.
-            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -487,7 +485,6 @@ public static class RemediationActionCatalog
             return RemediationRunResult.Fail($"Couldn't start {exe}: {ex.Message}");
         }
 
-        try { process.StandardInput.Close(); } catch { /* already exited */ }
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
