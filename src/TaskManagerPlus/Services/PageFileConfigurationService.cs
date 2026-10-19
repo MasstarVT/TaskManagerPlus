@@ -59,10 +59,13 @@ public static class PageFileConfigurationService
                         CurrentSizeMb = currentMb,
                         PeakUsageMb = peakMb,
                         IsSystemManaged = systemManaged,
-                        // #431: a fixed (not system-managed) file whose configured maximum is
-                        // smaller than the peak usage Windows itself already recorded - the commit
-                        // limit genuinely couldn't grow past that ceiling at least once.
-                        IsCappedBelowPeakUsage = !systemManaged && setting.MaxMb > 0 && peakMb > setting.MaxMb,
+                        // #431: a fixed (not system-managed) file whose recorded peak usage reached
+                        // its configured maximum - the commit limit couldn't grow past that ceiling
+                        // at least once. PeakUsage is space used inside the file, so it can't pass
+                        // the file's size: a full file reads at (or within rounding of) MaxMb, and
+                        // a peak above MaxMb means the maximum was lowered since this boot (the
+                        // view model words that case separately).
+                        IsCappedBelowPeakUsage = !systemManaged && setting.MaxMb > 0 && peakMb >= setting.MaxMb * 0.98,
                     });
                 }
             }

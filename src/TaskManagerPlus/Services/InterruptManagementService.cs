@@ -137,7 +137,10 @@ public static class InterruptManagementService
                 MessageNumberLimit = messageLimit,
                 IsHighTrafficClass = highTraffic,
                 DevicePolicy = policy,
-                DevicePolicyText = policy is { } p && DevicePolicyNames.TryGetValue(p, out var pn) ? pn : "Machine default",
+                // No value is the machine default; a value outside the documented 0-6 is shown raw.
+                DevicePolicyText = policy is { } p
+                    ? DevicePolicyNames.TryGetValue(p, out var pn) ? pn : $"Policy {p}"
+                    : "Machine default",
                 AssignmentSetOverride = affinityCores,
                 DevicePriority = priority,
                 DevicePriorityText = priority is { } pr && DevicePriorityNames.TryGetValue(pr, out var prn) ? prn : "Unknown",

@@ -298,7 +298,7 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
             new Axis
             {
                 MinLimit = 0,
-                Labeler = v => Formatting.FormatBytes(v),
+                Labeler = v => Formatting.FormatBytesMeasured(v),
                 LabelsPaint = new SolidColorPaint(AxisTextColor),
                 SeparatorsPaint = new SolidColorPaint(AxisSeparatorColor) { StrokeThickness = 1 },
             },
@@ -398,7 +398,9 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
             UnrecoveredResetCount = summary.UnrecoveredResetCount;
             TdrEventCountText = summary.ReadFailed && TdrEvents.Count == 0 ? "Unknown" : TdrEvents.Count.ToString(CultureInfo.CurrentCulture);
             UnrecoveredResetCountText = summary.ReadFailed && UnrecoveredResetCount == 0 ? "Unknown" : UnrecoveredResetCount.ToString(CultureInfo.CurrentCulture);
-            GpuEventHistoryLoaded = true;
+            // ReadFailed is one flag across the TDR, device-removed and bugcheck reads, so any
+            // failure keeps both "none found" lines hidden rather than asserting a clean 30 days.
+            GpuEventHistoryLoaded = !summary.ReadFailed;
 
             DriverVersionBuckets.Clear();
             foreach (var b in buckets) DriverVersionBuckets.Add(b);

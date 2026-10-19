@@ -838,12 +838,18 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
     /// a process whose parent isn't currently running (exited, or genuinely a root like
     /// explorer.exe/services.exe) becomes a root node, the same "orphan" treatment Task Manager's
     /// own Details-tab tree uses. Only run while ShowTree is on, so a user who never opens the
-    /// tree view never pays for building it.</summary>
+    /// tree view never pays for building it.
+    ///
+    /// Nodes persist across ticks (keyed by the row object, which MergeInto keeps for a running
+    /// process and replaces on PID reuse) and every child list is synced in place rather than
+    /// cleared, so the TreeView keeps its containers - and with them the selection and each node's
+    /// expanded state - through a refresh. Rebuilding from scratch dropped both every tick.</summary>
     private void BuildProcessTree()
     {
-        var nodesByPid = Processes.ToDictionary(r => r.Pid, r => new ProcessTreeNode(r));
+        var nodesByPid = Processes.ToDictionary(r => r.Pid, r => _treeNodes.TryGetValue(r, out var existing) ? existing : new ProcessTreeNode(r));
         var roots = new List<ProcessTreeNode>();
         var linkedParent = new Dictionary<ProcessTreeNode, ProcessTreeNode>();
+        var wantedChildren = new Dictionary<ProcessTreeNode, List<ProcessTreeNode>>();
 
         foreach (var node in nodesByPid.Values)
         {
@@ -855,7 +861,9 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
                 !(parentNode.Row.StartTime is { } parentStart && node.Row.StartTime is { } childStart && parentStart > childStart) &&
                 !IsLinkedAncestor(node, parentNode, linkedParent))
             {
-                parentNode.Children.Add(node);
+                if (!wantedChildren.TryGetValue(parentNode, out var siblings))
+                    wantedChildren[parentNode] = siblings = new List<ProcessTreeNode>();
+                siblings.Add(node);
                 linkedParent[node] = parentNode;
             }
             else
@@ -864,9 +872,52 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
             }
         }
 
-        ProcessTree.Clear();
-        foreach (var root in roots.OrderBy(n => n.Row.Name, StringComparer.OrdinalIgnoreCase))
-            ProcessTree.Add(root);
+        _treeNodes.Clear();
+        foreach (var node in nodesByPid.Values) _treeNodes[node.Row] = node;
+
+        // The view ignores the selection moves WPF makes while nodes are removed here (see
+        // ProcessesView.xaml.cs) - they aren't the user's choice.
+        IsSyncingProcessTree = true;
+        try
+        {
+            // PID tiebreak: same-named roots (svchost.exe, ...) keep a stable order, so a tick
+            // doesn't shuffle them.
+            SyncInPlace(ProcessTree, roots
+                .OrderBy(n => n.Row.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(n => n.Row.Pid)
+                .ToList());
+            foreach (var node in nodesByPid.Values)
+                SyncInPlace(node.Children, wantedChildren.TryGetValue(node, out var kids) ? kids : new List<ProcessTreeNode>());
+        }
+        finally
+        {
+            IsSyncingProcessTree = false;
+        }
+    }
+
+    // The tree's nodes from the last build, by row object - see BuildProcessTree's remarks.
+    private readonly Dictionary<ProcessRow, ProcessTreeNode> _treeNodes = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>True only while BuildProcessTree is updating the tree's collections.</summary>
+    public bool IsSyncingProcessTree { get; private set; }
+
+    /// <summary>Makes <paramref name="target"/> equal <paramref name="wanted"/> (same nodes, same
+    /// order) with removes, moves and inserts only, so nodes that stay keep their containers.</summary>
+    private static void SyncInPlace(ObservableCollection<ProcessTreeNode> target, List<ProcessTreeNode> wanted)
+    {
+        var keep = new HashSet<ProcessTreeNode>(wanted);
+        for (int i = target.Count - 1; i >= 0; i--)
+        {
+            if (!keep.Contains(target[i])) target.RemoveAt(i);
+        }
+
+        for (int i = 0; i < wanted.Count; i++)
+        {
+            if (i < target.Count && ReferenceEquals(target[i], wanted[i])) continue;
+            int existing = target.IndexOf(wanted[i]);
+            if (existing >= 0) target.Move(existing, i);
+            else target.Insert(i, wanted[i]);
+        }
     }
 
     /// <summary>True when <paramref name="node"/> is <paramref name="candidateParent"/> or one of

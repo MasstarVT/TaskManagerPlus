@@ -106,6 +106,8 @@ public static class ProcessEnvironmentDriftService
         bool hasDrift = details.Count > 0;
         string detail = hasDrift
             ? string.Join(" ", details)
+            : procTemp is null
+            ? "Has every folder in the current machine+user PATH (it has no TEMP/TMP variable to compare)."
             : "Has every folder in the current machine+user PATH, and the current TEMP.";
 
         return new ProcessEnvironmentDrift { Pid = pid, ProcessName = processName, HasDrift = hasDrift, Detail = detail };
@@ -149,6 +151,10 @@ public static class ProcessEnvironmentDriftService
     {
         var have = PathEntries(processPath).Select(Normalize).ToHashSet();
         return PathEntries(effectivePath)
+            // The effective PATH is expanded against this app's own startup environment, so an
+            // entry naming a variable defined after the app started (%JAVA_HOME%\bin) stays
+            // literal - no process has that folder, so it would read as "missing" everywhere.
+            .Where(e => !e.Contains('%'))
             .Where(e => !have.Contains(Normalize(e)))
             .DistinctBy(Normalize)
             .ToList();

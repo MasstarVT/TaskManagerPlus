@@ -42,19 +42,23 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
     private volatile bool _manualStopRequested;
     private CpuTortureResult? _cpuResult;
     private MemoryVerifyResult? _memoryResult;
+    private string? _diskLoadSkipReason; // a combined soak's disk leg that couldn't start
 
     private StressTestType _selectedTestType = StressTestType.CpuTorture;
     public StressTestType SelectedTestType { get => _selectedTestType; set => SetProperty(ref _selectedTestType, value); }
 
     // The getters clamp too: stress-test.json is user-editable, and an out-of-range thread count or
     // share loaded from it would otherwise reach the workload unchecked.
+    // A value that clamps to the one already stored still raises PropertyChanged: WPF only
+    // re-reads the source after a TextBox update when it does, so without it the box would keep
+    // showing the out-of-range text while the run uses the clamped value.
     public int DurationSeconds
     {
         get => Math.Clamp(_settings.DefaultDurationSeconds, 10, 3600);
         set
         {
             value = Math.Clamp(value, 10, 3600);
-            if (_settings.DefaultDurationSeconds == value) return;
+            if (_settings.DefaultDurationSeconds == value) { OnPropertyChanged(); return; }
             _settings.DefaultDurationSeconds = value;
             StressTestSettingsService.Save(_settings);
             OnPropertyChanged();
@@ -67,7 +71,7 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         set
         {
             value = Math.Clamp(value, 1, Environment.ProcessorCount * 2);
-            if (_settings.CpuThreadCount == value) return;
+            if (_settings.CpuThreadCount == value) { OnPropertyChanged(); return; }
             _settings.CpuThreadCount = value;
             StressTestSettingsService.Save(_settings);
             OnPropertyChanged();
@@ -80,7 +84,7 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         set
         {
             value = double.IsFinite(value) ? Math.Clamp(value, 5, 70) : 25.0;
-            if (Math.Abs(_settings.MemoryTestShareOfFreePercent - value) < 0.01) return;
+            if (Math.Abs(_settings.MemoryTestShareOfFreePercent - value) < 0.01) { OnPropertyChanged(); return; }
             _settings.MemoryTestShareOfFreePercent = value;
             StressTestSettingsService.Save(_settings);
             OnPropertyChanged();
@@ -88,7 +92,7 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>#699: the abort-trigger temperature. 0 shown as "auto" - see
-    /// ResolveEffectiveTempCeiling's remarks for how the real default is derived each run.
+    /// DescribeEffectiveTempCeiling's remarks for how the real default is derived each run.
     /// Setting this to a positive value overrides the auto default from then on (capped at
     /// MaxTempCeilingC).</summary>
     public double TempCeilingC
@@ -98,7 +102,7 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         set
         {
             value = double.IsFinite(value) ? Math.Clamp(value, 0, MaxTempCeilingC) : 0;
-            if (Math.Abs(_settings.TempCeilingC - value) < 0.01) return;
+            if (Math.Abs(_settings.TempCeilingC - value) < 0.01) { OnPropertyChanged(); return; }
             _settings.TempCeilingC = value;
             StressTestSettingsService.Save(_settings);
             OnPropertyChanged();
@@ -213,6 +217,7 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
 
         _cpuResult = null;
         _memoryResult = null;
+        _diskLoadSkipReason = null;
         _manualStopRequested = false;
         IsRunning = true;
 
@@ -258,6 +263,10 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         _cts = cts;
         var ct = cts.Token;
 
+        // The CPU tab's clock-stretch benchmark pins this whole process to one core; it must not
+        // run under (and squeeze) the workloads and the safety supervisor below.
+        ClockStretchService.BeginSuppress();
+
         // Round 18, #1021: everything from here on runs under try/finally - a fault anywhere
         // (most plausibly the supervisor itself) must still cancel the workloads and reset
         // IsRunning/_cts, or the GPU render loop keeps running with the temperature-ceiling
@@ -289,7 +298,11 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
                         var reason = safety.CheckSample(cpuTemp, gpuTemp);
                         if (reason is not null) { abortReason = reason; break; }
 
-                        if (Stopwatch.GetElapsedTime(runStartTimestamp) >= requestedDuration) break; // natural completion (#1053: monotonic)
+                        // Memory verify is a fixed set of passes, not a timed load: cutting it at the
+                        // duration made the test return incomplete, which read as a computation
+                        // FAIL. It ends on its own (or on Stop/abort); this loop keeps guarding it.
+                        if (type != StressTestType.MemoryVerify &&
+                            Stopwatch.GetElapsedTime(runStartTimestamp) >= requestedDuration) break; // natural completion (#1053: monotonic)
 
                         if (ct.WaitHandle.WaitOne(SampleInterval)) break; // cancelled
                     }
@@ -347,6 +360,7 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         finally
         {
             try { cts.Cancel(); } catch { /* already cancelled/disposed */ }
+            ClockStretchService.EndSuppress();
             _cts = null;
             _runTempCeilingText = null;
             OnPropertyChanged(nameof(EffectiveTempCeilingText));
@@ -384,6 +398,8 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
             var cpuTask = RunCpuTortureAsync(duration, ct);
             var diskTask = DiskLoadTestService.RunAsync(ct);
             await Task.WhenAll(cpuTask, diskTask);
+            // The soak still ran CPU+GPU; the verdict line says the disk leg was missing.
+            _diskLoadSkipReason = await diskTask;
         }
         finally
         {
@@ -603,7 +619,8 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
             ? "Run PASSED."
             : abortReason is not null
                 ? $"Run ABORTED: {abortReason}."
-                : "Run FAILED - see the criteria breakdown below.") + noTempNote;
+                : "Run FAILED - see the criteria breakdown below.") + noTempNote
+            + (_diskLoadSkipReason is { } diskNote ? " " + diskNote : string.Empty);
     }
 
     private static int SafeCount(Func<int> read)

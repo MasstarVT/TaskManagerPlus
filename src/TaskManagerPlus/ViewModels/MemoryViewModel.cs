@@ -794,12 +794,14 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
         ReconciledProcessPrivateWsGb = processPrivateWsGb;
         ReconciledKernelPoolsGb = Performance.PoolNonpagedGb + Performance.PoolPagedGb;
 
+        // Hardware-reserved memory is not subtracted: RamTotalGb is GlobalMemoryStatusEx's
+        // OS-visible total, and the reserved figure is installed RAM minus that same total, so it
+        // was never part of what is being reconciled here. The view shows it as a separate line.
         double accounted = processPrivateWsGb
             + Performance.StandbyGb
             + Performance.ModifiedGb
             + ReconciledKernelPoolsGb
-            + Performance.SystemDriverResidentGb
-            + Performance.HardwareReservedGb;
+            + Performance.SystemDriverResidentGb;
         ReconciledAccountedGb = accounted;
 
         double remainder = Performance.RamTotalGb - accounted;
@@ -921,7 +923,7 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>#431: "quick flag, not a verdict" page file sizing advisories - a fixed page file
-    /// capped below its own recorded peak usage (the commit limit genuinely couldn't grow past
+    /// whose recorded peak usage reached its cap (the commit limit genuinely couldn't grow past
     /// that ceiling at least once), or no page file at all on a machine whose peak committed
     /// memory this session already exceeded installed RAM (the commit limit is capped at physical
     /// RAM without one). Recomputed whenever either input changes - PageFileConfigs (on load) or
@@ -935,7 +937,12 @@ public sealed class MemoryViewModel : ObservableObject, IDisposable
 
         foreach (var f in PageFileConfigs.Where(f => f.IsCappedBelowPeakUsage))
         {
-            advisories.Add($"{f.Volume} page file: fixed maximum ({f.MaximumSizeMb:N0} MB) is smaller than its recorded peak usage ({f.PeakUsageMb:N0} MB) - the commit limit couldn't grow past that cap when it mattered most.");
+            // Peak usage can't exceed the file's own size, so a peak above the maximum means the
+            // maximum was lowered after this boot's file grew - a cap that only applies from the
+            // next restart, not one that was hit.
+            advisories.Add(f.PeakUsageMb > f.MaximumSizeMb
+                ? $"{f.Volume} page file: the fixed maximum ({f.MaximumSizeMb:N0} MB) is now below this boot's recorded peak usage ({f.PeakUsageMb:N0} MB) - it takes effect after a restart, and from then on the commit limit won't be able to grow that far."
+                : $"{f.Volume} page file: recorded peak usage ({f.PeakUsageMb:N0} MB) reached its fixed maximum ({f.MaximumSizeMb:N0} MB) - the commit limit couldn't grow past that cap when it mattered most.");
         }
 
         if (_pageFileReadOk && PageFileConfigs.Count == 0 && PeakCommittedGb > 0 && Performance.RamTotalGb > 0 && PeakCommittedGb > Performance.RamTotalGb)

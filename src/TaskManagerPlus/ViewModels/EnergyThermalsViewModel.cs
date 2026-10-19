@@ -519,9 +519,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     // remarks for why this lives here rather than on SensorMonitorService.
     private readonly Dictionary<string, (float Min, float Max)> _temperatureBaseline = new();
 
-    // #41: "dead fan" - a fan reading exactly 0 RPM while some temperature reading is clearly
-    // under load, which a genuinely idle/passive fan wouldn't be paired with.
+    // #613's sub-minimum-dwell check: "clearly under load" for a fan near (not at) 0 RPM.
     private const float DeadFanTempThresholdC = 55f;
+
+    // #41: "dead fan" - a fan reading exactly 0 RPM while the device it cools is clearly under
+    // load. Above the zero-RPM band GPUs use (fans stopped into the 50s-60s) and above an idle
+    // Zen 4/5 Tctl, which also sits in the 50s.
+    private const double DeadFanDeviceTempThresholdC = 70.0;
 
     private bool _deadFanDetected;
     public bool DeadFanDetected { get => _deadFanDetected; private set => SetProperty(ref _deadFanDetected, value); }
@@ -2061,13 +2065,6 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // sensor collection and BatteryDrainRateW/BatteryIsCharging above.
         await RefreshBatteryReportLiveStateAsync();
 
-        // #41: a fan pinned at 0 RPM while some temperature reading is clearly under load is a
-        // real "this fan stopped spinning" signal, not a normal idle/passive-cooling reading.
-        bool anyHot = tempReadings.Any(r => r.Value is float t && t >= DeadFanTempThresholdC);
-        var deadFan = anyHot ? fanReadings.FirstOrDefault(r => r.Value is 0f) : null;
-        DeadFanDetected = deadFan is not null;
-        DeadFanName = deadFan is null ? string.Empty : $"{deadFan.HardwareName} {deadFan.SensorName}";
-
         // Sensor names aren't standardized across CPU vendors (Intel: "CPU Package"; AMD:
         // "Core (Tctl/Tdie)"; varies further by model), so try a few known hints in order
         // rather than one brittle exact-string lookup.
@@ -2116,6 +2113,24 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             .GroupBy(HardwareKeyOf)
             .Select(g => FindByNameContains(g, "GPU Core", "Edge", "Core"))
             .Max();
+
+        // #41: a fan pinned at 0 RPM while the device it cools is clearly under load is a real
+        // "this fan stopped spinning" signal, not a normal idle/passive-cooling reading. Each 0 RPM
+        // fan is judged against its own device - a GPU fan against that GPU's core reading (same
+        // HardwareKeyOf group), any other fan against the CPU package - since zero-RPM GPU modes
+        // and board fan-stop modes legitimately hold fans at 0 while an unrelated sensor (an NVMe
+        // drive, a GDDR6X junction, an idling Zen Tctl) sits in the 50s.
+        SensorReading? deadFan = null;
+        foreach (var fan in fanReadings)
+        {
+            if (fan.Value is not 0f) continue;
+            double? deviceTempC = IsGpu(fan.HardwareType)
+                ? FindByNameContains(gpuTemps.Where(t => HardwareKeyOf(t) == HardwareKeyOf(fan)), "GPU Core", "Edge", "Core")
+                : CpuPackageTempC;
+            if (deviceTempC >= DeadFanDeviceTempThresholdC) { deadFan = fan; break; }
+        }
+        DeadFanDetected = deadFan is not null;
+        DeadFanName = deadFan is null ? string.Empty : $"{deadFan.HardwareName} {deadFan.SensorName}";
 
         // #614/#615/#616: session-max/historical-max tracking, per-fan OK/Slow/Stopped/Not-
         // reporting status, and pump-channel tagging - see EnrichFanReadings' remarks. Computed

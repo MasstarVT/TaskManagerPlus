@@ -26,7 +26,8 @@ public static class MmcssService
 
     public static MmcssAuditInfo Read()
     {
-        bool running = false;
+        // Null until the status is actually read - a failed query is not "not running".
+        bool? running = null;
         string serviceStatusText = "Unknown (service not found)";
         try
         {
@@ -59,14 +60,17 @@ public static class MmcssService
 
         return new MmcssAuditInfo
         {
-            ServiceRunning = running,
+            ServiceRunning = running == true,
             ServiceStatusText = serviceStatusText,
             SystemResponsiveness = systemResponsiveness,
             NetworkThrottlingIndex = networkThrottlingIndex,
             TaskProfiles = profiles,
-            StatusText = running
-                ? "MMCSS is running — multimedia scheduling boosts (GPU/CPU/SFIO priority bumps for registered tasks) are available."
-                : "MMCSS is not running — multimedia scheduling boosts won't apply, which can present as audio glitches/dropped frames under load.",
+            StatusText = running switch
+            {
+                true => "MMCSS is running — multimedia scheduling boosts (GPU/CPU/SFIO priority bumps for registered tasks) are available.",
+                false => "MMCSS is not running — multimedia scheduling boosts won't apply, which can present as audio glitches/dropped frames under load.",
+                null => "Couldn't read the MMCSS service state, so whether multimedia scheduling boosts apply is unknown.",
+            },
         };
     }
 

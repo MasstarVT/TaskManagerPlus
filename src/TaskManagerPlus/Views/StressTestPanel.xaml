@@ -58,7 +58,8 @@
                 <UniformGrid Columns="4" Margin="0,0,0,12">
                     <StackPanel Margin="0,0,6,0">
                         <TextBlock Text="Duration (s)" Style="{StaticResource SubStat}" Margin="0,0,0,4" />
-                        <TextBox Text="{Binding DurationSeconds, UpdateSourceTrigger=LostFocus}" Padding="6,4" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}" />
+                        <TextBox Text="{Binding DurationSeconds, UpdateSourceTrigger=LostFocus}" Padding="6,4" IsEnabled="{Binding IsRunning, Converter={StaticResource InverseBoolConverter}}"
+                                 ToolTip="Applies to CPU torture, GPU load and combined soak. Memory verify always runs its three patterns to the end (Stop and the safety abort still apply)." />
                     </StackPanel>
                     <StackPanel Margin="3,0,3,0">
                         <TextBlock Text="CPU threads" Style="{StaticResource SubStat}" Margin="0,0,0,4" />

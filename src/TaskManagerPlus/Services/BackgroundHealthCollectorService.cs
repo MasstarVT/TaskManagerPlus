@@ -166,24 +166,19 @@ public sealed class BackgroundHealthCollectorService : IDisposable
                 TopProcessName = topProcess?.Name,
             };
 
-            double cpuMs = 0;
-            if (haveCpuBefore)
-            {
-                try { cpuMs = (Process.GetCurrentProcess().TotalProcessorTime - cpuBefore).TotalMilliseconds; }
-                catch { /* best-effort */ }
-            }
-            wall.Stop();
-            double wallMs = wall.Elapsed.TotalMilliseconds;
-            int logicalProcessors = Math.Max(1, Environment.ProcessorCount);
-            double cpuPercentEstimate = wallMs > 0 ? Math.Clamp(cpuMs / wallMs / logicalProcessors * 100.0, 0, 100) : 0;
-
+            // The row can only carry the cost up to the moment it is written...
+            var (wallMs, cpuPercentEstimate) = MeasureSoFar(wall, haveCpuBefore, cpuBefore);
             row.CollectorDurationMs = wallMs;
             row.CollectorCpuPercentEstimate = cpuPercentEstimate;
 
             BackgroundHealthStoreService.AppendRow(row, _settings.BudgetMb);
 
-            RecordCost(cpuPercentEstimate, wallMs);
-            MaybeBackoff(wallMs);
+            // ...but the panel's figures and the backoff decision include the append itself and any
+            // gzip roll + prune it triggered - the only non-trivial I/O in a cycle, on the UI thread.
+            wall.Stop();
+            var (fullWallMs, fullCpuPercentEstimate) = MeasureSoFar(wall, haveCpuBefore, cpuBefore);
+            RecordCost(fullCpuPercentEstimate, fullWallMs);
+            MaybeBackoff(fullWallMs);
         }
         catch
         {
@@ -195,6 +190,22 @@ public sealed class BackgroundHealthCollectorService : IDisposable
         {
             Ticked?.Invoke();
         }
+    }
+
+    /// <summary>Elapsed wall time since the cycle started, and this process's CPU use over it as a
+    /// share of all logical processors (0 when the starting CPU time couldn't be read).</summary>
+    private static (double WallMs, double CpuPercentEstimate) MeasureSoFar(Stopwatch wall, bool haveCpuBefore, TimeSpan cpuBefore)
+    {
+        double cpuMs = 0;
+        if (haveCpuBefore)
+        {
+            try { cpuMs = (Process.GetCurrentProcess().TotalProcessorTime - cpuBefore).TotalMilliseconds; }
+            catch { /* best-effort */ }
+        }
+        double wallMs = wall.Elapsed.TotalMilliseconds;
+        int logicalProcessors = Math.Max(1, Environment.ProcessorCount);
+        double cpuPercentEstimate = wallMs > 0 ? Math.Clamp(cpuMs / wallMs / logicalProcessors * 100.0, 0, 100) : 0;
+        return (wallMs, cpuPercentEstimate);
     }
 
     private void RecordCost(double cpuPercentEstimate, double durationMs)

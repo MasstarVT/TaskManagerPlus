@@ -17,9 +17,23 @@ namespace TaskManagerPlus.Services;
 /// CpuViewModel only calls this from a slow, infrequent timer - never per-tick - and (Round 18,
 /// #1079) only while the CPU tab is actually on screen, so a session that never opens that tab
 /// never has the whole app pinned to core 0 at all.
+///
+/// It is also suppressed while this app's own stress test runs: pinning the process would squeeze
+/// every torture worker and the stress test's safety supervisor onto core 0, and a benchmark
+/// competing with an all-core load reads far below the session best - a false clock-stretch flag.
 /// </summary>
 public static class ClockStretchService
 {
+    private static int _suppressCount;
+
+    /// <summary>Called by the stress test around a run; while any run is active the benchmark
+    /// doesn't run and reports no reading.</summary>
+    public static void BeginSuppress() => Interlocked.Increment(ref _suppressCount);
+
+    public static void EndSuppress() => Interlocked.Decrement(ref _suppressCount);
+
+    private static bool IsSuppressed => Volatile.Read(ref _suppressCount) > 0;
+
     // Fixed, deterministic iteration count so every run does exactly the same amount of integer
     // work - only wall-clock time (and therefore ops/sec) varies between runs. Chosen to land
     // comfortably under a second on any CPU this app targets.
@@ -27,9 +41,12 @@ public static class ClockStretchService
 
     /// <summary>Runs the fixed workload, best-effort pinned to logical core 0 for the duration,
     /// and always restores the process's prior affinity afterward. Returns null if the workload
-    /// couldn't be timed at all (never a fabricated number).</summary>
+    /// couldn't be timed at all, or while a stress test is (or became) active (never a fabricated
+    /// number).</summary>
     public static double? RunMicrobenchmarkOpsPerSecond()
     {
+        if (IsSuppressed) return null;
+
         IntPtr originalAffinity;
         try
         {
@@ -54,6 +71,9 @@ public static class ClockStretchService
             // Forces the loop above to be observable (defeats dead-code elimination) without any
             // real side effect - this condition is never true in practice.
             if (checksum == long.MinValue) return null;
+
+            // A stress test that started mid-benchmark loaded the CPU under it - not a reading.
+            if (IsSuppressed) return null;
 
             double seconds = sw.Elapsed.TotalSeconds;
             return seconds > 0 ? IterationCount / seconds : null;
