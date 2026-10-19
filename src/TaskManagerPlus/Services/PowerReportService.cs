@@ -262,7 +262,7 @@ public static class PowerReportService
 
         try
         {
-            var psi = new ProcessStartInfo("powercfg.exe", args)
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("powercfg.exe"), args)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

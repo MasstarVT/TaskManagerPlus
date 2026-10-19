@@ -41,7 +41,7 @@ if (-not $exePath) {
 
 $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
     Where-Object { $_.Subject -eq 'CN=Task Manager Plus (Dev Build)' } |
-    Sort-Object NotAfter -Descending |
+    Sort-Object NotBefore -Descending |
     Select-Object -First 1
 
 if (-not $cert) {

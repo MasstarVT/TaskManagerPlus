@@ -117,7 +117,7 @@ public static class PageFaultTraceService
     {
         try
         {
-            var psi = new ProcessStartInfo("logman.exe", arguments)
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("logman.exe"), arguments)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

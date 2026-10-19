@@ -147,7 +147,7 @@ public static class ShareAuditService
         var entries = new List<ShareAccessEntry>();
         try
         {
-            string escaped = shareName.Replace("'", "''");
+            string escaped = ToolRunner.EscapePowerShellSingleQuoted(shareName);
             var (output, exitCode) = RunCapturedSync("powershell.exe",
                 $"-NoProfile -Command \"Get-SmbShareAccess -Name '{escaped}' | Select-Object AccountName,AccessControlType,AccessRight | ConvertTo-Csv -NoTypeInformation\"",
                 TimeSpan.FromSeconds(15));

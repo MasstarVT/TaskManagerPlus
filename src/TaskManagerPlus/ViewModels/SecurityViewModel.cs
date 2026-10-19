@@ -588,7 +588,7 @@ public sealed class SecurityViewModel : ObservableObject
     private void RunFolderScan()
     {
         var dialog = new OpenFolderDialog { Title = "Choose a folder for Windows Defender to scan" };
-        if (dialog.ShowDialog() != true) return;
+        if (dialog.ShowDialogKeepingCurrentDirectory() != true) return;
         RunScan(DefenderService.DefenderScanType.Custom, dialog.FolderName);
     }
 
@@ -734,6 +734,7 @@ public sealed class SecurityViewModel : ObservableObject
     {
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Export security posture report",
             Filter = "Markdown files (*.md)|*.md|HTML files (*.html)|*.html|CSV files (*.csv)|*.csv|All files (*.*)|*.*",
             DefaultExt = ".md",

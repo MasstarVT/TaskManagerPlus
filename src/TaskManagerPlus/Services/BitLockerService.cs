@@ -313,7 +313,7 @@ public static class BitLockerService
     {
         try
         {
-            var psi = new ProcessStartInfo("manage-bde.exe", $"-status {driveLetter}")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("manage-bde.exe"), $"-status {driveLetter}")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

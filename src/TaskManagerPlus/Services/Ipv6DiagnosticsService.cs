@@ -169,7 +169,7 @@ public static class Ipv6DiagnosticsService
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", arguments)
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("netsh.exe"), arguments)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

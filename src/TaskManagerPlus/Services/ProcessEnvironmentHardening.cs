@@ -18,6 +18,10 @@ namespace TaskManagerPlus.Services;
 ///   .NET child (powershell.exe is one).
 /// - ProgramFiles*, CommonProgramFiles*, SystemRoot, windir, ComSpec, PATHEXT, ProgramData: reset
 ///   to the machine's own values, so a "%ProgramFiles%" expansion can't point into a user folder.
+/// - NoDefaultCurrentDirectoryInExePath is SET, not stripped: CreateProcess otherwise looks for a
+///   bare "netsh.exe" in this process's current directory before System32, and that directory is
+///   user-writable whenever the app was started from one or a file dialog moved it there. Covers
+///   every launch site, including any that skip <see cref="ToolRunner.ResolveTool"/>, and children.
 /// The user's original TEMP is kept in <see cref="UserTempPath"/> for the code that measures or
 /// flags it (reclaimable space, "runs from Temp" heuristics). Unelevated runs (the asInvoker test
 /// build) still get everything except the TEMP move, which needs an admin-only folder.
@@ -51,6 +55,7 @@ public static class ProcessEnvironmentHardening
         Set("SystemRoot", windows);
         Set("windir", windows);
         Set("ComSpec", Path.Combine(system32, "cmd.exe"));
+        Set("NoDefaultCurrentDirectoryInExePath", "1");
         Set("SystemDrive", (Path.GetPathRoot(system32) ?? "C:").TrimEnd('\\'));
         Set("ProgramFiles", programFiles);
         Set("ProgramW6432", programFiles);

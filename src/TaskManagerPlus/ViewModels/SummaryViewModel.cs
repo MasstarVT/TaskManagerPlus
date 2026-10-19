@@ -659,6 +659,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     {
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Generate diagnostic report",
             Filter = "Markdown files (*.md)|*.md|All files (*.*)|*.*",
             DefaultExt = ".md",
@@ -794,6 +795,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     {
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Generate HTML diagnostic report",
             Filter = "HTML files (*.html)|*.html|All files (*.*)|*.*",
             DefaultExt = ".html",
@@ -1032,6 +1034,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Save system snapshot",
             Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*",
             DefaultExt = ".json",
@@ -1088,6 +1091,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     {
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Compare against a saved snapshot",
             Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*",
             InitialDirectory = AppPaths.GetPath("Snapshots"),
@@ -1194,6 +1198,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     {
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = isA ? "Load snapshot A" : "Load snapshot B",
             Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*",
             InitialDirectory = AppPaths.GetPath("Snapshots"),

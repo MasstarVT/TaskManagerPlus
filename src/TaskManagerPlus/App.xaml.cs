@@ -87,7 +87,7 @@ public partial class App : Application
             {
                 try
                 {
-                    CliDumpService.ThrowIfRedirectedWhileSystem(outputPath + ".error.txt");
+                    CliDumpService.ThrowIfUnsafeOutput(outputPath + ".error.txt", ".error.txt");
                     File.WriteAllText(outputPath + ".error.txt", ex.ToString());
                 }
                 catch { /* best-effort - nothing more useful to do from a CLI path */ }
@@ -119,7 +119,7 @@ public partial class App : Application
             {
                 try
                 {
-                    CliDumpService.ThrowIfRedirectedWhileSystem(outputPath + ".error.txt");
+                    CliDumpService.ThrowIfUnsafeOutput(outputPath + ".error.txt", ".error.txt");
                     File.WriteAllText(outputPath + ".error.txt", ex.ToString());
                 }
                 catch { /* best-effort - nothing more useful to do from a CLI path */ }
@@ -142,7 +142,7 @@ public partial class App : Application
             {
                 try
                 {
-                    CliDumpService.ThrowIfRedirectedWhileSystem(outputPath + ".error.txt");
+                    CliDumpService.ThrowIfUnsafeOutput(outputPath + ".error.txt", ".error.txt");
                     File.WriteAllText(outputPath + ".error.txt", ex.ToString());
                 }
                 catch { /* best-effort - nothing more useful to do from a CLI path */ }

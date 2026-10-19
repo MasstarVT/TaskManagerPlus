@@ -89,7 +89,7 @@ public static class BadSectorService
         try
         {
             // fsutil needs the colon: a bare "C" fails with Error 123.
-            var psi = new ProcessStartInfo("fsutil.exe", $"volume allocationreport {driveLetter.TrimEnd(':', '\\')}:")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("fsutil.exe"), $"volume allocationreport {driveLetter.TrimEnd(':', '\\')}:")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

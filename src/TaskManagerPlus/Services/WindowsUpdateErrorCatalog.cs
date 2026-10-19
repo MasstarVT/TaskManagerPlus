@@ -83,7 +83,7 @@ public static class WindowsUpdateErrorCatalog
     {
         try
         {
-            var psi = new ProcessStartInfo("certutil.exe", $"-error {normalizedHex}")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("certutil.exe"), $"-error {normalizedHex}")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

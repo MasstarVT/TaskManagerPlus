@@ -126,7 +126,7 @@ public static class VolumeDiagnosticsService
 
         try
         {
-            var psi = new ProcessStartInfo("fsutil.exe", $"behavior query DisableDeleteNotify {fs}")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("fsutil.exe"), $"behavior query DisableDeleteNotify {fs}")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

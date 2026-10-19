@@ -4544,6 +4544,7 @@ public sealed class NetworkViewModel : ObservableObject, IDisposable
 
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = html ? "Generate HTML network diagnostic report" : "Generate network diagnostic report",
             Filter = html ? "HTML files (*.html)|*.html|All files (*.*)|*.*" : "Markdown files (*.md)|*.md|All files (*.*)|*.*",
             DefaultExt = html ? ".html" : ".md",

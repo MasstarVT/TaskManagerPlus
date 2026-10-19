@@ -713,7 +713,16 @@ per file:
 - **Elevation**: the whole app runs elevated (`app.manifest` →
   `requireAdministrator`) rather than elevating per-action, so ending other
   users' processes and controlling services just work without extra
-  prompts.
+  prompts. The flip side: anything an unelevated same-user process can
+  write (current directory, shortcuts, `%AppData%`, HKCU) must not steer it.
+  Every bare tool name goes through `ToolRunner.ResolveTool` (System32-
+  pinned; `ProcessEnvironmentHardening` also sets
+  `NoDefaultCurrentDirectoryInExePath` as a backstop); Save/Open dialogs set
+  `RestoreDirectory = true` and `OpenFolderDialog` uses
+  `ShowDialogKeepingCurrentDirectory()`, so a picked user folder never
+  becomes the working directory; CLI output paths go through
+  `CliDumpService.ThrowIfUnsafeOutput`; values inside PowerShell `'...'` use
+  `ToolRunner.EscapePowerShellSingleQuoted`.
 
 - **`EnableUnsafeBinaryFormatterSerialization` is explicitly off.**
   `UseWindowsForms` (present only for the tray icon's `NotifyIcon`) turns it

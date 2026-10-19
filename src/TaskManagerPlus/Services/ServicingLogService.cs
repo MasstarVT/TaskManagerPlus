@@ -563,8 +563,8 @@ public static class ServicingLogService
             DateTime startedUtc = DateTime.UtcNow;
             try { if (File.Exists(outPath)) File.Delete(outPath); } catch { /* falls back to the timestamp check below */ }
 
-            string escapedPath = outPath.Replace("'", "''");
-            string escapedWork = workDir.FullName.Replace("'", "''");
+            string escapedPath = ToolRunner.EscapePowerShellSingleQuoted(outPath);
+            string escapedWork = ToolRunner.EscapePowerShellSingleQuoted(workDir.FullName);
             string psCommand = $"$env:TEMP='{escapedWork}'; $env:TMP='{escapedWork}'; Get-WindowsUpdateLog -LogPath '{escapedPath}'";
             var (output, exitCode) = await RunCapturedAsync("powershell.exe", $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{psCommand}\"", 180_000, ct);
 

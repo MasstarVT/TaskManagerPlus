@@ -175,7 +175,7 @@ public static class MinifilterAuditService
     {
         try
         {
-            var psi = new ProcessStartInfo("fltmc.exe", args)
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("fltmc.exe"), args)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

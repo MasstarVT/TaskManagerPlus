@@ -50,7 +50,7 @@ public static class TcpGlobalSettingsService
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh.exe", "int tcp show global")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("netsh.exe"), "int tcp show global")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

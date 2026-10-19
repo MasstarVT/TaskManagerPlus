@@ -589,6 +589,7 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
 
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Export before/after change report",
             Filter = "Markdown files (*.md)|*.md|HTML files (*.html)|*.html|All files (*.*)|*.*",
             DefaultExt = ".md",
@@ -786,6 +787,7 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
     {
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Import a reference profile (an exported baseline .json)",
             Filter = "Baseline files (*.json)|*.json|All files (*.*)|*.*",
         };

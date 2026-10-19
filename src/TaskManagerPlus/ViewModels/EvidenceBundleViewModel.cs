@@ -151,6 +151,7 @@ public sealed class EvidenceBundleViewModel : ObservableObject, IDisposable
 
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Save evidence bundle",
             Filter = "ZIP archive (*.zip)|*.zip|All files (*.*)|*.*",
             DefaultExt = ".zip",

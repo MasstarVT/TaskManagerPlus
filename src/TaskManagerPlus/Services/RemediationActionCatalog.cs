@@ -450,7 +450,7 @@ public static class RemediationActionCatalog
     /// </summary>
     private static async Task<RemediationRunResult> RunToolStreamingAsync(string exe, string args, Action<string> onLine, CancellationToken ct, int timeoutMs)
     {
-        var psi = new ProcessStartInfo(exe, args)
+        var psi = new ProcessStartInfo(ToolRunner.ResolveTool(exe), args)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

@@ -386,6 +386,7 @@ public sealed class TimelineViewModel : ObservableObject
     {
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Export timeline range",
             Filter = "Markdown files (*.md)|*.md|CSV files (*.csv)|*.csv|All files (*.*)|*.*",
             DefaultExt = ".md",

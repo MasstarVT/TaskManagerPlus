@@ -144,7 +144,7 @@ public static class ClusterMappingService
             if (volumeByteOffset < 0 || volumeByteOffset >= partition.Size) return "Not resolved";
             long clusterNumber = volumeByteOffset / Math.Max(partition.BytesPerCluster, 1);
             string driveLetter = partition.DriveLetter;
-            var psi = new ProcessStartInfo("fsutil.exe", $"volume querycluster {driveLetter}: {clusterNumber}")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("fsutil.exe"), $"volume querycluster {driveLetter}: {clusterNumber}")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

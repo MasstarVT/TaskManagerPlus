@@ -332,6 +332,7 @@ public sealed class ThemeViewModel : ObservableObject
     {
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Export color palette",
             Filter = "Palette files (*.tmpalette.json)|*.tmpalette.json|All files (*.*)|*.*",
             DefaultExt = ".tmpalette.json",
@@ -361,6 +362,7 @@ public sealed class ThemeViewModel : ObservableObject
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Import color palette",
             Filter = "Palette files (*.tmpalette.json;*.json)|*.tmpalette.json;*.json|All files (*.*)|*.*",
         };

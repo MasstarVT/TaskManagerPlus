@@ -1221,6 +1221,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     {
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Export events with no knowledge-base entry",
             Filter = "CSV (*.csv)|*.csv|Text (*.txt)|*.txt|All files (*.*)|*.*",
             FileName = "unknown-events.csv",
@@ -1430,6 +1431,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
 
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Export as Event Viewer custom view",
             Filter = "Custom View XML (*.xml)|*.xml|All files (*.*)|*.*",
             FileName = $"{filter.Name}.xml",
@@ -1454,6 +1456,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     {
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Open an event log file",
             Filter = "Windows Event Log (*.evtx)|*.evtx|All files (*.*)|*.*",
         };
@@ -1635,7 +1638,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
     {
         var channel = SelectedChannel is { IsGroup: false } ch ? ch.Name : "System";
         string xpath = string.IsNullOrWhiteSpace(RawXPathText) ? "*" : RawXPathText;
-        string line = $"Get-WinEvent -LogName '{channel.Replace("'", "''")}' -FilterXPath '{xpath.Replace("'", "''")}'";
+        string line = $"Get-WinEvent -LogName '{ToolRunner.EscapePowerShellSingleQuoted(channel)}' -FilterXPath '{ToolRunner.EscapePowerShellSingleQuoted(xpath)}'";
         TrySetClipboardText(line);
         StatusText = "Copied as a PowerShell Get-WinEvent command.";
     }

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TaskManagerPlus.Models;
@@ -135,13 +136,26 @@ public sealed class RemoteMonitorService : IDisposable
                 return;
             }
 
+            // DNS rebinding: any web page the user visits can re-point its own hostname at
+            // 127.0.0.1 or this machine's LAN address, and the browser's request then arrives from
+            // a loopback/private source and passes the check above - but it still names the
+            // attacker's hostname in Host. Only serve requests addressed to an IP literal or one of
+            // this machine's own names (what the Settings drawer tells a phone to connect to).
+            if (!IsOwnHost(ctx.Request.Url))
+            {
+                ctx.Response.StatusCode = 400;
+                ctx.Response.OutputStream.Close();
+                return;
+            }
+
             // #97: optional shared-token check - see RemoteMonitorSettings.Token's remarks. A
             // missing/mismatched token gets a bare 401 (no body, no page) rather than a "wrong
             // token" message, so a scan doesn't get free confirmation the endpoint even exists.
             if (!string.IsNullOrEmpty(RequiredToken))
             {
                 string? providedToken = ctx.Request.QueryString["token"];
-                if (!string.Equals(providedToken, RequiredToken, StringComparison.Ordinal))
+                if (providedToken is null
+                    || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(providedToken), Encoding.UTF8.GetBytes(RequiredToken)))
                 {
                     ctx.Response.StatusCode = 401;
                     ctx.Response.OutputStream.Close();
@@ -183,6 +197,39 @@ public sealed class RemoteMonitorService : IDisposable
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
+
+    /// <summary>Whether the request was addressed (Host header, which HttpListener builds
+    /// Request.Url from) to an IP literal or to this machine by name - see the DNS-rebinding note
+    /// in HandleAsync.</summary>
+    private static bool IsOwnHost(Uri? url)
+    {
+        if (url is null) return false;
+        if (url.HostNameType is UriHostNameType.IPv4 or UriHostNameType.IPv6) return true;
+        return OwnHostNames.Value.Contains(url.Host.TrimEnd('.'));
+    }
+
+    private static readonly Lazy<HashSet<string>> OwnHostNames = new(() =>
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "localhost", Environment.MachineName, Environment.MachineName + ".local",
+        };
+        try
+        {
+            var props = IPGlobalProperties.GetIPGlobalProperties();
+            if (!string.IsNullOrEmpty(props.HostName))
+            {
+                names.Add(props.HostName);
+                names.Add(props.HostName + ".local");
+                if (!string.IsNullOrEmpty(props.DomainName)) names.Add($"{props.HostName}.{props.DomainName}");
+            }
+        }
+        catch
+        {
+            // The NetBIOS name and localhost still work; an IP literal always does.
+        }
+        return names;
+    });
 
     /// <summary>#1061: whether a request's source address is within the advertised "LAN-visible"
     /// scope - loopback, RFC1918 private (10/8, 172.16/12, 192.168/16), IPv4 link-local

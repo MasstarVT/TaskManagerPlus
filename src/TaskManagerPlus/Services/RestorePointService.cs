@@ -287,13 +287,6 @@ public static class RestorePointService
         output.Contains("disabled on this drive", StringComparison.OrdinalIgnoreCase) ||
         output.Contains("0x81045303", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>PowerShell treats U+2018-U+201B as single quotes too, so a typographic apostrophe
-    /// (common in service display names) would otherwise end the '...' string. Doubling each quote
-    /// character is PowerShell's own escape for all five.</summary>
-    private static string EscapePowerShellSingleQuoted(string s) =>
-        s.Replace("'", "''").Replace("‘", "‘‘").Replace("’", "’’")
-         .Replace("‚", "‚‚").Replace("‛", "‛‛");
-
     public static async Task<(bool Success, string Message, bool SystemProtectionLikelyDisabled)> CreateRestorePointAsync(string description)
     {
         try
@@ -303,7 +296,7 @@ public static class RestorePointService
             // failure below rather than special-cased, since the message it returns already says
             // so plainly. That throttle is a WARNING, not an error (no point is created, yet the
             // cmdlet returns normally), so -WarningAction Stop turns it into a caught failure.
-            string safeDescription = EscapePowerShellSingleQuoted(description);
+            string safeDescription = ToolRunner.EscapePowerShellSingleQuoted(description);
             string psCommand =
                 $"$ErrorActionPreference='Stop'; try {{ Checkpoint-Computer -Description '{safeDescription}' -RestorePointType MODIFY_SETTINGS -WarningAction Stop; Write-Output 'RESTORE_POINT_OK' }} catch {{ Write-Output $_.Exception.Message }}";
 

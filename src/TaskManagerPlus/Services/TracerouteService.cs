@@ -74,7 +74,7 @@ public static class TracerouteService
 
         try
         {
-            var psi = new ProcessStartInfo("tracert.exe", $"-d -h 20 -w 1000 {host}")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("tracert.exe"), $"-d -h 20 -w 1000 {host}")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

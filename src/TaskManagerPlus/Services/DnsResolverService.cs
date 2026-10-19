@@ -126,7 +126,7 @@ public static class DnsResolverService
         var sw = Stopwatch.StartNew();
         try
         {
-            var psi = new ProcessStartInfo("nslookup.exe", $"{hostname} {resolverIp}")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("nslookup.exe"), $"{hostname} {resolverIp}")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

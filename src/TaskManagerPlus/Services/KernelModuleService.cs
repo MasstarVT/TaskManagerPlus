@@ -135,7 +135,7 @@ public static class KernelModuleService
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        var psi = new ProcessStartInfo("driverquery.exe", "/v /fo csv")
+        var psi = new ProcessStartInfo(ToolRunner.ResolveTool("driverquery.exe"), "/v /fo csv")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

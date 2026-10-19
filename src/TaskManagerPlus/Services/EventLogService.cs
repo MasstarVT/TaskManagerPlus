@@ -2819,7 +2819,7 @@ public sealed class EventLogService
 
         try
         {
-            var psi = new ProcessStartInfo("wevtutil.exe", "gl System")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("wevtutil.exe"), "gl System")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -3869,7 +3869,7 @@ public sealed class EventLogService
     {
         try
         {
-            var psi = new ProcessStartInfo("wevtutil.exe", $"sl \"{TaskSchedulerOperationalLog}\" /e:true")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("wevtutil.exe"), $"sl \"{TaskSchedulerOperationalLog}\" /e:true")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

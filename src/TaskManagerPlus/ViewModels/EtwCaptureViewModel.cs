@@ -380,6 +380,7 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
     {
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Choose a trace to extract from",
             Filter = "ETL trace files (*.etl)|*.etl|All files (*.*)|*.*",
             InitialDirectory = AppPaths.GetPath("Traces"),
@@ -396,6 +397,7 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
 
         var saveDialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Save extracted events as",
             Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
             FileName = $"{Path.GetFileNameWithoutExtension(source)}-{SanitizeFileNamePart(provider)}.csv",
@@ -438,6 +440,7 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
         try { Directory.CreateDirectory(AppPaths.GetPath("Traces")); } catch { /* SaveFileDialog will surface any real problem */ }
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Save trace as",
             Filter = "ETL trace files (*.etl)|*.etl|All files (*.*)|*.*",
             FileName = Path.GetFileName(CaptureOutputPath),
@@ -881,6 +884,7 @@ public sealed class EtwCaptureViewModel : ObservableObject, IDisposable
     {
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Choose a trace to summarize",
             Filter = "ETL trace files (*.etl)|*.etl|All files (*.*)|*.*",
             InitialDirectory = AppPaths.GetPath("Traces"),

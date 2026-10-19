@@ -1108,6 +1108,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
     {
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Browse for a repair source (install.wim or install.esd from a mounted ISO)",
             Filter = "Windows image files (*.wim;*.esd)|*.wim;*.esd|All files (*.*)|*.*",
         };
@@ -1472,6 +1473,7 @@ public sealed class WindowsHealthViewModel : ObservableObject
 
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Export registry change as .reg",
             Filter = "Registry files (*.reg)|*.reg|All files (*.*)|*.*",
             FileName = $"{entry.ValueName}.reg",

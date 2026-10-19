@@ -153,7 +153,7 @@ public static class VpnTunnelCheckService
     {
         try
         {
-            var psi = new ProcessStartInfo("nslookup.exe", hostname)
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("nslookup.exe"), hostname)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

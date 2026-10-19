@@ -2362,6 +2362,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
 
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = $"Save process dump for {row.ProcessName} (pid {row.Pid})",
             Filter = "Dump files (*.dmp)|*.dmp|All files (*.*)|*.*",
             DefaultExt = ".dmp",
@@ -3041,6 +3042,7 @@ public sealed class ResponsivenessViewModel : ObservableObject, IDisposable
     {
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Load an incident ring-buffer CSV to replay",
             Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
             InitialDirectory = IncidentBundlesFolder,

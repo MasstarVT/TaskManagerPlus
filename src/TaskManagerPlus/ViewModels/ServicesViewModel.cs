@@ -628,6 +628,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
 
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Save service configuration baseline",
             Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*",
             DefaultExt = ".json",
@@ -656,6 +657,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     {
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Check service configuration drift against a saved baseline",
             Filter = "Snapshot files (*.json)|*.json|All files (*.*)|*.*",
             InitialDirectory = AppPaths.GetPath("Snapshots"),

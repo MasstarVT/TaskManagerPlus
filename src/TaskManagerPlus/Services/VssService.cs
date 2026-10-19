@@ -524,12 +524,9 @@ public static class VssService
         // Missing (2) let a description containing a double quote terminate -Command early, so the
         // restore point silently failed to be created - which matters more than a cosmetic glitch,
         // because callers create these as the rollback point *before* a destructive change.
-        string safeDescription = trimmed.Replace("'", "''")
-            .Replace("‘", "‘‘").Replace("’", "’’")
-            .Replace("‚", "‚‚").Replace("‛", "‛‛")
-            .Replace("\"", "\\\"");
+        string safeDescription = ToolRunner.EscapePowerShellSingleQuoted(trimmed).Replace("\"", "\\\"");
 
-        var psi = new ProcessStartInfo("powershell.exe",
+        var psi = new ProcessStartInfo(ToolRunner.ResolveTool("powershell.exe"),
             $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"Checkpoint-Computer -Description '{safeDescription}' -RestorePointType MODIFY_SETTINGS\"")
         {
             RedirectStandardOutput = true,

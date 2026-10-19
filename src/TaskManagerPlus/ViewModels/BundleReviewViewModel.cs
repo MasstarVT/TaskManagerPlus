@@ -51,6 +51,7 @@ public sealed class BundleReviewViewModel : ObservableObject, IDisposable
     {
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Open an evidence bundle",
             Filter = "Evidence bundle (*.zip)|*.zip|All files (*.*)|*.*",
         };

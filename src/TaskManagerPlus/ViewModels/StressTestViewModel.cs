@@ -641,6 +641,7 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
 
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Export stress test report",
             Filter = filter,
             DefaultExt = defaultExt,
@@ -678,6 +679,7 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
 
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Export stress test trace (CSV)",
             Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
             DefaultExt = ".csv",

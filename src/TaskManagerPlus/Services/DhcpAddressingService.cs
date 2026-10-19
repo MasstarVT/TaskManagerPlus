@@ -284,7 +284,7 @@ public static class DhcpAddressingService
     {
         try
         {
-            var psi = new ProcessStartInfo("ipconfig.exe", args)
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("ipconfig.exe"), args)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

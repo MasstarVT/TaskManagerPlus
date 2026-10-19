@@ -111,7 +111,7 @@ public static class WifiScanStormService
     {
         try
         {
-            var psi = new ProcessStartInfo("netsh", "wlan show interfaces")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("netsh"), "wlan show interfaces")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

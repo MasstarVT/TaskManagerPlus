@@ -1,6 +1,8 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using TaskManagerPlus.Models;
 using TaskManagerPlus.ViewModels;
@@ -78,6 +80,7 @@ public static class CliDumpService
             },
         };
 
+        ThrowIfUnsafeOutput(outputPath, ".json");
         var dir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         File.WriteAllText(outputPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
@@ -121,7 +124,7 @@ public static class CliDumpService
         if (scrub) json = await ScrubTextAsync(json);
 
         string resolvedPath = ResolveScanOutputPath(outputPath);
-        ThrowIfRedirectedWhileSystem(resolvedPath);
+        ThrowIfUnsafeOutput(resolvedPath, ".json");
         var dir = Path.GetDirectoryName(Path.GetFullPath(resolvedPath));
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         File.WriteAllText(resolvedPath, json);
@@ -137,28 +140,137 @@ public static class CliDumpService
             await Task.Delay(250);
     }
 
-    /// <summary>The unattended scan runs as SYSTEM (UnattendedScanService) but writes under the
-    /// registering user's own, user-writable %AppData% folder, so a standard user could replace a
-    /// folder on that path with a junction and have SYSTEM create directories and files wherever
-    /// it points. Under SYSTEM, refuse to write through any reparse point on the path that a
-    /// non-admin could have planted or could re-point: one owned by anyone but SYSTEM/
-    /// Administrators/TrustedInstaller, or whose own or parent ACL lets anyone else delete,
-    /// replace or re-permission it. An admin-made junction (e.g. C:\Users moved to another drive)
-    /// passes; an unreadable ACL fails closed. (A swap between this check and the write is still
-    /// conceivable; this closes the plain redirect.)</summary>
-    internal static void ThrowIfRedirectedWhileSystem(string path)
+    /// <summary>Every CLI output path (`--dump-json`, `--scan`, `--collect`, and the
+    /// `&lt;path&gt;.error.txt` written when one fails) comes from a command line, and a per-user
+    /// Start-menu or taskbar shortcut - editable without elevation - can append these flags to the
+    /// user's ordinary launch, whose UAC prompt looks the same. The write then happens elevated (or
+    /// as SYSTEM, for the nightly scan), so refuse what that shortcut edit would otherwise buy:
+    /// writing into the Windows, Program Files or ProgramData folders (this app's own settings
+    /// folder excepted - a portable copy installed under Program Files keeps its UnattendedScans
+    /// there), overwriting an existing file that isn't one of <paramref name="allowedExtensions"/>,
+    /// device-namespace, admin-share and alternate-stream spellings that would dodge the folder
+    /// check, and anything reached through a junction or symbolic link a non-admin controls
+    /// (<see cref="ThrowIfRedirected"/>). Check-then-write, so a swap in between is still
+    /// conceivable; this closes the plain shortcut edit.</summary>
+    internal static void ThrowIfUnsafeOutput(string path, params string[] allowedExtensions)
     {
-        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
-        if (!identity.IsSystem) return;
+        string full = NormalizeForComparison(path);
+        if (full.IndexOf(':', 2) >= 0)
+            throw new IOException($"Refusing to write {path}: an alternate data stream isn't an output location.");
+        if (full.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            // \\server\C$\... is just another spelling of that machine's drive root.
+            string[] parts = full.TrimStart('\\').Split('\\');
+            if (parts.Length < 2 || parts[1].EndsWith('$'))
+                throw new IOException($"Refusing to write {path}: administrative shares (C$, ADMIN$, ...) aren't an output location.");
+        }
+
+        if (!IsUnder(full, NormalizeForComparison(AppPaths.SettingsDirectory)))
+        {
+            foreach (var folder in new[]
+                     {
+                         Environment.SpecialFolder.Windows, Environment.SpecialFolder.ProgramFiles,
+                         Environment.SpecialFolder.ProgramFilesX86, Environment.SpecialFolder.CommonApplicationData,
+                     })
+            {
+                string root = Environment.GetFolderPath(folder);
+                if (root.Length > 0 && IsUnder(full, NormalizeForComparison(root)))
+                    throw new IOException($"Refusing to write {path}: it's inside {root}, a system folder.");
+            }
+        }
+
+        if (File.Exists(full) && !allowedExtensions.Any(ext => full.EndsWith(ext, StringComparison.OrdinalIgnoreCase)))
+            throw new IOException($"Refusing to overwrite {path}: only an existing {string.Join(" or ", allowedExtensions)} file is replaced.");
+
+        ThrowIfRedirected(full);
+    }
+
+    private static bool IsUnder(string fullPath, string root) =>
+        fullPath.Equals(root, StringComparison.OrdinalIgnoreCase)
+        || fullPath.StartsWith(Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>One spelling per location, for the folder comparison above: device prefixes
+    /// (\\?\, \\.\, \??\) stripped - a device path that isn't then a plain drive or UNC path is
+    /// refused - and 8.3 short names (C:\PROGRA~1) expanded on the part of the path that exists.</summary>
+    private static string NormalizeForComparison(string path)
+    {
+        string p = path;
+        bool devicePrefixed = false;
+        foreach (string prefix in new[] { @"\\?\UNC\", @"\\.\UNC\", @"\??\UNC\" })
+        {
+            if (p.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) { p = @"\\" + p[prefix.Length..]; devicePrefixed = true; break; }
+        }
+        if (!devicePrefixed && (p.StartsWith(@"\\?\", StringComparison.Ordinal) || p.StartsWith(@"\\.\", StringComparison.Ordinal) || p.StartsWith(@"\??\", StringComparison.Ordinal)))
+        {
+            p = p[4..];
+            devicePrefixed = true;
+        }
+        if (devicePrefixed && !Path.IsPathFullyQualified(p))
+            throw new IOException($"Refusing to write {path}: device paths aren't an output location.");
+
+        string full = Path.GetFullPath(p);
+        string existing = full;
+        string rest = string.Empty;
+        while (!Directory.Exists(existing) && !File.Exists(existing))
+        {
+            string? parent = Path.GetDirectoryName(existing);
+            if (parent is null) return Path.TrimEndingDirectorySeparator(full);
+            rest = rest.Length == 0 ? Path.GetFileName(existing) : Path.Combine(Path.GetFileName(existing), rest);
+            existing = parent;
+        }
+        string resolved = rest.Length == 0 ? LongPath(existing) : Path.Combine(LongPath(existing), rest);
+        return Path.TrimEndingDirectorySeparator(resolved);
+    }
+
+    private static string LongPath(string path)
+    {
+        var buffer = new StringBuilder(512);
+        uint length = GetLongPathName(path, buffer, (uint)buffer.Capacity);
+        if (length >= buffer.Capacity)
+        {
+            buffer = new StringBuilder((int)length + 1);
+            length = GetLongPathName(path, buffer, (uint)buffer.Capacity);
+        }
+        return length > 0 && length < buffer.Capacity ? buffer.ToString() : path;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetLongPathName(string shortPath, StringBuilder longPath, uint bufferLength);
+
+    /// <summary>The unattended scan runs as SYSTEM (UnattendedScanService) but writes under the
+    /// registering user's own, user-writable %AppData% folder, and every other CLI output path can
+    /// be supplied by a shortcut the user can edit unelevated - so a standard user could replace a
+    /// folder on that path with a junction and have this process create directories and files
+    /// wherever it points. Refuse to write through a reparse point on the path that a non-admin
+    /// could have planted or could re-point: one owned by anyone but SYSTEM/Administrators/
+    /// TrustedInstaller, or whose own or parent ACL lets anyone else delete, replace or
+    /// re-permission it. An admin-made junction (e.g. C:\Users moved to another drive) passes; an
+    /// unreadable ACL fails closed. As SYSTEM every reparse point counts; elevated as the user only
+    /// junctions and symbolic links do, since a OneDrive/cloud-files placeholder is a user-owned
+    /// reparse point that doesn't redirect anything. (A swap between this check and the write is
+    /// still conceivable; this closes the plain redirect.)</summary>
+    internal static void ThrowIfRedirected(string path)
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        bool isSystem = identity.IsSystem;
         string? current = Path.GetFullPath(path);
         while (!string.IsNullOrEmpty(current))
         {
             if ((File.Exists(current) || Directory.Exists(current))
-                && File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint)
+                && IsRedirecting(current, isSystem)
                 && FindNonAdminControl(current) is { } reason)
-                throw new IOException($"Refusing to write through a junction or symbolic link ({current}) while running as SYSTEM - {reason}.");
+                throw new IOException($"Refusing to write through a junction or symbolic link ({current}) - {reason}.");
             current = Path.GetDirectoryName(current);
         }
+    }
+
+    // LinkTarget is non-null for exactly the redirecting kinds: junctions and symbolic links.
+    private static bool IsRedirecting(string path, bool isSystem)
+    {
+        if (!File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) return false;
+        if (isSystem) return true;
+        FileSystemInfo info = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path);
+        return info.LinkTarget is not null;
     }
 
     // Same trust model as UnattendedScanService.FindNonAdminWriteAccess (SYSTEM, Administrators,
@@ -289,6 +401,7 @@ public static class CliDumpService
             var html = EvidenceBundleService.BuildIndexHtml(shipped, findings, timeline.OrderByDescending(e => e.Timestamp).ToList(), systemSpecs, SummarySettingsService.Load().ReportTheme);
             File.WriteAllText(Path.Combine(stagingDir, "index.html"), scrubber is null ? html : scrubber.Scrub(html));
 
+            ThrowIfUnsafeOutput(outputZipPath, ".zip");
             var dir = Path.GetDirectoryName(Path.GetFullPath(outputZipPath));
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
             EvidenceBundleService.CreateZip(stagingDir, outputZipPath, manifest);

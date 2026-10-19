@@ -112,7 +112,7 @@ public static class PortReservationService
 
     private static async Task<string> RunNetshAsync(string args)
     {
-        var psi = new ProcessStartInfo("netsh.exe", args)
+        var psi = new ProcessStartInfo(ToolRunner.ResolveTool("netsh.exe"), args)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

@@ -104,6 +104,16 @@ internal static class ToolRunner
         return (outputTask.GetAwaiter().GetResult() + errorTask.GetAwaiter().GetResult(), proc.ExitCode);
     }
 
+    /// <summary>Escapes a value for use inside a PowerShell single-quoted string ('...').
+    /// PowerShell treats U+2018-U+201B as single quotes too, so a typographic apostrophe (common in
+    /// service display names) would otherwise end the string; doubling each quote character is
+    /// PowerShell's own escape for all five. Use this for every value interpolated into '...' -
+    /// a "'" -> "''" replace alone misses the other four. Doesn't escape double quotes for an
+    /// outer -Command "..." argument; callers that need that add it themselves.</summary>
+    internal static string EscapePowerShellSingleQuoted(string s) =>
+        s.Replace("'", "''").Replace("‘", "‘‘").Replace("’", "’’")
+         .Replace("‚", "‚‚").Replace("‛", "‛‛");
+
     // CreateProcess looks for a bare "netsh.exe" in this process's current directory before
     // System32, and an elevated app can be started from a user-writable folder. Windows' own tools
     // are always run from their absolute System32 (or Windows) path; anything else is left as given.

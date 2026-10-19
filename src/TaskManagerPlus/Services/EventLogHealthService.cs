@@ -209,7 +209,7 @@ public sealed class EventLogHealthService
     {
         try
         {
-            var psi = new ProcessStartInfo("wevtutil.exe", args)
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("wevtutil.exe"), args)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

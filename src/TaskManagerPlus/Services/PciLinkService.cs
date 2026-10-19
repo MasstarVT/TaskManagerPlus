@@ -90,7 +90,7 @@ else { Write-Output ($results | ConvertTo-Json -Compress) }
         var raw = new List<RawEntry>();
         try
         {
-            var psi = new ProcessStartInfo("powershell.exe")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("powershell.exe"))
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

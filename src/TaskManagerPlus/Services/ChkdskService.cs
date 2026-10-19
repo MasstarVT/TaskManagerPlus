@@ -39,7 +39,7 @@ public static class ChkdskService
     /// failed run, not a clean scan.</summary>
     public static async Task<(bool Completed, bool ProblemsFound, string Verdict)> RunOnlineScanAsync(string driveLetter, Action<string> onLine, CancellationToken token)
     {
-        var psi = new ProcessStartInfo("chkdsk.exe", $"{driveLetter}: /scan")
+        var psi = new ProcessStartInfo(ToolRunner.ResolveTool("chkdsk.exe"), $"{driveLetter}: /scan")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

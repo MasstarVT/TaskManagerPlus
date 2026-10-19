@@ -233,7 +233,7 @@ public static class UsnJournalService
         var errorLines = new List<string>();
         var otherLines = new Queue<string>();
 
-        var psi = new ProcessStartInfo("fsutil.exe", $"usn readjournal {driveLetter}: csv startUsn=0x{startUsn:X}")
+        var psi = new ProcessStartInfo(ToolRunner.ResolveTool("fsutil.exe"), $"usn readjournal {driveLetter}: csv startUsn=0x{startUsn:X}")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -463,7 +463,7 @@ public static class UsnJournalService
     {
         try
         {
-            var psi = new ProcessStartInfo(exe, args)
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool(exe), args)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

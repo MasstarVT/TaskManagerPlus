@@ -1294,6 +1294,7 @@ public sealed class ProcessesViewModel : ObservableObject, IDisposable
 
         var dlg = new Microsoft.Win32.SaveFileDialog
         {
+            RestoreDirectory = true,
             FileName = $"{target.Name}_{target.Pid}_{kind}.dmp",
             Filter = "Dump files (*.dmp)|*.dmp|All files (*.*)|*.*",
         };

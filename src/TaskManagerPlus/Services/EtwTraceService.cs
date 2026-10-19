@@ -956,7 +956,7 @@ public static class EtwTraceService
         Process proc;
         try
         {
-            var psi = new ProcessStartInfo("tracerpt.exe", $"-rt {sessionName} -o -summary")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("tracerpt.exe"), $"-rt {sessionName} -o -summary")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

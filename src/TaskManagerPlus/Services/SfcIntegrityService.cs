@@ -95,7 +95,7 @@ public static class SfcIntegrityService
     /// </summary>
     private static async Task<(string Output, int ExitCode)> RunSfcAsync(IProgress<int>? progress, CancellationToken cancellationToken)
     {
-        var psi = new ProcessStartInfo("sfc.exe", "/scannow")
+        var psi = new ProcessStartInfo(ToolRunner.ResolveTool("sfc.exe"), "/scannow")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

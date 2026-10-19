@@ -101,7 +101,7 @@ public static class FastStartupService
     {
         try
         {
-            Process.Start(new ProcessStartInfo("shutdown.exe", "/g /f /t 0") { UseShellExecute = false, CreateNoWindow = true });
+            Process.Start(new ProcessStartInfo(ToolRunner.ResolveTool("shutdown.exe"), "/g /f /t 0") { UseShellExecute = false, CreateNoWindow = true });
             return (true, null);
         }
         catch (Exception ex)

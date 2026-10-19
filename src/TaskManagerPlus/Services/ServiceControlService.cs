@@ -423,7 +423,7 @@ public sealed class ServiceControlService
 
         try
         {
-            var psi = new ProcessStartInfo("sc.exe", $"config \"{serviceName}\" start= {startType}")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("sc.exe"), $"config \"{serviceName}\" start= {startType}")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -481,7 +481,7 @@ public sealed class ServiceControlService
     {
         try
         {
-            var psi = new ProcessStartInfo("sc.exe", $"qfailure \"{serviceName}\"")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("sc.exe"), $"qfailure \"{serviceName}\"")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -806,7 +806,7 @@ public sealed class ServiceControlService
     {
         try
         {
-            var psi = new ProcessStartInfo("sc.exe", $"qtriggerinfo \"{serviceName}\"")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("sc.exe"), $"qtriggerinfo \"{serviceName}\"")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -931,7 +931,7 @@ public sealed class ServiceControlService
     {
         try
         {
-            var psi = new ProcessStartInfo("sc.exe", $"delete \"{serviceName}\"")
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool("sc.exe"), $"delete \"{serviceName}\"")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

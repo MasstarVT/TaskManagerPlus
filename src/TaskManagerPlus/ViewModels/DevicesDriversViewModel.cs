@@ -1805,7 +1805,7 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
             Title = "Choose a folder to export driver packages to",
             InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         };
-        if (dialog.ShowDialog() != true) return;
+        if (dialog.ShowDialogKeepingCurrentDirectory() != true) return;
         string folder = dialog.FolderName;
 
         IsExportingDrivers = true;
@@ -1933,7 +1933,7 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
     private async Task InstallDriverPackageAsync()
     {
         var dialog = new OpenFolderDialog { Title = "Choose a folder containing driver package(s) (.inf) to install" };
-        if (dialog.ShowDialog() != true) return;
+        if (dialog.ShowDialogKeepingCurrentDirectory() != true) return;
         string folder = dialog.FolderName;
 
         var confirm = MessageBox.Show(

@@ -38,7 +38,7 @@ public static class NetworkStackResetService
         StackResetActionResult result;
         try
         {
-            var psi = new ProcessStartInfo(exe, args)
+            var psi = new ProcessStartInfo(ToolRunner.ResolveTool(exe), args)
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

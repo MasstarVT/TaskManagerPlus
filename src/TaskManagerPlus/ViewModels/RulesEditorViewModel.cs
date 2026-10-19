@@ -280,6 +280,7 @@ public sealed class RulesEditorViewModel : ObservableObject, IDisposable
         }
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Export rule pack",
             Filter = "Rule pack files (*.json)|*.json|All files (*.*)|*.*",
             DefaultExt = ".json",
@@ -302,6 +303,7 @@ public sealed class RulesEditorViewModel : ObservableObject, IDisposable
     {
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Import rule pack",
             Filter = "Rule pack files (*.json)|*.json|All files (*.*)|*.*",
         };
@@ -353,6 +355,7 @@ public sealed class RulesEditorViewModel : ObservableObject, IDisposable
 
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Capture current metrics",
             Filter = "Metric snapshot (*.json)|*.json|All files (*.*)|*.*",
             DefaultExt = ".json",
@@ -379,6 +382,7 @@ public sealed class RulesEditorViewModel : ObservableObject, IDisposable
         var dir = AppPaths.GetPath("RuleTestFixtures");
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Test rules against a saved snapshot",
             Filter = "Metric snapshot (*.json)|*.json|All files (*.*)|*.*",
             InitialDirectory = Directory.Exists(dir) ? dir : null,

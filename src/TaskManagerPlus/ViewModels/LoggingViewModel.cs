@@ -338,6 +338,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
     {
         var dialog = new OpenFileDialog
         {
+            RestoreDirectory = true,
             Title = "Load a log file to replay",
             Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
             InitialDirectory = AppPaths.GetPath("Logs"),
@@ -507,6 +508,7 @@ public sealed class LoggingViewModel : ObservableObject, IDisposable
 
         var dialog = new SaveFileDialog
         {
+            RestoreDirectory = true,
             Title = "Start logging to file",
             Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
             DefaultExt = ".csv",

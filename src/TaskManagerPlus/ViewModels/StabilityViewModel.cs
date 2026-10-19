@@ -1198,6 +1198,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             {
                 var dlg = new Microsoft.Win32.SaveFileDialog
                 {
+                    RestoreDirectory = true,
                     FileName = "MEMORY.DMP",
                     Filter = "Dump files (*.dmp)|*.dmp|All files (*.*)|*.*",
                 };
@@ -2222,6 +2223,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
             var dialog = new Microsoft.Win32.SaveFileDialog
             {
+                RestoreDirectory = true,
                 Title = "Save crash support bundle",
                 Filter = "Zip files (*.zip)|*.zip|All files (*.*)|*.*",
                 DefaultExt = ".zip",
