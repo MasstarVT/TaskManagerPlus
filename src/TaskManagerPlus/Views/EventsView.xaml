@@ -382,7 +382,9 @@
                         <TextBlock Text="&quot;Since it was working&quot; diff (#134)" FontWeight="SemiBold" FontSize="{StaticResource FontBody}" Margin="0,0,0,4" />
                         <WrapPanel Margin="0,0,0,4">
                             <TextBlock Text="Known-good date:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBox Text="{Binding DiffCutoffDate, StringFormat=d, UpdateSourceTrigger=PropertyChanged}" Width="100" Margin="0,0,8,0" />
+                            <!-- LostFocus: with StringFormat=d, a per-keystroke update reformats the
+                                 text mid-edit ("9/28/2025" + typing = "9/28/2025/2026"). -->
+                            <TextBox Text="{Binding DiffCutoffDate, StringFormat=d, UpdateSourceTrigger=LostFocus}" Width="100" Margin="0,0,8,0" />
                             <Button Content="Diff" Command="{Binding RunSinceWorkingDiffCommand}" Padding="8,3" Margin="0,0,8,0"
                                      ToolTip="Reuses the last anomaly scan's data (run the scan above first) - splits it at this date and lists signatures new vs. stopped." />
                         </WrapPanel>
@@ -904,11 +906,13 @@
                             <DataGridTextColumn Header="User" Binding="{Binding UserSid}" Width="130" />
                             <!-- #116: correlation columns - hidden unless explicitly toggled on via
                                  the filter bar's "More tools" expander, since most events don't set
-                                 either field and they add little value by default. -->
-                            <DataGridTextColumn Header="Activity ID" Binding="{Binding ActivityId}" Width="130"
-                                                  Visibility="{Binding DataContext.ShowCorrelationColumns, ElementName=EventsGrid, Converter={StaticResource BoolToVisibilityConverter}}" />
-                            <DataGridTextColumn Header="Related Activity ID" Binding="{Binding RelatedActivityId}" Width="130"
-                                                  Visibility="{Binding DataContext.ShowCorrelationColumns, ElementName=EventsGrid, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                 either field and they add little value by default. Visibility is
+                                 set from code-behind (EventsView.xaml.cs): a DataGridColumn isn't
+                                 in the visual tree, so an ElementName binding here never resolves. -->
+                            <DataGridTextColumn x:Name="ActivityIdColumn" Header="Activity ID" Binding="{Binding ActivityId}" Width="130"
+                                                  Visibility="Collapsed" />
+                            <DataGridTextColumn x:Name="RelatedActivityIdColumn" Header="Related Activity ID" Binding="{Binding RelatedActivityId}" Width="130"
+                                                  Visibility="Collapsed" />
                         </DataGrid.Columns>
                     </DataGrid>
                     </Grid>

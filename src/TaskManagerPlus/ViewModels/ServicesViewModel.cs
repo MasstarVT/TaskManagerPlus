@@ -46,6 +46,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _showDrivers, value) && value)
             {
                 ShowSvcHostGroups = false; // #761: the two sub-views share the same grid row - mutually exclusive
+                SelectedService = null; // the services grid is hidden now - nothing visible to act on
                 _ = RefreshDriversAsync();
             }
         }
@@ -68,6 +69,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _showSvcHostGroups, value) && value)
             {
                 ShowDrivers = false;
+                SelectedService = null; // same as ShowDrivers: the services grid is hidden
                 _ = LoadSvcHostGroupsAsync();
             }
         }
@@ -299,19 +301,19 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
         // #1073: the three destructive commands below carry the same !ReadOnlyModeService.IsReadOnly
         // gate as Start/Stop/Restart (CanStart/CanStop) - read-only mode must not be able to delete
         // a service, rewrite recovery actions, or kill a shared host process.
-        DeleteOrphanedServiceCommand = new RelayCommand(_ => _ = DeleteOrphanedServiceAsync(), _ => !IsBusy && !ReadOnlyModeService.IsReadOnly && SelectedService is { IsOrphaned: true });
+        DeleteOrphanedServiceCommand = new RelayCommand(_ => _ = DeleteOrphanedServiceAsync(), _ => !IsBusy && !ReadOnlyModeService.IsReadOnly && IsServiceGridShown && SelectedService is { IsOrphaned: true });
         ViewTriggerInfoCommand = new RelayCommand(_ => _ = LoadTriggerInfoAsync(), _ => SelectedService is not null);
 
         RunRecoveryAuditCommand = new RelayCommand(_ => _ = RunRecoveryAuditAsync(), _ => !IsRunningRecoveryAudit);
         JumpToRecoveryAuditServiceCommand = new RelayCommand(param => JumpToRecoveryAuditService(param as ServiceRecoveryAuditEntry));
         SaveRecoveryActionsCommand = new RelayCommand(_ => _ = SaveRecoveryActionsAsync(),
-            _ => !IsBusy && !ReadOnlyModeService.IsReadOnly && SelectedService is { } s && !ServiceControlService.IsProtectedCoreService(s.ServiceName));
+            _ => !IsBusy && !ReadOnlyModeService.IsReadOnly && IsServiceGridShown && SelectedService is { } s && !ServiceControlService.IsProtectedCoreService(s.ServiceName));
 
         LoadStartTypeChangesCommand = new RelayCommand(_ => _ = LoadStartTypeChangesAsync());
         LoadNewServiceInstallsCommand = new RelayCommand(_ => _ = LoadNewServiceInstallsAsync());
 
         DiagnoseHangCommand = new RelayCommand(_ => _ = DiagnoseHangAsync(), _ => !IsBusy && SelectedService is not null);
-        ForceKillHostProcessCommand = new RelayCommand(_ => _ = ForceKillHostProcessAsync(), _ => !IsBusy && !ReadOnlyModeService.IsReadOnly && SelectedService is { ProcessId: > 0 });
+        ForceKillHostProcessCommand = new RelayCommand(_ => _ = ForceKillHostProcessAsync(), _ => !IsBusy && !ReadOnlyModeService.IsReadOnly && IsServiceGridShown && SelectedService is { ProcessId: > 0 });
 
         // Round 12, #100: configurable poll interval - see PollIntervalSettingsService's remarks.
         _timer = new DispatcherTimer(DispatcherPriority.Background)
@@ -345,8 +347,12 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
 
     // #980: read-only mode disables Start/Stop/Restart (mutating) but leaves everything else on
     // this tab (Refresh, failure-actions view, start-durations, config baseline/drift) working.
-    private bool CanStart() => !IsBusy && !ReadOnlyModeService.IsReadOnly && SelectedService is { CanStart: true };
-    private bool CanStop() => !IsBusy && !ReadOnlyModeService.IsReadOnly && SelectedService is { CanStop: true };
+    private bool CanStart() => !IsBusy && !ReadOnlyModeService.IsReadOnly && IsServiceGridShown && SelectedService is { CanStart: true };
+    private bool CanStop() => !IsBusy && !ReadOnlyModeService.IsReadOnly && IsServiceGridShown && SelectedService is { CanStop: true };
+
+    /// <summary>False while the driver or svchost sub-view replaces the services grid - a
+    /// SelectedService set from code (a cross-tab jump) would otherwise be acted on unseen.</summary>
+    private bool IsServiceGridShown => !ShowDrivers && !ShowSvcHostGroups;
 
     private bool FilterPredicate(object obj)
     {
@@ -424,7 +430,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     private async Task RunAction(Func<string, (bool Success, string? Error)> action, string verbPast)
     {
         var target = SelectedService;
-        if (target is null) return;
+        if (target is null || !IsServiceGridShown) return;
 
         string before = target.Status.ToString();
         IsBusy = true;
@@ -836,7 +842,7 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     private async Task DeleteOrphanedServiceAsync()
     {
         var target = SelectedService;
-        if (target is null || !target.IsOrphaned) return;
+        if (target is null || !target.IsOrphaned || !IsServiceGridShown) return;
 
         var confirm = MessageBox.Show(
             $"This will run:\n\nsc delete \"{target.ServiceName}\"\n\n\"{target.DisplayName}\" points at a binary that no longer exists:\n{target.OrphanedImagePath}\n\nThis permanently removes the service registration. Continue?",
@@ -918,6 +924,8 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     private void JumpToRecoveryAuditService(ServiceRecoveryAuditEntry? entry)
     {
         if (entry is null) return;
+        ShowDrivers = false; // the jump lands in the services grid, so make sure it's the one shown
+        ShowSvcHostGroups = false;
         FilterText = entry.ServiceName;
         var match = Services.FirstOrDefault(r => r.ServiceName.Equals(entry.ServiceName, StringComparison.OrdinalIgnoreCase));
         if (match is not null) SelectedService = match;
@@ -1108,36 +1116,48 @@ public sealed class ServicesViewModel : ObservableObject, IDisposable
     private async Task ForceKillHostProcessAsync()
     {
         var target = SelectedService;
-        if (target is null || target.ProcessId <= 0) return;
+        if (target is null || !IsServiceGridShown) return;
+        // The PID the user confirms - the poll timer keeps updating target.ProcessId while the
+        // dialog is open, so it's captured now and re-checked after.
+        int pid = target.ProcessId;
+        if (pid <= 0) return;
 
         var confirm = MessageBox.Show(
-            $"This will forcibly end the process hosting \"{target.DisplayName}\" (PID {target.ProcessId}).\n\n" +
+            $"This will forcibly end the process hosting \"{target.DisplayName}\" (PID {pid}).\n\n" +
             "Any unsaved data in that process, and any other services it hosts, will be lost. Continue?",
             "Force-end host process",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
+        if (target.ProcessId != pid)
+        {
+            // The service restarted (or stopped) while the dialog was open - the confirmed PID no
+            // longer hosts it and may already belong to an unrelated process.
+            StatusMessage = $"{target.DisplayName}'s host process changed while confirming (was PID {pid}) - nothing was ended.";
+            return;
+        }
+
         IsBusy = true;
         try
         {
-            var (success, error) = await Task.Run(() => ProcessMonitorService.EndProcess(target.ProcessId));
+            var (success, error) = await Task.Run(() => ProcessMonitorService.EndProcess(pid));
             StatusMessage = success
-                ? $"Ended host process (PID {target.ProcessId})."
+                ? $"Ended host process (PID {pid})."
                 : $"Couldn't end host process: {error}";
 
             // #1073: record the mutation, like every other system-mutating action (see RunAction).
             ChangeJournalService.Append(new ChangeJournalEntry
             {
                 Kind = ChangeKind.OneShotToolRun,
-                Target = $"{target.DisplayName} (host PID {target.ProcessId})",
+                Target = $"{target.DisplayName} (host PID {pid})",
                 ActionDescription = "Force-ended service host process",
                 TriggeredBy = "Services tab",
                 Success = success,
                 IsUndoable = false,
                 NotUndoableReason = "The host process was forcibly ended - start the affected service(s) again to recover.",
                 ServiceName = target.ServiceName,
-                Pid = target.ProcessId,
+                Pid = pid,
             });
 
             if (success) await RefreshAsync();

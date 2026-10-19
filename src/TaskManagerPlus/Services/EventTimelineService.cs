@@ -169,14 +169,16 @@ public sealed class EventTimelineService
 
     // ==== #139: attribute a crash to the change that preceded it ====
 
-    private const string DriverPnpClause = "(Provider[@Name='Microsoft-Windows-Kernel-PnP'] and (EventID=20001 or EventID=219)) or (Provider[@Name='Microsoft-Windows-UserPnp'] and EventID=20003)";
+    // Driver installs are UserPnp 20001 (install driver) / 20003 (add service), both in System;
+    // Kernel-PnP has no 20001, and its 219 is "driver failed to load", reported as its own category.
+    private const string DriverPnpClause = "(Provider[@Name='Microsoft-Windows-UserPnp'] and (EventID=20001 or EventID=20003)) or (Provider[@Name='Microsoft-Windows-Kernel-PnP'] and EventID=219)";
     private const string NewServiceClause = "Provider[@Name='Service Control Manager'] and EventID=7045";
     private const string SetupLogClause = "EventID=1 or EventID=2 or EventID=4";
     private const string WindowsUpdateChannel = "Microsoft-Windows-WindowsUpdateClient/Operational";
     private const string WindowsUpdateClause = "Provider[@Name='Microsoft-Windows-WindowsUpdateClient'] and EventID=19";
 
     /// <summary>#139: searches the 7 days (default) before <paramref name="crashTimeLocal"/> for
-    /// driver installs (Kernel-PnP 20001/219, UserPnp 20003), update installs (Setup log 1/2/4,
+    /// driver installs (UserPnp 20001/20003) and load failures (Kernel-PnP 219), update installs (Setup log 1/2/4,
     /// WindowsUpdateClient/Operational 19), and new services (SCM 7045) - "changes shortly before
     /// this crash," explicitly framed as correlation, never causation (see StabilityView.xaml's
     /// card copy). Each channel is read independently and degrades to nothing on its own if that
@@ -208,8 +210,8 @@ public sealed class EventTimelineService
 
     private static string CategorizeChange(string provider, int eventId, string channel) => (provider, eventId) switch
     {
-        ("Microsoft-Windows-Kernel-PnP", 20001) or ("Microsoft-Windows-Kernel-PnP", 219) => "Driver install",
-        ("Microsoft-Windows-UserPnp", 20003) => "Driver install",
+        ("Microsoft-Windows-UserPnp", 20001) or ("Microsoft-Windows-UserPnp", 20003) => "Driver install",
+        ("Microsoft-Windows-Kernel-PnP", 219) => "Driver load failure",
         ("Microsoft-Windows-WindowsUpdateClient", 19) => "Update install",
         ("Service Control Manager", 7045) => "New service",
         _ when channel.Equals("Setup", StringComparison.OrdinalIgnoreCase) => "Update install",
@@ -433,6 +435,11 @@ public sealed class EventTimelineService
     /// with no matching end marker to EndTime=null ("still running, or the log rotated past it")
     /// rather than a guessed end time. BootType is a best-effort Kernel-Boot 27 read - see
     /// ClassifyBootType's remarks.</summary>
+    // A 6008 this close to a 6005 was written by that same boot's EventLog start (observed <1ms
+    // apart); a whole session plus POST and the next boot doesn't fit inside it.
+    private static readonly TimeSpan SameBootMarkerWindow = TimeSpan.FromSeconds(30);
+    private const string UncleanShutdownReason = "Unclean shutdown/reboot (EventLog 6008, logged at the next boot - the exact stop time isn't recorded)";
+
     public List<BootSessionRow> BuildBootLedger(int lookbackDays = 30, int maxRecords = 2000)
     {
         var events = ReadEvents("System", "Provider[@Name='EventLog'] and (EventID=6005 or EventID=6006 or EventID=6008 or EventID=6009 or EventID=6013)", lookbackDays, maxRecords)
@@ -443,11 +450,16 @@ public sealed class EventTimelineService
         var sessions = new List<BootSessionRow>();
         DateTime? sessionStart = null;
         string bootType = "Unknown";
+        // The session the latest 6005 closed for lack of an end marker - a 6008 logged just after
+        // that 6005 is about this one.
+        BootSessionRow? closedByLastBoot = null;
 
-        void CloseOpenSession(string reason)
+        BootSessionRow? CloseOpenSession(string reason)
         {
-            if (sessionStart is not { } start) return;
-            sessions.Add(new BootSessionRow { StartTime = start, EndTime = null, EndedCleanly = false, EndReason = reason, BootType = bootType });
+            if (sessionStart is not { } start) return null;
+            var row = new BootSessionRow { StartTime = start, EndTime = null, EndedCleanly = false, EndReason = reason, BootType = bootType };
+            sessions.Add(row);
+            return row;
         }
 
         foreach (var e in events)
@@ -456,21 +468,41 @@ public sealed class EventTimelineService
             {
                 // A new boot-start marker while the previous session never saw an end marker - the
                 // gap between them was a crash/power-loss/rotated-log gap, not a clean end.
-                CloseOpenSession("No shutdown record found before the next boot — likely a crash, power loss, or forced power-off.");
+                closedByLastBoot = CloseOpenSession("No shutdown record found before the next boot — likely a crash, power loss, or forced power-off.");
                 sessionStart = e.TimeCreated;
                 bootType = NearestBootTypeHint(bootHints, e.TimeCreated) ?? "Unknown";
             }
-            else if ((e.EventId == 6006 || e.EventId == 6008) && sessionStart is { } start)
+            else if (e.EventId == 6008)
+            {
+                // 6008 is written by the NEXT boot's EventLog start, within moments of that boot's
+                // 6005 - observed just before it (lower RecordId, <1ms), but the order isn't
+                // guaranteed. Either way it describes the session before that boot, and its own
+                // timestamp is the next boot, not the moment of the unclean stop, so EndTime stays
+                // unknown rather than claiming the session ran until then.
+                if (sessionStart is { } start && (e.TimeCreated - start).Duration() <= SameBootMarkerWindow)
+                {
+                    // 6005 came first: the open session is the new boot - relabel the one it closed.
+                    if (closedByLastBoot is not null) closedByLastBoot.EndReason = UncleanShutdownReason;
+                }
+                else if (sessionStart is { } previous)
+                {
+                    sessions.Add(new BootSessionRow { StartTime = previous, EndTime = null, EndedCleanly = false, EndReason = UncleanShutdownReason, BootType = bootType });
+                    sessionStart = null;
+                }
+                closedByLastBoot = null;
+            }
+            else if (e.EventId == 6006 && sessionStart is { } start)
             {
                 sessions.Add(new BootSessionRow
                 {
                     StartTime = start,
                     EndTime = e.TimeCreated,
-                    EndedCleanly = e.EventId == 6006,
-                    EndReason = e.EventId == 6006 ? "Clean shutdown (EventLog 6006)" : "Unclean shutdown/reboot (EventLog 6008)",
+                    EndedCleanly = true,
+                    EndReason = "Clean shutdown (EventLog 6006)",
                     BootType = bootType,
                 });
                 sessionStart = null;
+                closedByLastBoot = null;
             }
             // 6009 (OS version at boot) and 6013 (periodic uptime ping) are read per #144's spec but
             // carry no session-boundary information beyond what 6005/6006/6008 already give.

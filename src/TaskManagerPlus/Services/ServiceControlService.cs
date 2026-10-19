@@ -333,19 +333,57 @@ public sealed class ServiceControlService
     public static (bool Success, string? Error) Stop(string serviceName)
         => RunControlAction(serviceName, sc => sc.Stop(), ServiceControllerStatus.Stopped);
 
+    /// <summary>ServiceController.Stop() also stops every running dependent service, so the ones
+    /// that were running are recorded first and started again after the target - otherwise a
+    /// restart silently leaves them stopped.</summary>
     public static (bool Success, string? Error) Restart(string serviceName)
     {
         try
         {
             using var sc = new ServiceController(serviceName);
-            if (sc.Status is not ServiceControllerStatus.Stopped and not ServiceControllerStatus.StopPending)
+            var runningDependents = new List<string>();
+            if (sc.Status == ServiceControllerStatus.StopPending)
             {
+                // Already on its way down - Start() would throw until it actually reaches Stopped.
+                sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(15));
+            }
+            else if (sc.Status != ServiceControllerStatus.Stopped)
+            {
+                // EnumDependentServices order is reverse start order, so reversed it's the order to
+                // start them in. Not disposed here: sc caches this same array and Stop() walks it.
+                foreach (var dep in sc.DependentServices.Reverse())
+                {
+                    if (dep.Status is not ServiceControllerStatus.Stopped and not ServiceControllerStatus.StopPending)
+                        runningDependents.Add(dep.ServiceName);
+                }
                 sc.Stop();
                 sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(15));
             }
             sc.Start();
             sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(15));
-            return (true, null);
+
+            var notRestarted = new List<string>();
+            foreach (var name in runningDependents)
+            {
+                try
+                {
+                    using var dep = new ServiceController(name);
+                    if (dep.Status is ServiceControllerStatus.Stopped or ServiceControllerStatus.StopPending)
+                    {
+                        if (dep.Status == ServiceControllerStatus.StopPending)
+                            dep.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(15));
+                        dep.Start();
+                    }
+                    dep.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(15));
+                }
+                catch
+                {
+                    notRestarted.Add(name);
+                }
+            }
+            return notRestarted.Count == 0
+                ? (true, null)
+                : (false, $"{serviceName} restarted, but these dependent services didn't come back: {string.Join(", ", notRestarted)}.");
         }
         catch (Exception ex)
         {

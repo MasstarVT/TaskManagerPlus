@@ -11,11 +11,11 @@ namespace TaskManagerPlus.Models;
 
 /// <summary>#184: one physical disk's worth of the storage-fault event family (disk 7/11/51/153,
 /// Microsoft-Windows-Ntfs 55/98/137/140, storahci/stornvme/iaStorA 129, volmgr 46), grouped by the
-/// \Device\HarddiskN\DRn path parsed out of each event's own message text, then joined against
+/// \Device\HarddiskN\DRn path found in each event's inserted properties, then joined against
 /// Win32_DiskDrive (via SystemSpecsService.ListDisksForSmart) and a disk-index -> drive-letter WMI
 /// association KernelEventFamilyService builds itself for a friendly model/letter - "which physical
 /// disk is throwing errors" instead of a flat count. DiskIndex is -1 (FriendlyName "Unknown disk")
-/// when no event in the group's message carried a parseable device path - grouped together rather
+/// when no event in the group carried a parseable device path - grouped together rather
 /// than dropped, since the events themselves are still real (CLAUDE.md's "degrade, never
 /// fabricate").</summary>
 public sealed class StorageErrorDiskGroup
@@ -23,6 +23,10 @@ public sealed class StorageErrorDiskGroup
     public int DiskIndex { get; init; } = -1;
     public string FriendlyName { get; init; } = "Unknown disk";
     public int TotalCount { get; init; }
+    /// <summary>The read stopped at its safety cap with more records left, so TotalCount (and
+    /// which disks appear at all) is a lower bound.</summary>
+    public bool CountIsCapped { get; init; }
+    public string TotalCountText => CountIsCapped ? $"{TotalCount:N0}+" : TotalCount.ToString("N0");
     public DateTime LastSeen { get; init; }
     public List<StorageErrorHit> Hits { get; init; } = new();
 }
@@ -85,6 +89,9 @@ public sealed class WheaErrorSummary
 {
     public List<DailyEventCount> DailyCounts { get; init; } = new();
     public int TotalCount { get; init; }
+    /// <summary>The count stopped at its safety cap with more records left - TotalCount is a lower bound.</summary>
+    public bool TotalCountCapped { get; init; }
+    public string TotalCountText => TotalCountCapped ? $"{TotalCount:N0}+" : TotalCount.ToString("N0");
     public DateTime? LastSeen { get; init; }
 }
 
@@ -131,7 +138,16 @@ public sealed class ChkdskRunInfo
     public string Source { get; init; } = string.Empty; // "Wininit 1001" / "Chkdsk 26212" / "Chkdsk 26214"
     public string? Volume { get; init; }
     public long? BadSectorsFoundKb { get; init; }
+    /// <summary>The report says it found no problems and carries no problem/correction phrase.</summary>
     public bool CompletedCleanly { get; init; }
+    /// <summary>The report names a problem, a correction, or a non-zero bad-sector count.</summary>
+    public bool ProblemsFound { get; init; }
+    /// <summary>The report says chkdsk made corrections (or replaced bad clusters).</summary>
+    public bool MadeCorrections { get; init; }
+    public string OutcomeText => CompletedCleanly ? "Completed cleanly"
+        : MadeCorrections ? "Fixed problems"
+        : ProblemsFound ? "Found problems"
+        : "Ran (outcome unclear)";
     public string RawSummary { get; init; } = string.Empty;
 }
 

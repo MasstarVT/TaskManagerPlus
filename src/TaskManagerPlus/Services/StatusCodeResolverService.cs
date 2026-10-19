@@ -82,27 +82,44 @@ public sealed class StatusCodeResolverService
             }
 
             string output = ((await outputTask) + Environment.NewLine + (await errorTask)).Trim();
-            if (output.Length == 0) return null;
-
-            // certutil's happy-path output looks like:
-            //   0x80070005 (WIN32: 5 ERROR_ACCESS_DENIED)
-            //   Access is denied.
-            //   CertUtil: -error command completed successfully.
-            // Take the first non-empty line that isn't the trailing "CertUtil: ..." status line and
-            // isn't just an echo of the code/hex-with-annotation line itself.
-            var line = output
-                .Split('\n')
-                .Select(l => l.Trim())
-                .FirstOrDefault(l => l.Length > 0
-                    && !l.StartsWith("CertUtil:", StringComparison.OrdinalIgnoreCase)
-                    && !l.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
-                    && !l.Equals(code, StringComparison.OrdinalIgnoreCase));
-            return string.IsNullOrWhiteSpace(line) ? null : line;
+            return ParseCertutilErrorText(output, code);
         }
         catch
         {
             // certutil.exe missing/blocked, or an unexpected output shape - unresolvable, not fabricated.
             return null;
         }
+    }
+
+    private const string CertutilMessageLabel = "Error message text:";
+
+    // What certutil prints for a code it has no text for: "Error 0x12345678 (305419896)" (the
+    // leading word is localized, the shape isn't).
+    private static readonly Regex UnresolvedCodeTextRegex = new(@"^\S+\s+0x[0-9A-Fa-f]+\s*\(-?\d+\)\.?$", RegexOptions.Compiled);
+
+    /// <summary>The meaning line of `certutil -error` output, or null when there isn't one. Real
+    /// output (en-US):
+    ///   0x80070005 (WIN32: 5 ERROR_ACCESS_DENIED) -- 2147942405 (-2147024891)
+    ///   Error message text: Access is denied.
+    ///   CertUtil: -error command completed successfully.
+    /// The label is stripped; an unknown code's "Error 0x... (n)" placeholder counts as no meaning.</summary>
+    internal static string? ParseCertutilErrorText(string output, string code)
+    {
+        if (string.IsNullOrWhiteSpace(output)) return null;
+
+        // First non-empty line that isn't the trailing "CertUtil: ..." status line and isn't just
+        // an echo of the code/hex-with-annotation line itself.
+        var line = output
+            .Split('\n')
+            .Select(l => l.Trim())
+            .FirstOrDefault(l => l.Length > 0
+                && !l.StartsWith("CertUtil:", StringComparison.OrdinalIgnoreCase)
+                && !l.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                && !l.Equals(code, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(line)) return null;
+
+        if (line.StartsWith(CertutilMessageLabel, StringComparison.OrdinalIgnoreCase))
+            line = line[CertutilMessageLabel.Length..].Trim();
+        return line.Length == 0 || UnresolvedCodeTextRegex.IsMatch(line) ? null : line;
     }
 }

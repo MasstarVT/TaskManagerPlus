@@ -137,8 +137,12 @@
 
         <!-- #192: crash-loop summary card - only the services the scan actually flagged, each with
              its `sc qfailure` recovery settings shown alongside. Collapsed until a scan has run /
-             found nothing. -->
-        <Border Grid.Row="2" Margin="0,0,0,12">
+             found nothing; the scan's status line sits outside the card so "scanning" and "nothing
+             found" stay visible while the card itself is collapsed. -->
+        <StackPanel Grid.Row="2">
+        <TextBlock Text="{Binding CrashLoopStatusText}" Style="{StaticResource SubStat}" Margin="0,0,0,12" TextWrapping="Wrap"
+                   Visibility="{Binding CrashLoopStatusText, Converter={StaticResource NullToVisibilityConverter}}" />
+        <Border Margin="0,0,0,12">
             <Border.Style>
                 <Style TargetType="Border" BasedOn="{StaticResource CardStyle}">
                     <Style.Triggers>
@@ -182,9 +186,9 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBlock Text="{Binding CrashLoopStatusText}" Style="{StaticResource SubStat}" Margin="0,4,0,0" />
             </StackPanel>
         </Border>
+        </StackPanel>
 
         <DataGrid Grid.Row="3"
                   ItemsSource="{Binding ServicesView}"

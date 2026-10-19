@@ -26,7 +26,9 @@ public sealed class ServiceHealthEventService
     // ==================== #192: service crash-loop detector ====================
 
     private static readonly Regex RestartCountRegex = new(@"has done this\s+(\d+)\s+time", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly Regex ServiceSpecificExitCodeRegex = new(@"service-specific error\s+(.+?)\.", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // 7024 renders as "...the following service-specific error: \r\n<resolved text>." - a colon and
+    // a line break follow "error", and the text may lack a final period.
+    private static readonly Regex ServiceSpecificExitCodeRegex = new(@"service-specific error:?\s*(.+?)(?:\.|$)", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
 
     /// <summary>#192: correlates SCM 7031/7034 (terminated unexpectedly, carries a restart count in
     /// its own message text), 7000 (failed to start), 7009 (start timeout - also #193's data

@@ -348,12 +348,13 @@ public sealed class EventAnomalyDetectionService
     /// Microsoft-Windows-Kernel-General 12 (OS boot) record in the System channel within <paramref
     /// name="lookbackDays"/> - the same two boot markers used elsewhere in this app for "unexpected
     /// shutdown" detection (see EventLogService), here used the other direction: as the start of a
-    /// "just booted" window rather than proof the previous shutdown was clean.</summary>
+    /// "just booted" window rather than proof the previous shutdown was clean. Returns one time per
+    /// boot, not one per record.</summary>
     public List<DateTime> FindBootMarkers(int lookbackDays, CancellationToken ct)
     {
         string xpath = $"*[System[TimeCreated[timediff(@SystemTime) <= {lookbackDays * 24L * 60 * 60 * 1000}] and ((Provider[@Name='EventLog'] and EventID=6005) or (Provider[@Name='Microsoft-Windows-Kernel-General'] and EventID=12))]]";
 
-        var markers = new List<DateTime>();
+        var found = new List<(DateTime Time, bool IsKernelStart)>();
         try
         {
             var query = new EventLogQuery("System", PathType.LogName, xpath) { ReverseDirection = true };
@@ -365,15 +366,34 @@ public sealed class EventAnomalyDetectionService
                 using var record = reader.ReadEvent();
                 if (record is null) break;
                 count++;
-                if (record.TimeCreated is { } t) markers.Add(t);
+                if (record.TimeCreated is { } t) found.Add((t, record.Id == 12));
             }
         }
         catch (OperationCanceledException) { throw; }
         catch { /* System log unreadable - no boot markers, #133 degrades to "no boot data" */ }
 
-        markers.Sort();
+        // Every boot logs both: Kernel-General 12 at kernel start, then EventLog 6005 seconds
+        // later (7-13s on the dev machine). One marker per boot - the 12, with a 6005 kept only
+        // when no 12 shortly precedes it (a log where the 12 has rotated out or wasn't written).
+        found.Sort((a, b) => a.Time.CompareTo(b.Time));
+        var markers = new List<DateTime>();
+        DateTime? lastKernelStart = null;
+        foreach (var (time, isKernelStart) in found)
+        {
+            if (isKernelStart)
+            {
+                markers.Add(time);
+                lastKernelStart = time;
+            }
+            else if (lastKernelStart is not { } k || time - k > SameBootMarkerWindow)
+            {
+                markers.Add(time);
+            }
+        }
         return markers;
     }
+
+    private static readonly TimeSpan SameBootMarkerWindow = TimeSpan.FromSeconds(60);
 
     /// <summary>Splits <paramref name="rows"/> by whether each falls within <paramref
     /// name="bootWindow"/> (default 120 seconds per #133's spec) of a preceding boot marker, then

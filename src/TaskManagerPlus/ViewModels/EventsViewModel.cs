@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics.Eventing.Reader;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -1084,6 +1085,10 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             return;
         }
 
+        // Back to the services grid first: the Services tab won't act on a selection hidden
+        // behind its driver/svchost sub-views.
+        _services.ShowDrivers = false;
+        _services.ShowSvcHostGroups = false;
         _services.SelectedService = target;
         if (!_services.RestartCommand.CanExecute(null))
         {
@@ -1198,8 +1203,16 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>Same rules as LoggingService.Escape: provider names and messages come from event
+    /// records any local process can write, so a cell starting = + @ (or - not followed by a
+    /// number), tab or CR gets a leading apostrophe to stop Excel evaluating it as a formula.</summary>
     private static string CsvEscape(string value)
-        => value.IndexOfAny(new[] { ',', '"', '\n' }) >= 0 ? "\"" + value.Replace("\"", "\"\"") + "\"" : value;
+    {
+        if (value.Length > 0 && (value[0] is '=' or '+' or '@' or '\t' or '\r' ||
+            (value[0] == '-' && !double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _))))
+            value = "'" + value;
+        return value.IndexOfAny(new[] { ',', '"', '\n', '\r' }) >= 0 ? "\"" + value.Replace("\"", "\"\"") + "\"" : value;
+    }
 
     private void StartFollow()
     {
@@ -1221,10 +1234,22 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
             return;
         }
 
+        string xpath = string.IsNullOrWhiteSpace(RawXPathText) ? "*" : RawXPathText;
+        if (Events.Count > 0 && (_lastQueriedIsFilePath
+            || !string.Equals(_lastQueriedChannel, channel.Name, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(_lastQueriedXPath, xpath, StringComparison.Ordinal)))
+        {
+            // Follow inserts into the list already shown - streaming one channel/filter into rows
+            // loaded from another would mix the two with nothing to tell them apart.
+            _isFollowing = false;
+            OnPropertyChanged(nameof(IsFollowing));
+            StatusText = $"Load \"{channel.Name}\" with the current filter first - Follow adds new events to the list already shown, which came from a different channel or filter.";
+            return;
+        }
+
         // Not StopFollow(): that also flips IsFollowing back to false, which (called from the
         // IsFollowing setter) would leave the toggle unchecked while the new watcher runs.
         DisposeWatch();
-        string xpath = string.IsNullOrWhiteSpace(RawXPathText) ? "*" : RawXPathText;
         int generation = ++_followGeneration;
         // BeginInvoke, never Invoke: disposing the watcher (StopFollow, on the UI thread) waits for
         // any in-flight callback to return, so a callback blocked on the UI thread would deadlock.
@@ -1775,11 +1800,17 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         PeriodicLoopFlags.Clear();
         BootProfileRows.Clear();
         AnomalyScanStatusText = $"Scanning {string.Join(", ", channels)} (last {AnomalyLookbackDays} day(s))...";
+        // This scan's own count - _lastAnomalyScanRows still holds the previous scan until this one finishes.
+        int readSoFar = 0;
 
         try
         {
             string xpath = $"*[System[(Level=1 or Level=2 or Level=3) and TimeCreated[timediff(@SystemTime) <= {AnomalyLookbackDays * 24L * 60 * 60 * 1000}]]]";
-            var progress = new Progress<int>(n => AnomalyScanStatusText = $"Scanning... {n} record(s) read so far.");
+            var progress = new Progress<int>(n =>
+            {
+                readSoFar = n;
+                AnomalyScanStatusText = $"Scanning... {n} record(s) read so far.";
+            });
             var scan = await Task.Run(() => _anomaly.ReadWindow(channels, xpath, maxRecords: 20000, progress, token), token);
             if (scan.ErrorText is not null)
             {
@@ -1787,6 +1818,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
                 return;
             }
 
+            readSoFar = scan.Rows.Count;
             _lastAnomalyScanRows = scan.Rows;
             var now = DateTime.Now;
 
@@ -1809,7 +1841,7 @@ public sealed class EventsViewModel : ObservableObject, IDisposable
         }
         catch (OperationCanceledException)
         {
-            AnomalyScanStatusText = $"Scan cancelled - {_lastAnomalyScanRows.Count} record(s) read before stopping.";
+            AnomalyScanStatusText = $"Scan cancelled - {readSoFar} record(s) read before stopping.";
         }
         catch (Exception ex)
         {

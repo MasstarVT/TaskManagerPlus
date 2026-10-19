@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
+using System.Globalization;
 using System.Management;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -43,9 +44,11 @@ public sealed class KernelEventFamilyService
 
     /// <summary>#184: queries the whole storage-fault family (disk 7/11/51/153, Microsoft-Windows-
     /// Ntfs 55/98/137/140, storahci/stornvme/iaStorA 129, volmgr 46) and groups by the
-    /// \Device\HarddiskN\DRn path parsed out of each event's own message text, mapped to a friendly
+    /// \Device\HarddiskN\DRn path in each event's inserted properties, mapped to a friendly
     /// model/letter via SystemSpecsService.ListDisksForSmart and this service's own disk-index ->
-    /// drive-letter WMI join - "which physical disk is throwing errors" instead of a flat count.</summary>
+    /// drive-letter WMI join - "which physical disk is throwing errors" instead of a flat count.
+    /// Counted by a properties-only pass (see ReadStorageRecords) rather than ReadFamily's single
+    /// 1000-row page, which reported a flooding disk as exactly 1000 and dropped every older disk.</summary>
     public List<StorageErrorDiskGroup> ReadStorageErrors(int lookbackDays = LookbackDays)
     {
         var pairs = new (string Provider, int EventId)[]
@@ -55,14 +58,14 @@ public sealed class KernelEventFamilyService
             ("storahci", 129), ("stornvme", 129), ("iaStorA", 129),
             ("volmgr", 46),
         };
-        var rows = ReadFamily("System", pairs, lookbackDays);
+        var (rows, capped) = ReadStorageRecords("System", pairs.ToList(), lookbackDays);
         if (rows.Count == 0) return new List<StorageErrorDiskGroup>();
 
         var models = SafeListDiskModels();
         var letters = ReadDriveLettersByDiskIndex();
 
         return rows
-            .GroupBy(r => HarddiskPathRegex.Match(r.Message) is { Success: true } m ? int.Parse(m.Groups[1].Value) : -1)
+            .GroupBy(r => r.DiskIndex)
             .Select(g =>
             {
                 string friendly;
@@ -79,14 +82,14 @@ public sealed class KernelEventFamilyService
                     friendly = $"{model}{letterPart}";
                 }
 
-                var hits = g.GroupBy(r => (r.ProviderName, r.EventId))
+                var hits = g.GroupBy(r => (r.Provider, r.EventId))
                     .Select(hg => new StorageErrorHit
                     {
-                        Provider = hg.Key.ProviderName,
+                        Provider = hg.Key.Provider,
                         EventId = hg.Key.EventId,
                         Count = hg.Count(),
-                        LastSeen = hg.Max(r => r.TimeCreated),
-                        Description = StorageErrorDescription(hg.Key.ProviderName, hg.Key.EventId),
+                        LastSeen = hg.Max(r => r.Time),
+                        Description = StorageErrorDescription(hg.Key.Provider, hg.Key.EventId),
                     })
                     .OrderByDescending(h => h.Count)
                     .ToList();
@@ -96,7 +99,8 @@ public sealed class KernelEventFamilyService
                     DiskIndex = g.Key,
                     FriendlyName = friendly,
                     TotalCount = g.Count(),
-                    LastSeen = g.Max(r => r.TimeCreated),
+                    CountIsCapped = capped,
+                    LastSeen = g.Max(r => r.Time),
                     Hits = hits,
                 };
             })
@@ -290,6 +294,7 @@ public sealed class KernelEventFamilyService
         {
             DailyCounts = daily,
             TotalCount = total,
+            TotalCountCapped = cappedAtDay is not null,
             LastSeen = lastSeen,
         };
     }
@@ -299,8 +304,9 @@ public sealed class KernelEventFamilyService
     /// <summary>#187: Kernel-PnP 219/411/442 (tried against both the System log and the dedicated
     /// Microsoft-Windows-Kernel-PnP/Configuration channel some editions use instead - additive, a
     /// channel that doesn't exist/isn't enabled just contributes nothing) and UserPnp 20001/20003
-    /// install results (Application log), each joined against `driverquery /v /fo csv` by module
-    /// name so a failure names a real, currently-installed device/driver when one matches.</summary>
+    /// install results (System log - UserPnp's only classic-log link), each joined against
+    /// `driverquery /v /fo csv` by module name so a failure names a real, currently-installed
+    /// device/driver when one matches.</summary>
     public List<DriverFailureEvent> ReadDriverFailures(int lookbackDays = LookbackDays)
     {
         var pnpPairs = new (string, int)[]
@@ -311,7 +317,7 @@ public sealed class KernelEventFamilyService
 
         var rows = ReadFamily("System", pnpPairs, lookbackDays);
         rows.AddRange(ReadFamily("Microsoft-Windows-Kernel-PnP/Configuration", pnpPairs, lookbackDays));
-        rows.AddRange(ReadFamily("Application", userPnpPairs, lookbackDays));
+        rows.AddRange(ReadFamily("System", userPnpPairs, lookbackDays));
         if (rows.Count == 0) return new List<DriverFailureEvent>();
 
         var drivers = ReadInstalledDrivers();
@@ -418,11 +424,14 @@ public sealed class KernelEventFamilyService
 
     private static readonly Regex ChkdskBadSectorsRegex = new(@"(\d+)\s*KB in bad sectors", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex ChkdskVolumeRegex = new(@"[Vv]olume label is\s*""?([^""\r\n.]+)""?", RegexOptions.Compiled);
-    private static readonly string[] ChkdskCleanPhrases =
+    // "No further action is required." and "0 KB in bad sectors." appear after a run that made
+    // corrections too, so neither means clean; problem/fix phrases are checked before clean ones.
+    private static readonly string[] ChkdskCleanPhrases = { "found no problems" };
+    private static readonly string[] ChkdskFixedPhrases = { "made corrections to the file system", "replaced bad clusters" };
+    private static readonly string[] ChkdskProblemPhrases =
     {
-        "found no problems", "no further action is required", "Windows has checked the file system and found no problems",
+        "found problems", "must be fixed offline", "with the /F (fix) option", "cannot continue in read-only mode",
     };
-    private static readonly string[] ChkdskFixedPhrases = { "made corrections to the file system" };
 
     /// <summary>#188: parses Wininit event 1001 (System log - carries the full boot-time autochk/
     /// chkdsk report as plain text) and Chkdsk 26212/26214 (Application log, the newer proactive-
@@ -448,9 +457,10 @@ public sealed class KernelEventFamilyService
         long? badKb = badMatch.Success && long.TryParse(badMatch.Groups[1].Value, out var kb) ? kb : null;
         var volMatch = ChkdskVolumeRegex.Match(r.Message);
 
-        bool completedCleanly = badKb == 0
-            || ChkdskCleanPhrases.Any(p => r.Message.Contains(p, StringComparison.OrdinalIgnoreCase))
-            || ChkdskFixedPhrases.Any(p => r.Message.Contains(p, StringComparison.OrdinalIgnoreCase));
+        bool Has(string[] phrases) => phrases.Any(p => r.Message.Contains(p, StringComparison.OrdinalIgnoreCase));
+        bool madeCorrections = Has(ChkdskFixedPhrases);
+        bool problemsFound = madeCorrections || badKb > 0 || Has(ChkdskProblemPhrases);
+        bool completedCleanly = !problemsFound && Has(ChkdskCleanPhrases);
 
         return new ChkdskRunInfo
         {
@@ -459,6 +469,8 @@ public sealed class KernelEventFamilyService
             Volume = volMatch.Success ? volMatch.Groups[1].Value.Trim() : null,
             BadSectorsFoundKb = badKb,
             CompletedCleanly = completedCleanly,
+            ProblemsFound = problemsFound,
+            MadeCorrections = madeCorrections,
             RawSummary = Truncate(r.Message, 800),
         };
     }
@@ -569,10 +581,14 @@ public sealed class KernelEventFamilyService
         {
             var query = new EventLogQuery(logName, PathType.LogName, BuildFamilyXPath(list, lookbackDays)) { ReverseDirection = true };
             using var reader = new EventLogReader(query);
-            while (total < MaxCountedRecords && reader.ReadEvent() is { } record)
+            bool capped = false;
+            while (reader.ReadEvent() is { } record)
             {
                 using (record)
                 {
+                    // Capped only when a record actually exists past the cap - exactly
+                    // MaxCountedRecords matches is a complete count.
+                    if (total >= MaxCountedRecords) { capped = true; break; }
                     if (record.TimeCreated is not { } time) continue;
                     total++;
                     lastSeen ??= time;
@@ -581,11 +597,58 @@ public sealed class KernelEventFamilyService
                     oldestDay = day;
                 }
             }
-            return (byDay, total, lastSeen, total >= MaxCountedRecords ? oldestDay : null);
+            return (byDay, total, lastSeen, capped ? oldestDay : null);
         }
         catch
         {
             return (new Dictionary<DateTime, int>(), 0, null, null);
+        }
+    }
+
+    /// <summary>Provider, id, time and the \Device\HarddiskN disk index for every storage-family
+    /// record, newest first, without formatting any message (so a disk logging thousands of errors
+    /// stays cheap to count). The disk comes from the inserted properties, not the message: disk
+    /// 153's text names only "Disk 1 (PDO name: \Device\00000064)", while its first property is
+    /// still \Device\Harddisk1\DR1. Capped at MaxCountedRecords, with Capped set only when a record
+    /// exists past the cap. Any read failure degrades to empty, the same as ReadFamily.</summary>
+    private static (List<(string Provider, int EventId, DateTime Time, int DiskIndex)> Rows, bool Capped) ReadStorageRecords(
+        string logName, List<(string Provider, int EventId)> pairs, int lookbackDays)
+    {
+        var rows = new List<(string Provider, int EventId, DateTime Time, int DiskIndex)>();
+        try
+        {
+            var query = new EventLogQuery(logName, PathType.LogName, BuildFamilyXPath(pairs, lookbackDays)) { ReverseDirection = true };
+            using var reader = new EventLogReader(query);
+            while (reader.ReadEvent() is { } record)
+            {
+                using (record)
+                {
+                    if (rows.Count >= MaxCountedRecords) return (rows, true);
+                    if (record.TimeCreated is not { } time) continue;
+
+                    int disk = -1;
+                    try
+                    {
+                        foreach (var p in record.Properties)
+                        {
+                            if (p.Value is string s && HarddiskPathRegex.Match(s) is { Success: true } m
+                                && int.TryParse(m.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int idx))
+                            {
+                                disk = idx;
+                                break;
+                            }
+                        }
+                    }
+                    catch { /* unrenderable properties - grouped under "Unknown disk" */ }
+
+                    rows.Add((record.ProviderName ?? string.Empty, record.Id, time, disk));
+                }
+            }
+            return (rows, false);
+        }
+        catch
+        {
+            return (new List<(string Provider, int EventId, DateTime Time, int DiskIndex)>(), false);
         }
     }
 

@@ -138,8 +138,9 @@ public sealed class EventLogHealthService
     };
 
     /// <summary>#198: null when there's nothing worth recommending for this channel - either its
-    /// effective retention already covers the app's 30-day lookback, its config wasn't readable at
-    /// all, or it's disabled but not one of the handful of diagnostic channels this app has a
+    /// effective retention already covers the app's 30-day lookback, the log isn't at its size cap
+    /// yet, its config wasn't readable at all, or it's disabled but not one of the handful of
+    /// diagnostic channels this app has a
     /// specific reason to suggest enabling. SuggestedMaxSizeBytes is a simple doubling of the
     /// current configured size (rounded up to the required 64KB alignment) - a rough estimate, not a
     /// precise days-to-bytes projection, stated as such in the confirmation text the caller shows.</summary>
@@ -159,7 +160,14 @@ public sealed class EventLogHealthService
             };
         }
 
-        if (health.IsEnabled == true && health.MaxSizeBytes is { } current && current > 0
+        // Only a log that has actually reached its size cap is losing history to it - a short span
+        // in a log still well under its cap is a young install or a recent clear, and a bigger cap
+        // wouldn't change it. IsLogFull is never set for a circular log, so the size test is the
+        // one that normally decides.
+        bool atCapacity = health.IsLogFull == true
+            || (health.FileSizeBytes is { } fileSize && health.MaxSizeBytes is { } max && max > 0 && fileSize >= max * 0.9);
+
+        if (health.IsEnabled == true && atCapacity && health.MaxSizeBytes is { } current && current > 0
             && health.EffectiveRetentionDays is { } days && days < TargetLookbackDays)
         {
             long suggested = RoundUpToAlignment(current * 2, MinRoundingUnitBytes);
@@ -248,7 +256,17 @@ public sealed class EventLogHealthService
         {
             if (!File.Exists(ConfigPath)) return new List<EventLogConfigChangeRecord>();
             var settings = JsonSerializer.Deserialize<EventLogConfigSettings>(File.ReadAllText(ConfigPath));
-            return settings?.Changes ?? new List<EventLogConfigChangeRecord>();
+            // Valid JSON can still carry null records/strings (explicit nulls overwrite the
+            // initializers) - drop or blank them here so no caller has to.
+            var changes = (settings?.Changes ?? new List<EventLogConfigChangeRecord>())
+                .Where(c => c is not null && !string.IsNullOrWhiteSpace(c.ChannelName))
+                .ToList();
+            foreach (var c in changes)
+            {
+                c.PreviousValue ??= string.Empty;
+                c.NewValue ??= string.Empty;
+            }
+            return changes;
         }
         catch
         {
@@ -321,16 +339,27 @@ public sealed class EventLogHealthService
                 var result = _explorer.ReadPage(channel, xpath, null, 200);
                 if (result.ErrorText is not null) return new List<LogClearEvent>();
 
+                // 1102 ("The audit log was cleared") is only ever the Security log - its message
+                // names it "audit" - and its clearing account is in the event data (SubjectUserSid,
+                // SubjectUserName, SubjectDomainName), not the System UserID.
                 return result.Rows.Select(r => new LogClearEvent
                 {
                     TimeCreated = r.TimeCreated,
                     SourceChannel = channel,
-                    ClearedChannelName = (eventId == 104 ? ClearedChannelOf(r) : ExtractClearedLogName(r.Message)) ?? clearedName,
-                    Account = _explorer.ResolveUserAccount(r.UserSid),
+                    ClearedChannelName = eventId == 104 ? ClearedChannelOf(r) ?? clearedName : clearedName,
+                    Account = eventId == 1102 ? SecurityClearAccountOf(r) : _explorer.ResolveUserAccount(r.UserSid),
                 }).ToList();
             }
             catch { return new List<LogClearEvent>(); }
         }
+    }
+
+    private string SecurityClearAccountOf(EventRecordRow row)
+    {
+        var p = row.PropertyValues;
+        if (p.Count > 2 && !string.IsNullOrWhiteSpace(p[1]))
+            return string.IsNullOrWhiteSpace(p[2]) ? p[1].Trim() : $@"{p[2].Trim()}\{p[1].Trim()}";
+        return _explorer.ResolveUserAccount(p.Count > 0 && !string.IsNullOrWhiteSpace(p[0]) ? p[0] : row.UserSid);
     }
 
     private static readonly Regex ClearedLogNameRegex = new(@"The\s+(.+?)\s+log (?:file )?was cleared", RegexOptions.IgnoreCase | RegexOptions.Compiled);

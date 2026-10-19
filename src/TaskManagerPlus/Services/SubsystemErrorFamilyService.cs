@@ -39,7 +39,8 @@ public sealed class SubsystemErrorFamilyService
         {
             (PerflibProvider, 1008), (PerflibProvider, 1010), (PerflibProvider, 1017), (PerflibProvider, 1023), (PerflibProvider, 2004),
         };
-        var rows = ReadFamily("System", pairs, lookbackDays);
+        // Perflib writes to the Application log (its only classic-log link), not System.
+        var rows = ReadFamily("Application", pairs, lookbackDays);
         if (rows.Count == 0) return new PerflibFailureSummary();
 
         var failures = rows.OrderByDescending(r => r.TimeCreated).Select(r => new PerflibFailureEvent

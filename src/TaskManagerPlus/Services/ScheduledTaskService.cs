@@ -217,8 +217,9 @@ public static class ScheduledTaskService
         try
         {
             // schtasks /tr takes one token - a command with arguments has to be quoted as a whole,
-            // with any embedded quotes doubled the way schtasks itself expects.
-            string quotedCommand = "\"" + command.Replace("\"", "\"\"") + "\"";
+            // with embedded quotes backslash-escaped (schtasks /create /? shows /tr "... \"c:\log
+            // data\today.xml\""); a doubled "" is not how schtasks splits its command line.
+            string quotedCommand = QuoteCommandLineArgument(command);
             var (output, exitCode) = await RunCapturedAsync(
                 "schtasks.exe", $"/create /tn \"{taskName}\" {scheduleArgs} /tr {quotedCommand} /ru SYSTEM /rl HIGHEST /f", timeoutMs: 15000);
             return exitCode == 0 ? (true, null) : (false, string.IsNullOrWhiteSpace(output) ? "schtasks /create failed (unknown error)." : output.Trim());
@@ -227,6 +228,25 @@ public static class ScheduledTaskService
         {
             return (false, ex.Message);
         }
+    }
+
+    /// <summary>Quotes <paramref name="value"/> as one argument under the standard Windows
+    /// command-line rules: an embedded quote becomes \", backslashes directly before a quote (or
+    /// before the closing quote) are doubled, and every other backslash is left alone.</summary>
+    private static string QuoteCommandLineArgument(string value)
+    {
+        var sb = new StringBuilder(value.Length + 8).Append('"');
+        int backslashes = 0;
+        foreach (char c in value)
+        {
+            if (c == '\\') { backslashes++; continue; }
+            if (c == '"') sb.Append('\\', backslashes * 2 + 1);
+            else sb.Append('\\', backslashes);
+            sb.Append(c);
+            backslashes = 0;
+        }
+        sb.Append('\\', backslashes * 2);
+        return sb.Append('"').ToString();
     }
 
     /// <summary>#979: cancels a previously queued task - used both by the review dialog's own
@@ -275,10 +295,25 @@ public static class ScheduledTaskService
         {
             string xml = (await RunCapturedAsync("schtasks.exe", $"/query /tn \"{taskName}\" /xml")).Output;
 
-            var delayMatch = Regex.Match(xml, @"<LogonTrigger>.*?<Delay>(P[^<]+)</Delay>", RegexOptions.Singleline);
-            string delayText = delayMatch.Success
-                ? $"Delay: {FormatIso8601Duration(delayMatch.Groups[1].Value)}"
-                : "No logon-trigger delay configured.";
+            // Parsed, not regex-matched: most real logon triggers carry an attribute
+            // (<LogonTrigger id="...">), and a lazy match from <LogonTrigger> ran on into a later
+            // trigger's <Delay>. Only a Delay that is a direct child of a LogonTrigger counts.
+            string delayText;
+            try
+            {
+                var delay = XDocument.Parse(xml).Descendants()
+                    .Where(e => e.Name.LocalName == "LogonTrigger")
+                    .Select(t => t.Elements().FirstOrDefault(c => c.Name.LocalName == "Delay")?.Value.Trim())
+                    .FirstOrDefault(v => !string.IsNullOrEmpty(v));
+                delayText = delay is not null
+                    ? $"Delay: {FormatIso8601Duration(delay)}"
+                    : "No logon-trigger delay configured.";
+            }
+            catch
+            {
+                // Empty/failed schtasks output - unknown, not "no delay".
+                delayText = "(couldn't read this task's logon-trigger delay)";
+            }
 
             var logonTypeMatch = Regex.Match(xml, @"<LogonType>([^<]+)</LogonType>");
             string runModeText = logonTypeMatch.Success ? DescribeLogonType(logonTypeMatch.Groups[1].Value) : "Unknown";
@@ -520,10 +555,11 @@ public static class ScheduledTaskService
     /// task's XML in one shelled-out call) rather than fetching each task's individual XML - the
     /// same "one shared read, not N per-item reads" tradeoff BcdInspectorService's single
     /// ReadAsync() snapshot already takes, important here since a system can have hundreds of
-    /// tasks. `/xml ONE` concatenates one `&lt;?xml ...?&gt;&lt;Task&gt;...&lt;/Task&gt;` document
-    /// per task back to back rather than wrapping them in one shared root - not valid XML as a
-    /// whole, so this splits on each XML declaration and parses one task fragment at a time (a
-    /// malformed fragment is skipped rather than failing the whole scan).
+    /// tasks. `/xml ONE` (checked live) is one well-formed document: a namespace-less
+    /// `&lt;Tasks&gt;` root holding every namespaced `&lt;Task&gt;`, with no XML declarations. The
+    /// plain `/xml` form instead puts a `&lt;?xml ...?&gt;` declaration before each task inside the
+    /// same wrapper, so a declaration split is still applied first in case a build emits that
+    /// shape (a malformed fragment is skipped rather than failing the whole scan).
     /// </summary>
     public static async Task<List<ScheduledTaskTriggerInfo>> ListBootAndLogonTriggeredAsync()
     {
@@ -540,18 +576,20 @@ public static class ScheduledTaskService
                 catch { continue; } // one malformed fragment shouldn't drop the rest of the scan
 
                 if (doc.Root is null) continue;
-                XNamespace ns = doc.Root.Name.Namespace;
 
                 // `/xml ONE`'s actual wrapping shape (one root `<Task>` per declaration, vs. all
                 // tasks nested under one `<Tasks>` root) isn't a documented, versioned contract, so
                 // this handles either: if the root itself is a Task, use it directly; otherwise
-                // look for `<Task>` descendants.
+                // look for `<Task>` descendants. On this build it's the latter, and the `<Tasks>`
+                // wrapper has no namespace while each `<Task>` is in the Task Scheduler one - so
+                // tasks are matched by local name and each one's own namespace is used inside it.
                 var taskElements = doc.Root.Name.LocalName == "Task"
                     ? new[] { doc.Root }
-                    : doc.Descendants(ns + "Task").ToArray();
+                    : doc.Root.Descendants().Where(e => e.Name.LocalName == "Task").ToArray();
 
                 foreach (var taskEl in taskElements)
                 {
+                    XNamespace ns = taskEl.Name.Namespace;
                     try
                     {
                         bool hasBoot = taskEl.Descendants(ns + "BootTrigger").Any();
@@ -610,8 +648,17 @@ public static class ScheduledTaskService
             int end = i + 1 < starts.Count ? starts[i + 1] : combined.Length;
             blocks.Add(combined[start..end]);
         }
+        blocks[^1] = StripTasksWrapperClose(blocks[^1]);
         return blocks;
     }
+
+    private static readonly Regex TrailingTasksCloseRegex = new(@"</Tasks>\s*$", RegexOptions.Compiled);
+
+    /// <summary>When schtasks splits its output with a declaration per task, the whole set still
+    /// sits inside one `&lt;Tasks&gt;` wrapper whose open tag lands before the first declaration
+    /// (dropped by the split) and whose close tag ends the LAST fragment - an end tag with no
+    /// matching start there, which failed that fragment's parse and dropped the last task.</summary>
+    private static string StripTasksWrapperClose(string fragment) => TrailingTasksCloseRegex.Replace(fragment, string.Empty);
 
     /// <summary>
     /// #655: wake-enabled ("Wake the computer to run this task") scheduled tasks - the other
@@ -664,7 +711,7 @@ public static class ScheduledTaskService
         while (idx >= 0)
         {
             int next = output.IndexOf("<?xml", idx + 5, StringComparison.OrdinalIgnoreCase);
-            docs.Add(next >= 0 ? output[idx..next] : output[idx..]);
+            docs.Add(next >= 0 ? output[idx..next] : StripTasksWrapperClose(output[idx..]));
             idx = next;
         }
         return docs;
@@ -701,8 +748,21 @@ public static class ScheduledTaskService
     /// for anything not in this small known-codes table.</summary>
     public static string? DecodeKnownLastResult(string lastResult)
     {
+        string? hex = NormalizeLastResult(lastResult);
+        return hex is not null && KnownLastResultCodes.TryGetValue(hex, out var known) ? known : null;
+    }
+
+    /// <summary>schtasks' CSV "Last Result" is a signed DECIMAL ("267011", "-2147020576"), while
+    /// the table above (and certutil) speak hex - so this maps either form to an unpadded
+    /// "0x41303"/"0x800710E0" key. Null for anything that isn't a number.</summary>
+    private static string? NormalizeLastResult(string lastResult)
+    {
         string trimmed = lastResult.Trim();
-        return trimmed.Length > 0 && KnownLastResultCodes.TryGetValue(trimmed, out var known) ? known : null;
+        if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            return uint.TryParse(trimmed.AsSpan(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint h) ? $"0x{h:X}" : null;
+        return long.TryParse(trimmed, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long d) && d >= int.MinValue && d <= uint.MaxValue
+            ? $"0x{unchecked((uint)d):X}"
+            : null;
     }
 
     /// <summary>#765: falls back to `certutil -error &lt;code&gt;` for any Last Result code not in
@@ -714,14 +774,15 @@ public static class ScheduledTaskService
     {
         if (DecodeKnownLastResult(lastResult) is { } known) return known;
 
-        string trimmed = lastResult.Trim();
-        if (trimmed.Length == 0) return "Unknown";
+        // Only a real number reaches certutil - the raw field is free text from schtasks.
+        if (NormalizeLastResult(lastResult) is not { } hex) return "Unknown";
 
         try
         {
-            var (output, exitCode) = await RunCapturedAsync("certutil.exe", $"-error {trimmed}");
-            var line = output.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0);
-            return exitCode == 0 && line is { Length: > 0 } ? line : "Unknown error code";
+            // certutil's first line just echoes the code; the meaning is on its own labelled line.
+            var (output, exitCode) = await RunCapturedAsync("certutil.exe", $"-error {hex}");
+            string? meaning = exitCode == 0 ? StatusCodeResolverService.ParseCertutilErrorText(output, hex) : null;
+            return meaning ?? "Unknown error code";
         }
         catch (Exception ex)
         {
