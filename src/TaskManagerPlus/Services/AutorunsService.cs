@@ -1653,11 +1653,23 @@ public static class AutorunsService
     // condition actually fires. root\subscription is empty on the overwhelming majority of clean
     // machines, and WMI itself can be unavailable in constrained environments, so the whole thing is
     // one try/catch that degrades to nothing rather than a scan failure.
+    //
+    // root\default ships the CommandLine/ActiveScript consumer classes and the binding class too,
+    // so a complete subscription can be registered there with no MOF compile - each namespace is
+    // read on its own (one failing doesn't hide the other), and root\subscription keeps its
+    // original Location strings so existing baselines still match.
     private static void AddWmiEventSubscriptionItems(List<AutorunEntry> items, List<SecurityFinding> findings)
     {
+        AddWmiEventSubscriptionItems(items, findings, @"root\subscription");
+        AddWmiEventSubscriptionItems(items, findings, @"root\default");
+    }
+
+    private static void AddWmiEventSubscriptionItems(List<AutorunEntry> items, List<SecurityFinding> findings, string ns)
+    {
+        bool isSubscriptionNamespace = ns.Equals(@"root\subscription", StringComparison.OrdinalIgnoreCase);
         try
         {
-            var scope = new ManagementScope(@"root\subscription");
+            var scope = new ManagementScope(ns);
             scope.Connect();
 
             var filterDescriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1681,7 +1693,7 @@ public static class AutorunsService
                             ResolvedPath = string.Empty,
                             Publisher = "Unknown",
                             SignatureStatus = "Unknown",
-                            Location = $@"root\subscription\{relativePath}",
+                            Location = $@"{ns}\{relativePath}",
                             Enabled = true,
                         });
                     }
@@ -1719,7 +1731,7 @@ public static class AutorunsService
                             ResolvedPath = string.Empty,
                             Publisher = "Unknown",
                             SignatureStatus = "Unknown",
-                            Location = $@"root\subscription\{relativePath}",
+                            Location = $@"{ns}\{relativePath}",
                             Enabled = true,
                         });
                     }
@@ -1739,7 +1751,7 @@ public static class AutorunsService
                     var filterDesc = filterDescriptions.TryGetValue(filterKey, out var fd) ? fd : filterRef;
                     var consumerDesc = consumerDescriptions.TryGetValue(consumerKey, out var cd) ? cd : consumerRef;
 
-                    var location = $"root\\subscription binding: {filterRef} -> {consumerRef}";
+                    var location = $"{ns} binding: {filterRef} -> {consumerRef}";
                     var entry = new AutorunEntry
                     {
                         Category = "WMI Subscription",
@@ -1762,7 +1774,7 @@ public static class AutorunsService
                         || consumerClass.Equals("ActiveScriptEventConsumer", StringComparison.OrdinalIgnoreCase);
                     bool isStockScmBinding = consumerKey.Equals("NTEventLogEventConsumer.Name=\"SCM Event Log Consumer\"", StringComparison.OrdinalIgnoreCase)
                         && filterKey.Equals("__EventFilter.Name=\"SCM Event Log Filter\"", StringComparison.OrdinalIgnoreCase);
-                    if (isStockScmBinding) continue;
+                    if (isStockScmBinding && isSubscriptionNamespace) continue; // Windows registers it in root\subscription only
 
                     findings.Add(new SecurityFinding
                     {
@@ -1778,8 +1790,8 @@ public static class AutorunsService
         }
         catch
         {
-            // root\subscription empty/absent (the normal case) or WMI unavailable in this
-            // environment - contribute nothing.
+            // Namespace empty/absent (the normal case) or WMI unavailable in this environment -
+            // contribute nothing for this namespace.
         }
     }
 
@@ -2591,7 +2603,42 @@ public static class AutorunsService
             }
             catch { return false; }
         }
-        return sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase) && !sid.Equals(me, StringComparison.OrdinalIgnoreCase);
+        if (!sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase) || sid.Equals(me, StringComparison.OrdinalIgnoreCase)) return false;
+
+        // Domain and local custom groups (Domain Users, a local group) share the S-1-5-21 prefix
+        // with user accounts - and a task's <GroupId> principal lands here as RunAsUser too. Only a
+        // user account is a boundary; a SID whose type can't be looked up keeps the flag.
+        if (int.TryParse(sid[(sid.LastIndexOf('-') + 1)..], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int rid)
+            && (rid is >= 512 and <= 527 || rid is 553 or 571 or 572))
+            return false; // well-known domain groups (Domain Users = 513, ...), even with no DC reachable
+        return LookupSidType(sid) is null or SidTypeUser;
+    }
+
+    private const int SidTypeUser = 1;
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true, EntryPoint = "LookupAccountSidW")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool LookupAccountSid(string? systemName, byte[] sid, System.Text.StringBuilder name, ref uint cchName,
+        System.Text.StringBuilder domain, ref uint cchDomain, out int use);
+
+    /// <summary>The account's SID_NAME_USE (1 = user, 2/4/5 = group/alias/well-known group), or null
+    /// when it can't be resolved.</summary>
+    private static int? LookupSidType(string sid)
+    {
+        try
+        {
+            var id = new System.Security.Principal.SecurityIdentifier(sid);
+            var bytes = new byte[id.BinaryLength];
+            id.GetBinaryForm(bytes, 0);
+            uint nameLen = 256, domainLen = 256;
+            var name = new System.Text.StringBuilder((int)nameLen);
+            var domain = new System.Text.StringBuilder((int)domainLen);
+            return LookupAccountSid(null, bytes, name, ref nameLen, domain, ref domainLen, out int use) ? use : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static void AddScheduledTaskSecurityFindings(List<SecurityFinding> findings)
@@ -2786,15 +2833,19 @@ public static class AutorunsService
                     using var sub = key.OpenSubKey(progId);
                     if (sub is null) continue;
 
-                    string loadBehaviorText = sub.GetValue("LoadBehavior") is int lb
-                        ? lb switch
-                        {
-                            0 => "Disabled",
-                            3 or 9 => "Loads at startup",
-                            8 => "Loaded on demand",
-                            _ => "Other",
-                        }
-                        : "Unknown";
+                    // Documented values: bit 0 = currently loaded, 2 = load at startup, 8 = on demand,
+                    // 16 = load once, then on demand. 0 and 1 never load automatically.
+                    int? loadBehavior = sub.GetValue("LoadBehavior") is int lb ? lb : null;
+                    string loadBehaviorText = loadBehavior switch
+                    {
+                        null => "Unknown",
+                        0 => "Disabled",
+                        1 => "Doesn't load automatically",
+                        2 or 3 => "Loads at startup",
+                        8 or 9 => "Loaded on demand",
+                        16 => "Loads the first time, then on demand",
+                        _ => $"Other ({loadBehavior})",
+                    };
 
                     var friendlyName = sub.GetValue("FriendlyName") as string ?? sub.GetValue("Description") as string;
                     var displayName = string.IsNullOrWhiteSpace(friendlyName) ? progId : friendlyName;
@@ -2813,7 +2864,7 @@ public static class AutorunsService
                         Publisher = GetPublisher(dllPath),
                         SignatureStatus = status,
                         Location = entryLocation,
-                        Enabled = loadBehaviorText != "Disabled",
+                        Enabled = loadBehavior is not (0 or 1),
                     };
                     items.Add(entry);
 
@@ -2971,7 +3022,7 @@ public static class AutorunsService
     // CommonStartup - the exact same two paths StartupManagerService.Sample already scans, reused
     // rather than re-derived) via the WScript.Shell COM object. This app has no existing
     // .lnk-parsing code anywhere (checked: no WshShell/IShellLink/.lnk usage in Services/ before
-    // this), so this is late-bound reflection (Type.GetTypeFromProgID + InvokeMember) rather than
+    // this), so this is late-bound reflection (Type.GetTypeFromCLSID + InvokeMember) rather than
     // `dynamic` - avoids taking a new Microsoft.CSharp project reference for one call site. A
     // shortcut that throws on CreateShortcut/property access (malformed, inaccessible, or a
     // non-file-system .lnk target) is skipped rather than failing the whole scan.
@@ -3000,28 +3051,65 @@ public static class AutorunsService
         try { appDataRoot = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); }
         catch { appDataRoot = string.Empty; }
 
-        foreach (var (folderPath, recursive) in folders)
+        object? shell = null;
+        try
         {
-            try
+            // This process is elevated, and COM resolves a class through the per-user hive too, so
+            // a per-user registration of this class would load its DLL as admin. Activated by CLSID
+            // (a ProgID lookup is one more per-user-overridable step), checked right before the one
+            // activation the whole walk reuses, and refused - visibly - when an override exists.
+            if (SafeLaunchService.HasPerUserComOverride(WshShellClsid, "WScript.Shell", "WScript.Shell.1"))
             {
-                if (string.IsNullOrWhiteSpace(folderPath) || !System.IO.Directory.Exists(folderPath)) continue;
-
-                var searchOption = recursive ? System.IO.SearchOption.AllDirectories : System.IO.SearchOption.TopDirectoryOnly;
-                foreach (var lnkPath in System.IO.Directory.EnumerateFiles(folderPath, "*.lnk", searchOption))
+                findings.Add(new SecurityFinding
                 {
-                    AddOneShortcutItem(items, findings, lnkPath, tempRoot, appDataRoot);
+                    Severity = FindingSeverity.High,
+                    Title = "Per-user registration of the WScript.Shell COM object",
+                    Reason = @"HKCU\Software\Classes has its own WScript.Shell or {72C24DD5-D70A-438B-8A42-98424B88AFB8} entry, which overrides the system's Windows Script Host shell object for this user - a known COM-hijack persistence trick, since anything that creates the object then loads the per-user DLL instead. Shortcut targets weren't checked, because resolving them would load that DLL into this elevated app.",
+                    Path = @"HKCU\Software\Classes\WScript.Shell, HKCU\Software\Classes\CLSID\{72C24DD5-D70A-438B-8A42-98424B88AFB8}",
+                    WhatDisablingDoes = "If no software you installed explains it, export the per-user key with regedit (as a backup) and delete it, then rescan. Quick flag, not a verdict.",
+                });
+                return;
+            }
+
+            var shellType = Type.GetTypeFromCLSID(WshShellClsid, throwOnError: false);
+            if (shellType is null) return;
+            shell = Activator.CreateInstance(shellType);
+            if (shell is null) return;
+
+            foreach (var (folderPath, recursive) in folders)
+            {
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(folderPath) || !System.IO.Directory.Exists(folderPath)) continue;
+
+                    var searchOption = recursive ? System.IO.SearchOption.AllDirectories : System.IO.SearchOption.TopDirectoryOnly;
+                    foreach (var lnkPath in System.IO.Directory.EnumerateFiles(folderPath, "*.lnk", searchOption))
+                    {
+                        AddOneShortcutItem(items, findings, shell, lnkPath, tempRoot, appDataRoot);
+                    }
+                }
+                catch
+                {
+                    // Folder inaccessible/enumeration failed - skip this folder, keep scanning the rest.
                 }
             }
-            catch
-            {
-                // Folder inaccessible/enumeration failed - skip this folder, keep scanning the rest.
-            }
+        }
+        catch
+        {
+            // WScript.Shell unavailable (Windows Script Host removed/disabled) - no shortcut rows.
+        }
+        finally
+        {
+            if (shell is not null && System.Runtime.InteropServices.Marshal.IsComObject(shell))
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(shell);
         }
     }
 
-    private static void AddOneShortcutItem(List<AutorunEntry> items, List<SecurityFinding> findings, string lnkPath, string tempRoot, string appDataRoot)
+    private static readonly Guid WshShellClsid = new("72C24DD5-D70A-438B-8A42-98424B88AFB8");
+
+    private static void AddOneShortcutItem(List<AutorunEntry> items, List<SecurityFinding> findings, object shell, string lnkPath, string tempRoot, string appDataRoot)
     {
-        var resolved = TryResolveShortcut(lnkPath);
+        var resolved = TryResolveShortcut(shell, lnkPath);
         if (resolved is null) return; // malformed/inaccessible - skip, per this item's own guidance
 
         var (target, arguments) = resolved.Value;
@@ -3078,23 +3166,16 @@ public static class AutorunsService
         }
     }
 
-    /// <summary>Resolves a .lnk's target path and arguments via the WScript.Shell COM object,
-    /// late-bound through reflection rather than `dynamic` - see AddShortcutTamperingItems' remarks
-    /// on why. Returns null for anything that throws (malformed/inaccessible shortcut, or a
+    /// <summary>Resolves a .lnk's target path and arguments via the caller's WScript.Shell
+    /// object, late-bound through reflection rather than `dynamic` - see AddShortcutTamperingItems'
+    /// remarks on why. Returns null for anything that throws (malformed/inaccessible shortcut, or a
     /// non-file-system target COM doesn't expose as a plain path/arguments pair).</summary>
-    private static (string Target, string Arguments)? TryResolveShortcut(string lnkPath)
+    private static (string Target, string Arguments)? TryResolveShortcut(object shell, string lnkPath)
     {
-        object? shell = null;
         object? shortcut = null;
         try
         {
-            var shellType = Type.GetTypeFromProgID("WScript.Shell");
-            if (shellType is null) return null;
-
-            shell = Activator.CreateInstance(shellType);
-            if (shell is null) return null;
-
-            shortcut = shellType.InvokeMember("CreateShortcut", System.Reflection.BindingFlags.InvokeMethod, null, shell, new object[] { lnkPath });
+            shortcut = shell.GetType().InvokeMember("CreateShortcut", System.Reflection.BindingFlags.InvokeMethod, null, shell, new object[] { lnkPath });
             if (shortcut is null) return null;
 
             var shortcutType = shortcut.GetType();
@@ -3110,8 +3191,6 @@ public static class AutorunsService
         {
             if (shortcut is not null && System.Runtime.InteropServices.Marshal.IsComObject(shortcut))
                 System.Runtime.InteropServices.Marshal.ReleaseComObject(shortcut);
-            if (shell is not null && System.Runtime.InteropServices.Marshal.IsComObject(shell))
-                System.Runtime.InteropServices.Marshal.ReleaseComObject(shell);
         }
     }
 

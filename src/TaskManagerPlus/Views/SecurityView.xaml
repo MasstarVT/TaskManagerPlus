@@ -1397,6 +1397,11 @@
                                                             <Setter Property="Text" Value="—" />
                                                             <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                                             <Style.Triggers>
+                                                                <!-- Declared first so a weak grant that WAS read still wins. -->
+                                                                <DataTrigger Binding="{Binding PermissionsUnreadable}" Value="True">
+                                                                    <Setter Property="Text" Value="Couldn't read permissions - not checked" />
+                                                                    <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                                                </DataTrigger>
                                                                 <MultiDataTrigger>
                                                                     <MultiDataTrigger.Conditions>
                                                                         <Condition Binding="{Binding HasWeakShareAccess}" Value="True" />

@@ -132,12 +132,16 @@ public static class BcdInspectorService
                     continue;
                 }
 
+                bool firstOption = current.Options.Count == 0;
                 if (!current.Options.TryGetValue(key, out var list))
                     current.Options[key] = list = new List<string>();
                 list.Add(value);
                 lastKey = key;
 
-                if (key.Equals("identifier", StringComparison.OrdinalIgnoreCase))
+                // The identifier is each block's first line, and its label is localized on some
+                // MUIs ("Bezeichner", "Identificateur") - so a brace-wrapped first value counts too.
+                if (key.Equals("identifier", StringComparison.OrdinalIgnoreCase)
+                    || (firstOption && current.Identifier.Length == 0 && value.StartsWith('{') && value.EndsWith('}')))
                     current.Identifier = value;
 
                 pendingHeader = null;
@@ -183,19 +187,20 @@ public static class BcdInspectorService
             });
         }
 
+        // bcdedit localizes Yes/No ("Ja"/"Nein", "Oui"/"Non", ...): these elements are absent unless
+        // set, so a set value that isn't a recognized "no" counts as possibly on.
         void AddIfYes(string option, string message)
         {
             var v = current.Get(option);
-            if (v is not null && v.Equals("Yes", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(v) || IsBcdOffValue(v)) return;
+            bool exactYes = v.Equals("Yes", StringComparison.OrdinalIgnoreCase);
+            flags.Add(new BootModeFlag
             {
-                flags.Add(new BootModeFlag
-                {
-                    OptionName = option,
-                    RawValue = v,
-                    Message = message,
-                    ClearCommandArgs = $"/deletevalue {id} {option}",
-                });
-            }
+                OptionName = option,
+                RawValue = v,
+                Message = exactYes ? message : $"{option} is set to \"{v}\" (likely localized bcdedit output), so this may be on: {message}",
+                ClearCommandArgs = $"/deletevalue {id} {option}",
+            });
         }
 
         AddIfYes("testsigning", "Test-mode driver signing is on - unsigned/test-signed drivers can load, and Windows shows a \"Test Mode\" desktop watermark.");
@@ -227,6 +232,17 @@ public static class BcdInspectorService
 
         return flags;
     }
+
+    // Localized "no" values bcdedit prints for a boolean element - the same set
+    // PlatformSecurityService.BcdOffValues uses (keep the two in sync).
+    private static readonly HashSet<string> BcdOffValues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "No", "Off", "0", "False",
+        "Nein", "Non", "Nee", "Nej", "Nei", "Ei", "Nie", "Ne", "Nem", "Nu", "Não", "Nao", "Hayır", "Nē",
+        "Нет", "Ні", "Не", "Όχι", "いいえ", "否", "아니요", "לא", "لا", "ไม่",
+    };
+
+    private static bool IsBcdOffValue(string value) => BcdOffValues.Contains(value.Trim());
 
     /// <summary>Runs the exact bcdedit command a BootModeFlag's ClearCommandText already showed
     /// the user in the confirmation dialog - see StartupViewModel.ClearBootModeFlagAsync.</summary>
@@ -392,7 +408,10 @@ public static class BcdInspectorService
     {
         var mgr = store.WindowsBootManager;
         int? timeout = mgr?.Get("timeout") is { } t && int.TryParse(t, out var ts) ? ts : null;
-        bool? displayMenu = mgr?.Get("displaybootmenu") is { } dbm ? dbm.Equals("Yes", StringComparison.OrdinalIgnoreCase) : null;
+        // Yes / a recognized (possibly localized) "no" / anything else stays Unknown.
+        bool? displayMenu = mgr?.Get("displaybootmenu") is { } dbm
+            ? dbm.Equals("Yes", StringComparison.OrdinalIgnoreCase) ? true : IsBcdOffValue(dbm) ? false : null
+            : null;
         string? defaultId = mgr?.Get("default");
 
         var order = (mgr?.GetAll("displayorder") ?? Array.Empty<string>())

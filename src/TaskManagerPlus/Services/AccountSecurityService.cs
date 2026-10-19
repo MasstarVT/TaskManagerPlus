@@ -211,14 +211,20 @@ public static class AccountSecurityService
         bool? RestrictedAdminDisabled,
         int? ShadowValue,
         string ShadowDescription,
-        IReadOnlyList<string> RemoteDesktopUsersMembers);
+        IReadOnlyList<string> RemoteDesktopUsersMembers,
+        bool RdpEnabledByPolicy = false,
+        bool NlaByPolicy = false,
+        bool ShadowByPolicy = false);
 
     private const string TerminalServerPath = @"SYSTEM\CurrentControlSet\Control\Terminal Server";
     private const string RdpTcpWinStationPath = @"SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp";
+    // Group Policy's copies of the same settings - termsrv applies these over the local values.
+    private const string TerminalServicesPolicyPath = @"SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services";
 
     public static (RdpExposureInfo Info, SecurityFinding? Finding) ReadRdpExposure()
     {
         bool? rdpEnabled = null, nlaRequired = null, restrictedAdminDisabled = null;
+        bool rdpByPolicy = false, nlaByPolicy = false, shadowByPolicy = false;
         int port = 3389;
         int? shadowValue = null;
 
@@ -242,6 +248,24 @@ public static class AccountSecurityService
         }
         catch { /* Unknown - not fabricated */ }
 
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(TerminalServicesPolicyPath);
+            if (key is not null)
+            {
+                if (key.GetValue("fDenyTSConnections") is int deny) { rdpEnabled = deny == 0; rdpByPolicy = true; }
+                if (key.GetValue("UserAuthentication") is int ua) { nlaRequired = ua != 0; nlaByPolicy = true; }
+                if (key.GetValue("Shadow") is int shadow) { shadowValue = shadow; shadowByPolicy = true; }
+            }
+        }
+        catch
+        {
+            // Policy key unreadable: the local values could be overridden, so don't present them as the
+            // effective state.
+            rdpEnabled = null;
+            nlaRequired = null;
+        }
+
         string shadowDescription = shadowValue switch
         {
             null => "Not configured",
@@ -252,10 +276,12 @@ public static class AccountSecurityService
             4 => "View only, without the user's permission",
             _ => $"Unrecognized value ({shadowValue})",
         };
+        if (shadowByPolicy) shadowDescription += " (set by policy)";
 
         var members = ReadLocalGroupMembers(RemoteDesktopUsersSid).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
 
-        var info = new RdpExposureInfo(rdpEnabled, nlaRequired, port, restrictedAdminDisabled, shadowValue, shadowDescription, members);
+        var info = new RdpExposureInfo(rdpEnabled, nlaRequired, port, restrictedAdminDisabled, shadowValue, shadowDescription, members,
+            rdpByPolicy, nlaByPolicy, shadowByPolicy);
 
         SecurityFinding? finding = null;
         if (rdpEnabled == true && nlaRequired == false)
@@ -264,9 +290,11 @@ public static class AccountSecurityService
             {
                 Severity = FindingSeverity.Medium,
                 Title = "RDP is enabled without Network Level Authentication",
-                Reason = $"Remote Desktop is enabled (port {port}) and Network Level Authentication is NOT required - RDP sessions can reach the full logon screen before any credential is verified, a larger attack surface than NLA-protected RDP.",
-                Path = $@"HKLM\{RdpTcpWinStationPath}\UserAuthentication",
-                WhatDisablingDoes = "Turn on \"Require Network Level Authentication\" under System Properties > Remote, or set this registry value to 1 - existing Remote Desktop clients that don't support NLA will need to be updated.",
+                Reason = $"Remote Desktop is enabled (port {port}{(rdpByPolicy ? ", allowed by Group Policy" : string.Empty)}) and Network Level Authentication is NOT required{(nlaByPolicy ? " (set by Group Policy)" : string.Empty)} - RDP sessions can reach the full logon screen before any credential is verified, a larger attack surface than NLA-protected RDP.",
+                Path = nlaByPolicy ? $@"HKLM\{TerminalServicesPolicyPath}\UserAuthentication" : $@"HKLM\{RdpTcpWinStationPath}\UserAuthentication",
+                WhatDisablingDoes = nlaByPolicy
+                    ? "This is set by Group Policy (Computer Configuration > Administrative Templates > Windows Components > Remote Desktop Services > Remote Desktop Session Host > Security > \"Require user authentication for remote connections by using Network Level Authentication\") - change it there, or ask whoever manages the policy."
+                    : "Turn on \"Require Network Level Authentication\" under System Properties > Remote, or set this registry value to 1 - existing Remote Desktop clients that don't support NLA will need to be updated.",
             };
         }
         return (info, finding);
@@ -280,7 +308,22 @@ public static class AccountSecurityService
 
     private const string SecurityLog = "Security";
     private const int LookbackDays = 30;
-    private const int MaxSignInEvents = 200;
+
+    // Each family is its own query with its own cap. 4624 (type 5 service logons) and 4672 are
+    // logged for SYSTEM/LOCAL SERVICE/NETWORK SERVICE many times an hour, so one shared newest-200
+    // window covered a few hours and pushed the rare rows (account created, added to a group, a
+    // failed-logon burst) out of view - those service-account rows are left out entirely. {0} is
+    // the TimeCreated clause.
+    private static readonly (string Label, string XPath, int Cap)[] SignInFamilies =
+    {
+        ("account changes", "*[System[(EventID=4720 or EventID=4726 or EventID=4732) and {0}]]", 200),
+        ("failed logons", "*[System[(EventID=4625) and {0}]]", 500),
+        ("logons", "*[System[(EventID=4624) and {0}] and EventData[Data[@Name='LogonType']!='5' and " + NotServiceAccount("TargetUserSid") + "]]", 200),
+        ("admin logons", "*[System[(EventID=4672) and {0}] and EventData[" + NotServiceAccount("SubjectUserSid") + "]]", 200),
+    };
+
+    private static string NotServiceAccount(string sidField) =>
+        string.Join(" and ", new[] { "S-1-5-18", "S-1-5-19", "S-1-5-20" }.Select(sid => $"Data[@Name='{sidField}']!='{sid}'"));
 
     public sealed record SignInTimelineEvent(DateTime Time, int EventId, string EventType, string TargetUser, string LogonType, string SourceIp, string Summary);
 
@@ -311,41 +354,54 @@ public static class AccountSecurityService
     /// is that Security-log queries are the most expensive/most likely to be access-denied of
     /// anything on this tab. Degrades to "no events found (or auditing may not be enabled)" -
     /// exactly the wording the item's own text asks for - rather than surfacing a bare
-    /// UnauthorizedAccessException.</summary>
-    public static (List<SignInTimelineEvent> Events, bool LogAvailable, List<SecurityFinding> Findings) ReadSignInTimeline()
+    /// UnauthorizedAccessException. Notes names each family that hit its cap (and the oldest event
+    /// it still covers) or couldn't be read, so a short window never reads as a clean month.</summary>
+    public static (List<SignInTimelineEvent> Events, bool LogAvailable, List<SecurityFinding> Findings, List<string> Notes) ReadSignInTimeline()
     {
         var events = new List<SignInTimelineEvent>();
-        bool logAvailable = true;
-        try
-        {
-            long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
-            string idFilter = string.Join(" or ", SignInEventLabels.Keys.Select(id => $"EventID={id}"));
-            var query = new EventLogQuery(SecurityLog, PathType.LogName,
-                $"*[System[({idFilter}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
-            {
-                ReverseDirection = true,
-            };
+        var notes = new List<string>();
+        int familiesRead = 0;
+        long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
+        string ageClause = $"TimeCreated[timediff(@SystemTime) <= {maxAgeMs.ToString(System.Globalization.CultureInfo.InvariantCulture)}]";
 
-            using var reader = new EventLogReader(query);
-            int count = 0;
-            while (count < MaxSignInEvents && reader.ReadEvent() is { } record)
+        foreach (var (label, xpath, cap) in SignInFamilies)
+        {
+            var familyEvents = new List<SignInTimelineEvent>();
+            try
             {
-                using (record)
+                var query = new EventLogQuery(SecurityLog, PathType.LogName, xpath.Replace("{0}", ageClause))
                 {
-                    count++;
-                    events.Add(BuildTimelineEvent(record));
+                    ReverseDirection = true,
+                };
+
+                using var reader = new EventLogReader(query);
+                bool capped = false;
+                while (reader.ReadEvent() is { } record)
+                {
+                    using (record)
+                    {
+                        if (familyEvents.Count == cap) { capped = true; break; }
+                        familyEvents.Add(BuildTimelineEvent(record));
+                    }
                 }
+                familiesRead++;
+                events.AddRange(familyEvents);
+                if (capped && familyEvents.Count > 0)
+                    notes.Add($"{label}: capped at the newest {cap}, covering {familyEvents[^1].Time:g} to now");
+            }
+            catch (Exception ex)
+            {
+                // Access denied (even elevated, if local audit policy doesn't log these event types
+                // at all) or the log is otherwise unavailable - degrade gracefully, never throw.
+                notes.Add($"{label}: couldn't be read ({ex.Message})");
             }
         }
-        catch
-        {
-            // Access denied (even elevated, if local audit policy doesn't log these event types
-            // at all) or the log is otherwise unavailable - degrade gracefully, never throw.
-            logAvailable = false;
-        }
 
+        bool logAvailable = familiesRead > 0;
+        if (!logAvailable) notes.Clear(); // the caller's "no events / auditing may be off" text covers it
+        events.Sort((a, b) => b.Time.CompareTo(a.Time));
         var findings = logAvailable ? BuildBurstFindings(events) : new List<SecurityFinding>();
-        return (events, logAvailable, findings);
+        return (events, logAvailable, findings, notes);
     }
 
     private static SignInTimelineEvent BuildTimelineEvent(EventRecord record)

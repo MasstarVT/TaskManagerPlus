@@ -700,16 +700,18 @@ public sealed class SecurityViewModel : ObservableObject
 
     private void SaveBaseline()
     {
-        AutorunsBaselineService.SaveBaseline(AutorunEntries);
+        var (saved, signed, error) = AutorunsBaselineService.SaveBaseline(AutorunEntries);
         HasBaseline = AutorunsBaselineService.HasBaseline();
-        StatusMessage = HasBaseline
-            ? $"Baseline saved: {AutorunEntries.Count} entries."
-            : "Couldn't save the baseline.";
+        StatusMessage = !saved
+            ? $"Couldn't save the baseline: {error}"
+            : signed
+                ? $"Baseline saved: {AutorunEntries.Count} entries."
+                : $"Baseline saved ({AutorunEntries.Count} entries), but this app couldn't sign it (that needs the app running elevated, and read-only mode can't create the signing key) - \"Compare to baseline\" won't use an unsigned baseline.";
     }
 
     private void CompareToBaseline()
     {
-        var diff = AutorunsBaselineService.Diff(AutorunEntries);
+        var diff = AutorunsBaselineService.Diff(AutorunEntries, out string? notComparedReason);
 
         BaselineAdded.Clear();
         BaselineRemoved.Clear();
@@ -717,7 +719,7 @@ public sealed class SecurityViewModel : ObservableObject
 
         if (!diff.HasBaseline)
         {
-            StatusMessage = "No baseline saved yet - use \"Save baseline\" first.";
+            StatusMessage = notComparedReason ?? "No baseline saved yet - use \"Save baseline\" first.";
             return;
         }
 
@@ -1391,13 +1393,16 @@ public sealed class SecurityViewModel : ObservableObject
         ShareScanStatus = null;
         try
         {
-            var (shares, findings) = await Task.Run(ShareAuditService.Scan);
+            var (shares, findings, error) = await Task.Run(ShareAuditService.Scan);
             Shares.Clear();
             foreach (var s in shares) Shares.Add(s);
             ReplaceSectionFindings("Shares", findings);
 
             int userShares = shares.Count(s => !s.IsAdministrative);
-            ShareScanStatus = $"{shares.Count} share(s) found ({userShares} user-created, {shares.Count - userShares} administrative) - {findings.Count} new finding(s).";
+            int unreadable = shares.Count(s => s.PermissionsUnreadable);
+            ShareScanStatus = $"{shares.Count} share(s) found ({userShares} user-created, {shares.Count - userShares} administrative) - {findings.Count} new finding(s)."
+                + (unreadable > 0 ? $" {unreadable} user-created share(s) whose permissions couldn't be read weren't checked." : string.Empty)
+                + (error is not null ? $" The share list may be incomplete - enumerating shares failed: {error}" : string.Empty);
         }
         catch (Exception ex)
         {
@@ -1797,7 +1802,9 @@ public sealed class SecurityViewModel : ObservableObject
                     ? " (Run \"Scan exposed listeners\" above to cross-check whether this port is actually reachable.)"
                     : $" Port {info.Port} did not show up in the exposed-listener map above.";
 
-            RdpExposureStatus = $"RDP: {(info.RdpEnabled switch { true => "Enabled", false => "Disabled", _ => "Unknown" })}, NLA: {(info.NlaRequired switch { true => "Required", false => "Not required", _ => "Unknown" })}, port {info.Port}, {info.RemoteDesktopUsersMembers.Count} member(s) of Remote Desktop Users.{exposureNote} Failed-RDP-logon data (LogonType RemoteInteractive) is available in the sign-in timeline below once scanned.";
+            string rdpByPolicy = info.RdpEnabledByPolicy ? " (set by policy)" : string.Empty;
+            string nlaByPolicy = info.NlaByPolicy ? " (set by policy)" : string.Empty;
+            RdpExposureStatus = $"RDP: {(info.RdpEnabled switch { true => "Enabled", false => "Disabled", _ => "Unknown" })}{rdpByPolicy}, NLA: {(info.NlaRequired switch { true => "Required", false => "Not required", _ => "Unknown" })}{nlaByPolicy}, port {info.Port}, {info.RemoteDesktopUsersMembers.Count} member(s) of Remote Desktop Users.{exposureNote} Failed-RDP-logon data (LogonType RemoteInteractive) is available in the sign-in timeline below once scanned.";
         }
         catch (Exception ex)
         {
@@ -1818,13 +1825,15 @@ public sealed class SecurityViewModel : ObservableObject
         SignInTimelineStatus = null;
         try
         {
-            var (events, logAvailable, findings) = await Task.Run(AccountSecurityService.ReadSignInTimeline);
+            var (events, logAvailable, findings, notes) = await Task.Run(AccountSecurityService.ReadSignInTimeline);
             SignInTimeline.Clear();
             foreach (var e in events) SignInTimeline.Add(e);
             ReplaceSectionFindings("SignInTimeline", findings);
 
             SignInTimelineStatus = logAvailable
-                ? $"{events.Count} event(s) in the last 30 days. {findings.Count} new finding(s)."
+                ? $"{events.Count} event(s) from the last 30 days (service-account logons left out)."
+                    + (notes.Count > 0 ? $" Partial - {string.Join("; ", notes)}." : string.Empty)
+                    + $" {findings.Count} new finding(s)."
                 : "No events found (or auditing may not be enabled for these event types) - the Security log can be unreadable even elevated if local audit policy doesn't log logon events at all.";
         }
         catch (Exception ex)
@@ -2080,15 +2089,17 @@ public sealed class SecurityViewModel : ObservableObject
             "Quarantine this file", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
+        // On success, error can still carry a note (permissions not locked down, a file reappeared
+        // at the original path) - shown, never dropped.
         var (success, quarantinePath, error) = QuarantineService.Quarantine(entry.ResolvedPath);
         AppendOneShotRun(entry.ResolvedPath, $"Quarantined \"{entry.Name}\"",
-            success ? $"Moved to {quarantinePath}" : $"Not moved: {error}", success,
+            success ? (error is null ? $"Moved to {quarantinePath}" : $"Moved to {quarantinePath}. {error}") : $"Not moved: {error}", success,
             "File quarantine - move it back with Undo in the Security tab's action journal.");
         if (success && quarantinePath is not null)
         {
             RecordJournalEntry(SecurityActionKind.FileQuarantine, $"Quarantined \"{entry.Name}\"", entry.ResolvedPath,
                 SecurityActionJournalService.BuildQuarantineUndoPayload(quarantinePath, entry.ResolvedPath));
-            StatusMessage = $"Quarantined to {quarantinePath}.";
+            StatusMessage = error is null ? $"Quarantined to {quarantinePath}." : $"Quarantined to {quarantinePath}. {error}";
         }
         else
         {

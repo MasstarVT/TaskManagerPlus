@@ -29,8 +29,13 @@ public static class ShareAuditService
         public List<ShareAccessEntry> ShareAccess { get; init; } = new();
         public List<string> NtfsWeakGrants { get; init; } = new();
         public bool ShareAccessCouldBeRead { get; init; }
+        public bool NtfsCouldBeRead { get; init; } = true;
         public bool HasWeakShareAccess => ShareAccess.Any(a => IsWeakPrincipal(a.AccountName) && IsAllowWriteRight(a));
         public bool HasWeakNtfs => NtfsWeakGrants.Count > 0;
+
+        /// <summary>A user-created share whose share-level or NTFS permissions couldn't be read -
+        /// shown as unchecked, never as "no weak permissions". Administrative shares aren't read.</summary>
+        public bool PermissionsUnreadable => !IsAdministrative && Path.Length > 0 && (!ShareAccessCouldBeRead || !NtfsCouldBeRead);
     }
 
     // Everyone, Authenticated Users. Get-SmbShareAccess reports AccountName in the OS language
@@ -61,9 +66,10 @@ public static class ShareAuditService
         (a.AccessRight.Contains("Change", StringComparison.OrdinalIgnoreCase) ||
          a.AccessRight.Contains("Full", StringComparison.OrdinalIgnoreCase));
 
-    public static (List<ShareInfo> Shares, List<SecurityFinding> Findings) Scan()
+    public static (List<ShareInfo> Shares, List<SecurityFinding> Findings, string? Error) Scan()
     {
         var shares = new List<ShareInfo>();
+        string? error = null;
         try
         {
             using var searcher = new ManagementObjectSearcher("SELECT Name, Path, Type FROM Win32_Share");
@@ -88,20 +94,25 @@ public static class ShareAuditService
                 if (!isAdmin && path.Length > 0)
                 {
                     var (access, couldRead) = ReadShareAccess(name);
+                    // Only a disk share has an NTFS target to check (a print share's Path is a
+                    // printer name).
+                    var (grants, ntfsRead) = lowByte == 0 ? ReadNtfsWeakGrants(path) : (new List<string>(), true);
                     share = new ShareInfo
                     {
                         Name = name, Path = path, TypeText = typeText, IsAdministrative = false,
                         ShareAccess = access, ShareAccessCouldBeRead = couldRead,
-                        NtfsWeakGrants = ReadNtfsWeakGrants(path),
+                        NtfsWeakGrants = grants, NtfsCouldBeRead = ntfsRead,
                     };
                 }
 
                 shares.Add(share);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // WMI unavailable/denied - whatever was gathered before the failure is returned as-is.
+            // WMI unavailable/denied - whatever was gathered before the failure is returned, and
+            // the caller says the list may be incomplete.
+            error = ex.Message;
         }
 
         var findings = new List<SecurityFinding>();
@@ -125,7 +136,7 @@ public static class ShareAuditService
             });
         }
 
-        return (shares, findings);
+        return (shares, findings, error);
     }
 
     /// <summary>Share-level permissions via Get-SmbShareAccess - PREFERRED over the
@@ -137,10 +148,11 @@ public static class ShareAuditService
         try
         {
             string escaped = shareName.Replace("'", "''");
-            string output = RunCapturedSync("powershell.exe",
+            var (output, exitCode) = RunCapturedSync("powershell.exe",
                 $"-NoProfile -Command \"Get-SmbShareAccess -Name '{escaped}' | Select-Object AccountName,AccessControlType,AccessRight | ConvertTo-Csv -NoTypeInformation\"",
                 TimeSpan.FromSeconds(15));
-            if (string.IsNullOrWhiteSpace(output)) return (entries, false);
+            // Timed out (null) or the cmdlet failed: partial or error output isn't a permission list.
+            if (exitCode != 0 || string.IsNullOrWhiteSpace(output)) return (entries, false);
 
             var rows = SimpleCsv.ParseRows(output);
             if (rows.Count < 2) return (entries, true); // header only - no access entries, but the call itself worked
@@ -167,24 +179,27 @@ public static class ShareAuditService
 
     /// <summary>NTFS weak-grant check on the share's target path - reuses
     /// AutorunsService.CheckWritePermissions's icacls quoting and ACE parsing (same principal list,
-    /// same loose (W)/(F)/(M) match) rather than reinventing that logic.</summary>
-    private static List<string> ReadNtfsWeakGrants(string path)
+    /// same loose (W)/(F)/(M) match) rather than reinventing that logic. CouldRead is false when
+    /// the target is missing or icacls failed/timed out - its error text has no grant lines, which
+    /// must not read as "no weak grants".</summary>
+    private static (List<string> Grants, bool CouldRead) ReadNtfsWeakGrants(string path)
     {
         var grants = new List<string>();
-        if (!Directory.Exists(path) && !File.Exists(path)) return grants;
+        if (!Directory.Exists(path) && !File.Exists(path)) return (grants, false);
 
         string output;
-        try { output = RunCapturedSync("icacls.exe", AutorunsService.IcaclsPathArgument(path), TimeSpan.FromSeconds(10)); }
-        catch { return grants; }
-        if (string.IsNullOrWhiteSpace(output)) return grants;
+        int? exitCode;
+        try { (output, exitCode) = RunCapturedSync("icacls.exe", AutorunsService.IcaclsPathArgument(path), TimeSpan.FromSeconds(10)); }
+        catch { return (grants, false); }
+        if (exitCode != 0 || string.IsNullOrWhiteSpace(output)) return (grants, false);
 
-        return AutorunsService.FindWeakWriteGrantLines(output, path);
+        return (AutorunsService.FindWeakWriteGrantLines(output, path), true);
     }
 
     /// <summary>#1084: delegates to the shared <see cref="ToolRunner"/> (run tool, capture
-    /// stdout+stderr, kill the whole process tree on timeout).</summary>
-    private static string RunCapturedSync(string exe, string args, TimeSpan timeout)
-        => ToolRunner.RunCaptured(exe, args, timeout).Output;
+    /// stdout+stderr, kill the whole process tree on timeout; a timeout's exit code is null).</summary>
+    private static (string Output, int? ExitCode) RunCapturedSync(string exe, string args, TimeSpan timeout)
+        => ToolRunner.RunCaptured(exe, args, timeout);
 }
 
 /// <summary>Minimal RFC 4180-ish CSV line parser (quoted fields, "" escaping) - shared by every

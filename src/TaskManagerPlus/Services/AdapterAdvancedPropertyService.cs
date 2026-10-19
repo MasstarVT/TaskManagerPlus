@@ -171,18 +171,22 @@ public static class AdapterAdvancedPropertyService
         return flags;
     }
 
+    // The raw value decides first: these standardized keywords use 0 = off, 1 = on, while a
+    // driver's display label can be worded "On"/"Off" rather than "Enabled"/"Disabled".
     private static bool LooksOn(AdapterAdvancedProperty p)
     {
+        if (p.RawValue == "1") return true;
+        if (p.RawValue == "0") return false;
         string text = p.ValueText;
-        if (text == "1") return true;
-        if (text == "0") return false;
+        if (text.Equals("On", StringComparison.OrdinalIgnoreCase)) return true;
         return text.Contains("enable", StringComparison.OrdinalIgnoreCase) && !text.Contains("disable", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool LooksOff(AdapterAdvancedProperty p)
     {
+        if (p.RawValue == "0") return true;
         string text = p.ValueText;
-        if (text == "0") return true;
+        if (text.Equals("Off", StringComparison.OrdinalIgnoreCase)) return true;
         return text.Contains("disable", StringComparison.OrdinalIgnoreCase);
     }
 

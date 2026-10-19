@@ -44,22 +44,26 @@ public static class CertificateStoreAuditService
         var rows = new List<CertificateReviewRow>();
         var findings = new List<SecurityFinding>();
 
-        foreach (var location in new[] { StoreLocation.LocalMachine, StoreLocation.CurrentUser })
+        // A CurrentUser logical store includes the same-named LocalMachine store, so each machine
+        // certificate would otherwise be listed (and counted) a second time as a CurrentUser one.
+        foreach (var storeName in new[] { StoreName.Root, StoreName.CertificateAuthority })
         {
-            ScanOneStore(location, StoreName.Root, rows, findings);
-            ScanOneStore(location, StoreName.CertificateAuthority, rows, findings);
+            var machineThumbprints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            ScanOneStore(StoreLocation.LocalMachine, storeName, rows, findings, machineThumbprints, skip: null);
+            ScanOneStore(StoreLocation.CurrentUser, storeName, rows, findings, seen: null, skip: machineThumbprints);
         }
 
-        int disallowedCount = 0;
+        var disallowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var location in new[] { StoreLocation.LocalMachine, StoreLocation.CurrentUser })
         {
-            disallowedCount += CountStore(location, StoreName.Disallowed);
+            AddThumbprints(location, StoreName.Disallowed, disallowed);
         }
 
-        return (rows, disallowedCount, findings);
+        return (rows, disallowed.Count, findings);
     }
 
-    private static void ScanOneStore(StoreLocation location, StoreName storeName, List<CertificateReviewRow> rows, List<SecurityFinding> findings)
+    private static void ScanOneStore(StoreLocation location, StoreName storeName, List<CertificateReviewRow> rows, List<SecurityFinding> findings,
+        HashSet<string>? seen, HashSet<string>? skip)
     {
         X509Store? store = null;
         try
@@ -71,6 +75,9 @@ public static class CertificateStoreAuditService
             {
                 try
                 {
+                    seen?.Add(cert.Thumbprint);
+                    if (skip is not null && skip.Contains(cert.Thumbprint)) continue;
+
                     var reasons = new List<string>();
                     var severity = FindingSeverity.Info;
 
@@ -130,17 +137,20 @@ public static class CertificateStoreAuditService
         }
     }
 
-    private static int CountStore(StoreLocation location, StoreName storeName)
+    private static void AddThumbprints(StoreLocation location, StoreName storeName, HashSet<string> into)
     {
         try
         {
             using var store = new X509Store(storeName, location);
             store.Open(OpenFlags.ReadOnly);
-            return store.Certificates.Count;
+            foreach (var cert in store.Certificates)
+            {
+                using (cert) into.Add(cert.Thumbprint);
+            }
         }
         catch
         {
-            return 0;
+            // Store unavailable/denied - it contributes nothing to the count.
         }
     }
 

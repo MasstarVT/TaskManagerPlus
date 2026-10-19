@@ -235,74 +235,94 @@ public static class WmiHealthService
 
     #region #793 - Permanent WMI event consumer inventory
 
-    private const string SubscriptionNamespace = @"root\subscription";
+    // root\default ships CommandLineEventConsumer, ActiveScriptEventConsumer and the binding class
+    // too, so a complete subscription can live there with no MOF compile. Its rows carry a
+    // "[root\default]" prefix on FilterName; root\subscription rows read exactly as before.
+    private static readonly string[] SubscriptionNamespaces = { @"root\subscription", @"root\default" };
 
     /// <summary>#793: enumerates __EventFilter, CommandLineEventConsumer, ActiveScriptEventConsumer
-    /// and __FilterToConsumerBinding in root\subscription - the permanent-WMI-subscription
-    /// mechanism (as opposed to a temporary in-process WMI event subscription, which leaves no
-    /// registered trace once its process exits). This exact combination is a well-documented
+    /// and __FilterToConsumerBinding in root\subscription and root\default - the permanent-WMI-
+    /// subscription mechanism (as opposed to a temporary in-process WMI event subscription, which
+    /// leaves no registered trace once its process exits). This exact combination is a well-documented
     /// persistence technique, so every filter is listed even when it has no matching binding/
     /// consumer (an orphaned filter, or one whose consumer is missing, is itself worth surfacing -
-    /// see BindingFound).</summary>
+    /// see BindingFound). A namespace that can't be read gets a row saying so, rather than reading
+    /// as an empty (clean) one.</summary>
     public static List<WmiEventConsumerEntry> ReadPermanentConsumers()
     {
         var result = new List<WmiEventConsumerEntry>();
-        try
+        foreach (var ns in SubscriptionNamespaces)
         {
-            var filters = ReadFilters();
-            var cmdConsumers = ReadCommandLineConsumers();
-            var scriptConsumers = ReadScriptConsumers();
-            var bindings = ReadBindings();
-            var reachedConsumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            WmiEventConsumerEntry Bound(string filterName, string query, string consumerPath)
+            try
             {
-                reachedConsumers.Add(consumerPath);
-                if (cmdConsumers.TryGetValue(consumerPath, out var cmdInfo))
-                    return new WmiEventConsumerEntry { FilterName = filterName, Query = query, ConsumerType = "CommandLineEventConsumer", ConsumerName = cmdInfo.Name, ConsumerDetail = cmdInfo.CommandLine, BindingFound = true };
-                if (scriptConsumers.TryGetValue(consumerPath, out var scriptInfo))
-                    return new WmiEventConsumerEntry { FilterName = filterName, Query = query, ConsumerType = "ActiveScriptEventConsumer", ConsumerName = scriptInfo.Name, ConsumerDetail = scriptInfo.ScriptText, BindingFound = true };
-                return new WmiEventConsumerEntry { FilterName = filterName, Query = query, ConsumerType = "(other consumer type)", ConsumerDetail = consumerPath, BindingFound = true };
+                AddNamespaceConsumers(result, ns);
             }
-
-            // One row per binding, not per filter: a second consumer bound to a stock filter (the
-            // in-box "SCM Event Log Filter") is a known way to blend in.
-            var filterPaths = new HashSet<string>(filters.Select(f => f.Path), StringComparer.OrdinalIgnoreCase);
-            foreach (var (filterPath, filterName, query) in filters)
+            catch (Exception ex)
             {
-                var bound = bindings.Where(b => b.FilterPath.Equals(filterPath, StringComparison.OrdinalIgnoreCase)).ToList();
-                if (bound.Count == 0)
+                result.Add(new WmiEventConsumerEntry
                 {
-                    result.Add(new WmiEventConsumerEntry { FilterName = filterName, Query = query, ConsumerType = "(none)", ConsumerDetail = "No __FilterToConsumerBinding found for this filter.", BindingFound = false });
-                    continue;
-                }
-                foreach (var b in bound) result.Add(Bound(filterName, query, b.ConsumerPath));
+                    FilterName = Label(ns, "(couldn't read this namespace)"),
+                    ConsumerType = "(unknown)",
+                    ConsumerDetail = $"{ns} couldn't be enumerated, so subscriptions registered there aren't listed: {ex.Message}",
+                    BindingFound = false,
+                });
             }
-
-            // Bindings whose filter isn't one of the root\subscription filters above (it lives in
-            // another namespace, or was deleted) still fire their consumer.
-            foreach (var b in bindings.Where(b => !filterPaths.Contains(b.FilterPath)))
-                result.Add(Bound(b.FilterPath, "(filter not found in root\\subscription - it was deleted or lives in another namespace)", b.ConsumerPath));
-
-            // Command-line/script consumers no binding reaches - inert on their own, but left-over
-            // persistence (or one half of a subscription being staged) is worth seeing.
-            foreach (var (_, info) in cmdConsumers.Where(c => !reachedConsumers.Contains(c.Key)))
-                result.Add(new WmiEventConsumerEntry { FilterName = "(no filter bound to this consumer)", ConsumerType = "CommandLineEventConsumer", ConsumerName = info.Name, ConsumerDetail = info.CommandLine, BindingFound = false });
-            foreach (var (_, info) in scriptConsumers.Where(c => !reachedConsumers.Contains(c.Key)))
-                result.Add(new WmiEventConsumerEntry { FilterName = "(no filter bound to this consumer)", ConsumerType = "ActiveScriptEventConsumer", ConsumerName = info.Name, ConsumerDetail = info.ScriptText, BindingFound = false });
-        }
-        catch
-        {
-            // root\subscription unavailable (locked-down policy, or genuinely nothing registered
-            // on some editions) - degrade to an empty list, never fabricated.
         }
         return result;
     }
 
-    private static List<(string Path, string Name, string Query)> ReadFilters()
+    private static string Label(string ns, string filterName) =>
+        ns.Equals(@"root\subscription", StringComparison.OrdinalIgnoreCase) ? filterName : $"[{ns}] {filterName}";
+
+    private static void AddNamespaceConsumers(List<WmiEventConsumerEntry> result, string ns)
+    {
+        var filters = ReadFilters(ns);
+        var cmdConsumers = ReadCommandLineConsumers(ns);
+        var scriptConsumers = ReadScriptConsumers(ns);
+        var bindings = ReadBindings(ns);
+        var reachedConsumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        WmiEventConsumerEntry Bound(string filterName, string query, string consumerPath)
+        {
+            reachedConsumers.Add(consumerPath);
+            if (cmdConsumers.TryGetValue(consumerPath, out var cmdInfo))
+                return new WmiEventConsumerEntry { FilterName = Label(ns, filterName), Query = query, ConsumerType = "CommandLineEventConsumer", ConsumerName = cmdInfo.Name, ConsumerDetail = cmdInfo.CommandLine, BindingFound = true };
+            if (scriptConsumers.TryGetValue(consumerPath, out var scriptInfo))
+                return new WmiEventConsumerEntry { FilterName = Label(ns, filterName), Query = query, ConsumerType = "ActiveScriptEventConsumer", ConsumerName = scriptInfo.Name, ConsumerDetail = scriptInfo.ScriptText, BindingFound = true };
+            return new WmiEventConsumerEntry { FilterName = Label(ns, filterName), Query = query, ConsumerType = "(other consumer type)", ConsumerDetail = consumerPath, BindingFound = true };
+        }
+
+        // One row per binding, not per filter: a second consumer bound to a stock filter (the
+        // in-box "SCM Event Log Filter") is a known way to blend in.
+        var filterPaths = new HashSet<string>(filters.Select(f => f.Path), StringComparer.OrdinalIgnoreCase);
+        foreach (var (filterPath, filterName, query) in filters)
+        {
+            var bound = bindings.Where(b => b.FilterPath.Equals(filterPath, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (bound.Count == 0)
+            {
+                result.Add(new WmiEventConsumerEntry { FilterName = Label(ns, filterName), Query = query, ConsumerType = "(none)", ConsumerDetail = "No __FilterToConsumerBinding found for this filter.", BindingFound = false });
+                continue;
+            }
+            foreach (var b in bound) result.Add(Bound(filterName, query, b.ConsumerPath));
+        }
+
+        // Bindings whose filter isn't one of this namespace's filters above (it lives in another
+        // namespace, or was deleted) still fire their consumer.
+        foreach (var b in bindings.Where(b => !filterPaths.Contains(b.FilterPath)))
+            result.Add(Bound(b.FilterPath, $"(filter not found in {ns} - it was deleted or lives in another namespace)", b.ConsumerPath));
+
+        // Command-line/script consumers no binding reaches - inert on their own, but left-over
+        // persistence (or one half of a subscription being staged) is worth seeing.
+        foreach (var (_, info) in cmdConsumers.Where(c => !reachedConsumers.Contains(c.Key)))
+            result.Add(new WmiEventConsumerEntry { FilterName = Label(ns, "(no filter bound to this consumer)"), ConsumerType = "CommandLineEventConsumer", ConsumerName = info.Name, ConsumerDetail = info.CommandLine, BindingFound = false });
+        foreach (var (_, info) in scriptConsumers.Where(c => !reachedConsumers.Contains(c.Key)))
+            result.Add(new WmiEventConsumerEntry { FilterName = Label(ns, "(no filter bound to this consumer)"), ConsumerType = "ActiveScriptEventConsumer", ConsumerName = info.Name, ConsumerDetail = info.ScriptText, BindingFound = false });
+    }
+
+    private static List<(string Path, string Name, string Query)> ReadFilters(string ns)
     {
         var list = new List<(string, string, string)>();
-        using var searcher = new ManagementObjectSearcher(SubscriptionNamespace, "SELECT Name, Query FROM __EventFilter");
+        using var searcher = new ManagementObjectSearcher(ns, "SELECT Name, Query FROM __EventFilter");
         foreach (ManagementObject mo in searcher.Get())
         {
             string name = mo["Name"] as string ?? string.Empty;
@@ -313,12 +333,12 @@ public static class WmiHealthService
         return list;
     }
 
-    private static Dictionary<string, (string Name, string CommandLine)> ReadCommandLineConsumers()
+    private static Dictionary<string, (string Name, string CommandLine)> ReadCommandLineConsumers(string ns)
     {
         var dict = new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            using var searcher = new ManagementObjectSearcher(SubscriptionNamespace, "SELECT Name, CommandLineTemplate, ExecutablePath FROM CommandLineEventConsumer");
+            using var searcher = new ManagementObjectSearcher(ns, "SELECT Name, CommandLineTemplate, ExecutablePath FROM CommandLineEventConsumer");
             foreach (ManagementObject mo in searcher.Get())
             {
                 string name = mo["Name"] as string ?? string.Empty;
@@ -330,12 +350,12 @@ public static class WmiHealthService
         return dict;
     }
 
-    private static Dictionary<string, (string Name, string ScriptText)> ReadScriptConsumers()
+    private static Dictionary<string, (string Name, string ScriptText)> ReadScriptConsumers(string ns)
     {
         var dict = new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            using var searcher = new ManagementObjectSearcher(SubscriptionNamespace, "SELECT Name, ScriptText, ScriptFileName FROM ActiveScriptEventConsumer");
+            using var searcher = new ManagementObjectSearcher(ns, "SELECT Name, ScriptText, ScriptFileName FROM ActiveScriptEventConsumer");
             foreach (ManagementObject mo in searcher.Get())
             {
                 string name = mo["Name"] as string ?? string.Empty;
@@ -348,12 +368,12 @@ public static class WmiHealthService
         return dict;
     }
 
-    private static List<(string FilterPath, string ConsumerPath)> ReadBindings()
+    private static List<(string FilterPath, string ConsumerPath)> ReadBindings(string ns)
     {
         var list = new List<(string, string)>();
         try
         {
-            using var searcher = new ManagementObjectSearcher(SubscriptionNamespace, "SELECT Filter, Consumer FROM __FilterToConsumerBinding");
+            using var searcher = new ManagementObjectSearcher(ns, "SELECT Filter, Consumer FROM __FilterToConsumerBinding");
             foreach (ManagementObject mo in searcher.Get())
             {
                 string filterRef = (mo["Filter"] as string) ?? string.Empty;
@@ -361,7 +381,7 @@ public static class WmiHealthService
                 // Both come back as embedded object-path strings (e.g. __EventFilter.Name="Foo") -
                 // strip down to just the relative path portion the filter/consumer dictionaries above
                 // are keyed by.
-                list.Add((StripNamespacePrefix(filterRef), StripNamespacePrefix(consumerRef)));
+                list.Add((StripNamespacePrefix(filterRef, ns), StripNamespacePrefix(consumerRef, ns)));
             }
         }
         catch { /* class not present - fine */ }
@@ -369,17 +389,17 @@ public static class WmiHealthService
     }
 
     /// <summary>A reference is either relative (`__EventFilter.Name="Foo"`, same namespace) or
-    /// namespace-qualified (`\\HOST\root\subscription:__EventFilter.Name="Foo"`). Only a
-    /// root\subscription prefix is cut off; a reference into another namespace stays whole so it
-    /// can't match a same-named filter here. A colon inside the key value isn't a prefix.</summary>
-    private static string StripNamespacePrefix(string objectPath)
+    /// namespace-qualified (`\\HOST\root\subscription:__EventFilter.Name="Foo"`). Only a prefix
+    /// naming <paramref name="ns"/> itself is cut off; a reference into another namespace stays whole
+    /// so it can't match a same-named filter here. A colon inside the key value isn't a prefix.</summary>
+    private static string StripNamespacePrefix(string objectPath, string ns)
     {
         int idx = objectPath.IndexOf(':');
         if (idx < 0) return objectPath;
         string prefix = objectPath[..idx];
         if (prefix.Contains('=') || prefix.Contains('"')) return objectPath;
-        return prefix.Equals(@"root\subscription", StringComparison.OrdinalIgnoreCase)
-            || prefix.EndsWith(@"\root\subscription", StringComparison.OrdinalIgnoreCase)
+        return prefix.Equals(ns, StringComparison.OrdinalIgnoreCase)
+            || prefix.EndsWith(@"\" + ns, StringComparison.OrdinalIgnoreCase)
             ? objectPath[(idx + 1)..]
             : objectPath;
     }
