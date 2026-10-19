@@ -11,9 +11,9 @@ namespace TaskManagerPlus.Services;
 /// derived" tradeoff RemediationActionCatalog's own action list already takes.
 ///
 /// ----- The Offline-mode boundary (also stated on the disclosure page itself) -----
-/// UiPreferences.OfflineMode gates exactly the calls this app makes silently on its own with no
-/// further click in between: PublicIpLookupService, UpdateCheckService (including its once-at-
-/// startup automatic check), and TracerouteService. It deliberately does NOT gate:
+/// UiPreferences.OfflineMode gates exactly three calls: PublicIpLookupService, UpdateCheckService
+/// (including its once-at-startup automatic check), and TracerouteService. It deliberately does
+/// NOT gate:
 ///   - A "Learn more" (#992) or "Read more (offline)" (#993) link/button - opening either hands a
 ///     URL/file path to the OS's own default browser via ExternalLinkService; the app itself makes
 ///     no network connection there at all, the browser does, exactly like clicking any other link
