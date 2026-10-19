@@ -83,21 +83,26 @@ public static class NvidiaSmiService
     private static string RunNvidiaSmi(string args)
         => ToolRunner.RunCaptured(ExePath, args, TimeSpan.FromSeconds(10)).Output;
 
+    /// <summary>Lines before the first "GPU 00000000:01:00.0" header (the "NVSMI LOG" banner,
+    /// timestamp, driver/CUDA versions, "Attached GPUs") belong to no GPU and are dropped - kept as
+    /// a block they became a fake all-clear GPU 0 and pushed every real GPU's name one slot down.</summary>
     private static List<string> SplitIntoGpuBlocks(string report)
     {
         var blocks = new List<string>();
-        var current = new List<string>();
+        List<string>? current = null;
         foreach (var line in report.Split('\n'))
         {
             if (GpuBlockHeaderRegex.IsMatch(line))
             {
-                if (current.Count > 0) blocks.Add(string.Join("\n", current));
+                // Every header gets its block, even an empty one, so block i stays GPU i for the
+                // `-L` name lookup.
+                if (current is not null) blocks.Add(string.Join("\n", current));
                 current = new List<string>();
                 continue; // the header line itself carries no field data
             }
-            current.Add(line);
+            current?.Add(line);
         }
-        if (current.Count > 0) blocks.Add(string.Join("\n", current));
+        if (current is not null) blocks.Add(string.Join("\n", current));
         return blocks;
     }
 

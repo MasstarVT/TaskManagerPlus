@@ -86,15 +86,22 @@ public static class BatteryReportService
         string chemistry = ReadString(battery, "Chemistry") ?? string.Empty;
         string serial = ReadString(battery, "SerialNumber") ?? string.Empty;
 
+        // Real reports (checked against `powercfg /batteryreport /xml` output) carry the scan time
+        // as ReportInformation/LocalScanTime and the two tables as attribute-only rows:
+        // <History><HistoryEntry LocalStartDate=".." StartDate="..Z" DesignCapacity=".."
+        // FullChargeCapacity=".." .../> and <RecentUsage><UsageEntry LocalTimestamp=".."
+        // Timestamp="..Z" Ac="1" EntryType="Active" ChargeCapacity=".." .../>. ReadString accepts an
+        // attribute or a child element, so the older names below still parse if a build uses them.
         var reportInfo = doc.Descendants().FirstOrDefault(e => e.Name.LocalName == "ReportInformation");
         DateTime? generatedAt = reportInfo is not null &&
-            TryParseFlexibleDate(ReadString(reportInfo, "LocalTime") ?? string.Empty, out var gen)
+            TryParseFlexibleDate(ReadString(reportInfo, "LocalScanTime") ?? ReadString(reportInfo, "LocalTime") ?? string.Empty, out var gen)
             ? gen : null;
 
         var capacityHistory = new List<BatteryCapacityHistoryEntry>();
-        foreach (var entry in doc.Descendants().Where(e => e.Name.LocalName == "CapacityHistoryEntry"))
+        foreach (var entry in doc.Descendants().Where(e => e.Name.LocalName is "HistoryEntry" or "CapacityHistoryEntry"))
         {
-            if (!TryParseFlexibleDate(ReadString(entry, "PeriodStartDate") ?? string.Empty, out var start)) continue;
+            string startRaw = ReadString(entry, "LocalStartDate") ?? ReadString(entry, "StartDate") ?? ReadString(entry, "PeriodStartDate") ?? string.Empty;
+            if (!TryParseFlexibleDate(startRaw, out var start)) continue;
             capacityHistory.Add(new BatteryCapacityHistoryEntry
             {
                 PeriodStart = start,
@@ -106,14 +113,21 @@ public static class BatteryReportService
         var recentUsage = new List<BatteryUsageHistoryEntry>();
         foreach (var entry in doc.Descendants().Where(e => e.Name.LocalName is "UsageEntry" or "UsageHistoryEntry"))
         {
-            string startRaw = ReadString(entry, "StartTime") ?? ReadString(entry, "PeriodStartDate") ?? string.Empty;
+            string startRaw = ReadString(entry, "LocalTimestamp") ?? ReadString(entry, "Timestamp")
+                ?? ReadString(entry, "StartTime") ?? ReadString(entry, "PeriodStartDate") ?? string.Empty;
             if (!TryParseFlexibleDate(startRaw, out var start)) continue;
+            string powerSource = ReadString(entry, "Ac") switch
+            {
+                "1" => "AC",
+                "0" => "Battery",
+                _ => ReadString(entry, "Source") ?? string.Empty,
+            };
             recentUsage.Add(new BatteryUsageHistoryEntry
             {
                 PeriodStart = start,
-                State = ReadString(entry, "State") ?? string.Empty,
-                PowerSource = ReadString(entry, "Source") ?? string.Empty,
-                CapacityRemainingMwh = ReadDouble(entry, "Capacity"),
+                State = ReadString(entry, "EntryType") ?? ReadString(entry, "State") ?? string.Empty,
+                PowerSource = powerSource,
+                CapacityRemainingMwh = ReadDouble(entry, "ChargeCapacity") ?? ReadDouble(entry, "Capacity"),
             });
         }
 
@@ -136,9 +150,12 @@ public static class BatteryReportService
         };
     }
 
+    /// <summary>An attribute of that name, else a child element - the report's table rows are
+    /// attribute-only while its Battery/ReportInformation blocks use child elements.</summary>
     private static string? ReadString(XElement parent, string localName)
     {
-        var value = parent.Elements().FirstOrDefault(e => e.Name.LocalName == localName)?.Value.Trim();
+        var value = (parent.Attributes().FirstOrDefault(a => a.Name.LocalName == localName)?.Value
+            ?? parent.Elements().FirstOrDefault(e => e.Name.LocalName == localName)?.Value)?.Trim();
         return string.IsNullOrEmpty(value) ? null : value;
     }
 

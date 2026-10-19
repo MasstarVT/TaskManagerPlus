@@ -18,13 +18,17 @@ namespace TaskManagerPlus.ViewModels;
 /// supervisor samples each second, published as one immutable value under a lock so that
 /// background thread never touches this ViewModel's UI-owned ObservableCollections (whose
 /// Clear+Add rebuilds each tick would throw into a concurrent enumerator) or its Nullable
-/// properties (whose multi-word reads can tear off-thread).</summary>
+/// properties (whose multi-word reads can tear off-thread). PublishedTickMs (Environment.TickCount64,
+/// 0 = never published) and the poll interval let the reader tell a live reading from one left
+/// frozen by a sensor tick that faulted or hung before publishing.</summary>
 public readonly record struct StressSensorSnapshot(
     double? CpuPackageTempC,
     double? GpuTempC,
     double? TotalPackagePowerW,
     double? VcoreRailVoltage,
-    double? PrimaryFanRpm);
+    double? PrimaryFanRpm,
+    long PublishedTickMs,
+    double PollIntervalSeconds);
 
 /// <summary>
 /// Backs the Energy &amp; Thermals tab. Unlike Cpu/Memory/Storage/Network (thin wrappers over the
@@ -729,6 +733,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     // ---- #614: fan RPM step-loss (historical max vs. this session's max) ----------------------
     private readonly Dictionary<string, double> _fanHistoricalMaxRpm;
     private readonly Dictionary<string, double> _fanSessionMaxRpm = new();
+
+    // Step loss is only judged once this session has run hot for a while: an idle or light
+    // session never drives the fans up to the max a past stress run recorded, so comparing the
+    // two flagged nearly every quiet session. Until then StepLossDetected stays null (unknown).
+    private const float FanStepLossLoadTempC = 80f;
+    private const int FanStepLossMinHotTicks = 30;
+    private int _fanStepLossHotTicks;
 
     // ---- #616: coolant-pump variance monitoring -------------------------------------------------
     private const int PumpRpmWindowSize = 40;
@@ -1474,8 +1485,13 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // (re)computed) - same "load once at startup" shape as _persistedEpisodes above.
         _fanCurveFits = FanCurveHistoryService.Load();
 
-        // #614: per-fan historical-RPM ceiling, loaded once at startup.
-        _fanHistoricalMaxRpm = FanMaxRpmService.Load().ToDictionary(e => e.Identifier, e => e.HistoricalMaxRpm);
+        // #614: per-fan historical-RPM ceiling, loaded once at startup. fan-max-rpm.json is
+        // user-editable: a null element, a blank identifier or a duplicate would make a plain
+        // ToDictionary throw here, inside MainViewModel's constructor (no main window at all).
+        _fanHistoricalMaxRpm = FanMaxRpmService.Load()
+            .Where(e => e is not null && !string.IsNullOrWhiteSpace(e.Identifier) && double.IsFinite(e.HistoricalMaxRpm) && e.HistoricalMaxRpm > 0)
+            .GroupBy(e => e.Identifier)
+            .ToDictionary(g => g.Key, g => g.Max(e => e.HistoricalMaxRpm));
 
         // #618: initial cooldown-trend chart populate from whatever history already exists.
         RefreshCooldownChart();
@@ -1815,8 +1831,9 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     private async Task FixPassiveCoolingAsync()
     {
         bool wasPassive = PassiveCoolingOnAcDetected;
+        // SYSCOOLPOL index 1 = Active (0 = Passive), per powercfg /qh's possible-setting list.
         var (success, error) = await PowerPlanService.SetAcValueIndexAsync(
-            "SCHEME_CURRENT", PowerPlanService.SubProcessorGuid, PowerPlanService.SystemCoolingPolicyGuid, 0);
+            "SCHEME_CURRENT", PowerPlanService.SubProcessorGuid, PowerPlanService.SystemCoolingPolicyGuid, 1);
         PassiveCoolingFixStatusText = success
             ? "System cooling policy set to Active on AC."
             : $"Couldn't change system cooling policy: {error}";
@@ -1992,6 +2009,8 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         // (carrying FanStatus/HistoricalMaxRpm/StepLossDetected/IsPumpChannel) are what the UI
         // list (Fans) actually binds to.
         var fanReadings = readings.Where(r => r.Type == SensorType.Fan && r.Value.HasValue).ToList();
+        if (tempReadings.Any(r => (r.HardwareType == HardwareType.Cpu || IsGpu(r.HardwareType)) && r.Value is float hot && hot >= FanStepLossLoadTempC))
+            _fanStepLossHotTicks++;
         var enrichedFanReadings = EnrichFanReadings(fanReadings);
         Replace(Fans, enrichedFanReadings);
 
@@ -2086,7 +2105,8 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             var stressFan = enrichedFanReadings.FirstOrDefault(f => f.Value.HasValue);
             var stressSnapshot = new StressSensorSnapshot(
                 CpuPackageTempC, GpuTempC, TotalPackagePowerW,
-                (double?)stressRail?.Value, (double?)stressFan?.Value);
+                (double?)stressRail?.Value, (double?)stressFan?.Value,
+                Environment.TickCount64, _timer.Interval.TotalSeconds);
             lock (_stressSnapshotLock) _stressSnapshot = stressSnapshot;
         }
 
@@ -2763,7 +2783,9 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
                 FanMaxRpmService.RecordMax(reading.Identifier, sessionMax);
                 historicalMax = sessionMax;
             }
-            bool? stepLoss = historicalMax is { } h && h >= 300 && sessionMax > 0 && sessionMax <= h * 0.8;
+            bool? stepLoss = _fanStepLossHotTicks < FanStepLossMinHotTicks
+                ? null
+                : historicalMax is { } h && h >= 300 && sessionMax > 0 && sessionMax <= h * 0.8;
 
             // #615: per-fan status - pump channels skip the sibling-RPM "Slow" comparison.
             string status;
@@ -3641,7 +3663,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             if (BatteryChargePercent is { } pctForStall)
             {
                 _chargePercentSamples.Add((now, pctForStall));
-                _chargePercentSamples.RemoveAll(s => s.When < now.AddMinutes(-ChargeStallWindowMinutes));
+                PruneKeepingWindowAnchor(_chargePercentSamples, s => s.When, now.AddMinutes(-ChargeStallWindowMinutes));
             }
 
             bool stalled = BatteryChargePercent is { } pct2 && pct2 < ChargeStallMaxPercent &&
@@ -3695,7 +3717,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         if (BatteryChargePercent is { } chargePct)
         {
             _chargeCeilingSamples.Add((now, chargePct, win32.BatteryStatusText == "On AC (not charging)"));
-            _chargeCeilingSamples.RemoveAll(s => s.When < now.AddMinutes(-ChargeCeilingWindowMinutes));
+            PruneKeepingWindowAnchor(_chargeCeilingSamples, s => s.When, now.AddMinutes(-ChargeCeilingWindowMinutes));
 
             if (_chargeCeilingSamples.Count >= 2 && now - _chargeCeilingSamples[0].When >= TimeSpan.FromMinutes(ChargeCeilingWindowMinutes))
             {
@@ -3715,11 +3737,23 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
             ChargeCeilingText = string.Empty;
         }
 
+        // "Discharging" (Win32_Battery status 1) means on battery, so it can't back a "while on AC" note.
         HotChargeThrottleText = BatteryTemperatureC is { } tempC && tempC >= HotBatteryThresholdC &&
-            !BatteryIsCharging && win32.BatteryStatusText is "On AC (not charging)" or "Discharging"
+            !BatteryIsCharging && win32.BatteryStatusText is "On AC (not charging)"
             ? $"Battery pack reads {tempC:0.#}°C and isn't charging while on AC - many batteries pause or slow charging above " +
               $"~{HotBatteryThresholdC:0}°C to protect the cell. Normal protective behavior, not a fault (quick flag, not a verdict)."
             : string.Empty;
+    }
+
+    /// <summary>Drops samples older than <paramref name="windowStart"/> but keeps the newest one at
+    /// or before it, so samples[0] spans the whole window once enough history exists. Pruning every
+    /// sample older than the window left the oldest one always younger than it, and the
+    /// "has this held for the full window" checks above could never pass.</summary>
+    private static void PruneKeepingWindowAnchor<T>(List<T> samples, Func<T, DateTime> when, DateTime windowStart)
+    {
+        int drop = 0;
+        while (drop + 1 < samples.Count && when(samples[drop + 1]) <= windowStart) drop++;
+        if (drop > 0) samples.RemoveRange(0, drop);
     }
 
     /// <summary>"2h 10m" / "45m" - hour-scale duration formatting for the #646 runtime comparison

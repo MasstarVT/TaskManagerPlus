@@ -95,8 +95,8 @@
         <!-- #697: GPU load - drives load through WPF's own hardware-accelerated compositor
              (continuously animated, blurred, semi-transparent shapes) while the safety loop watches
              for TDR events - a best-effort load generator, not a calibrated benchmark, since this
-             app takes no raw Direct3D/D3DImage dependency. Only visible while a GPU-load-driving
-             test type is selected or running. -->
+             app takes no raw Direct3D/D3DImage dependency. The card is always shown; the shapes
+             only animate while a GPU-load-driving run is active (IsGpuRenderActive). -->
         <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
             <StackPanel>
                 <TextBlock Text="GPU load render" Style="{StaticResource CardTitle}" />
@@ -183,6 +183,10 @@
                                     <DataTrigger Binding="{Binding LastResult.Passed}" Value="True">
                                         <Setter Property="Text" Value="PASS" />
                                         <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding LastResult.Criteria.Skipped}" Value="True">
+                                        <Setter Property="Text" Value="SKIPPED" />
+                                        <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>

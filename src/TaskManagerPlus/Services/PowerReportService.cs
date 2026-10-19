@@ -62,7 +62,15 @@ public static class PowerReportService
             return (false, $"powercfg /energy didn't produce a report: {Truncate(output)}", new List<TimerResolutionRequesterRow>());
 
         string html = await ReadAllTextSafeAsync(path);
-        var findings = ParseFindings(html)
+        var allFindings = ParseFindings(html);
+
+        // Zero parsed Errors/Warnings rows of ANY kind almost always means the report's layout
+        // didn't match this parser (an /energy run on a real PC practically always warns about
+        // something) - that's "couldn't tell", not "no timer requests".
+        if (allFindings.Count == 0)
+            return (true, "The 15s /energy report was produced, but none of its Errors/Warnings rows could be parsed - its layout may not match this build's parser, so this can't confirm whether anything holds a raised timer resolution.", new List<TimerResolutionRequesterRow>());
+
+        var findings = allFindings
             .Where(f => f.Description.Contains("Timer Resolution", StringComparison.OrdinalIgnoreCase)
                      || f.Detail.Contains("Timer Resolution", StringComparison.OrdinalIgnoreCase))
             .ToList();

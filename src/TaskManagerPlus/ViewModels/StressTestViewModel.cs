@@ -46,9 +46,11 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
     private StressTestType _selectedTestType = StressTestType.CpuTorture;
     public StressTestType SelectedTestType { get => _selectedTestType; set => SetProperty(ref _selectedTestType, value); }
 
+    // The getters clamp too: stress-test.json is user-editable, and an out-of-range thread count or
+    // share loaded from it would otherwise reach the workload unchecked.
     public int DurationSeconds
     {
-        get => _settings.DefaultDurationSeconds;
+        get => Math.Clamp(_settings.DefaultDurationSeconds, 10, 3600);
         set
         {
             value = Math.Clamp(value, 10, 3600);
@@ -61,7 +63,7 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
 
     public int CpuThreadCount
     {
-        get => _settings.CpuThreadCount > 0 ? _settings.CpuThreadCount : Environment.ProcessorCount;
+        get => _settings.CpuThreadCount > 0 ? Math.Min(_settings.CpuThreadCount, Environment.ProcessorCount * 2) : Environment.ProcessorCount;
         set
         {
             value = Math.Clamp(value, 1, Environment.ProcessorCount * 2);
@@ -74,10 +76,10 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
 
     public double MemoryTestShareOfFreePercent
     {
-        get => _settings.MemoryTestShareOfFreePercent;
+        get => double.IsFinite(_settings.MemoryTestShareOfFreePercent) ? Math.Clamp(_settings.MemoryTestShareOfFreePercent, 5, 70) : 25.0;
         set
         {
-            value = Math.Clamp(value, 5, 70);
+            value = double.IsFinite(value) ? Math.Clamp(value, 5, 70) : 25.0;
             if (Math.Abs(_settings.MemoryTestShareOfFreePercent - value) < 0.01) return;
             _settings.MemoryTestShareOfFreePercent = value;
             StressTestSettingsService.Save(_settings);
@@ -86,14 +88,15 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>#699: the abort-trigger temperature. 0 shown as "auto" - see
-    /// ResolveEffectiveTempCeiling's remarks for how the real default is derived the first time a
-    /// run needs one. Setting this to a positive value overrides the auto default from then on.</summary>
+    /// ResolveEffectiveTempCeiling's remarks for how the real default is derived each run.
+    /// Setting this to a positive value overrides the auto default from then on (capped at
+    /// MaxTempCeilingC).</summary>
     public double TempCeilingC
     {
         get => _settings.TempCeilingC;
         set
         {
-            value = Math.Max(0, value);
+            value = double.IsFinite(value) ? Math.Clamp(value, 0, MaxTempCeilingC) : 0;
             if (Math.Abs(_settings.TempCeilingC - value) < 0.01) return;
             _settings.TempCeilingC = value;
             StressTestSettingsService.Save(_settings);
@@ -103,9 +106,9 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
     }
 
     public string EffectiveTempCeilingText => _settings.TempCeilingC > 0
-        ? $"{_settings.TempCeilingC:0.#}°C (custom)"
+        ? $"{Math.Min(_settings.TempCeilingC, MaxTempCeilingC):0.#}°C (custom)"
         : _energyThermals.CpuThrottlePointReferenceC is { } refC
-            ? $"{refC - 5.0:0.#}°C (auto: 5°C below the {refC:0.#}°C throttle-point reference)"
+            ? $"{Math.Min(refC - 5.0, MaxTempCeilingC):0.#}°C (auto: 5°C below the {refC:0.#}°C throttle-point reference)"
             : "90.0°C (auto: no throttle-point reference available yet)";
 
     /// <summary>Whether the WHEA/TDR half of the safety-abort guard is active - NOT a way to
@@ -226,11 +229,8 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         // inert. Warn up front rather than implying coverage that doesn't exist; the WHEA/TDR half
         // of the guard still runs either way, and FinishRun repeats the note if no reading ever
         // appeared during the run.
-        var initialSensors = _energyThermals.GetStressSensorSnapshot();
-        double? initialTemp = type is StressTestType.GpuLoad or StressTestType.CombinedSoak
-            ? HotterOf(initialSensors.CpuPackageTempC, initialSensors.GpuTempC)
-            : initialSensors.CpuPackageTempC;
-        if (initialTemp is null)
+        var (initialCpuTemp, initialGpuTemp) = GuardTemperatures(type, ReadFreshSensorSnapshot());
+        if (HotterOf(initialCpuTemp, initialGpuTemp) is null)
             StatusText += " Warning: no temperature reading is available right now, so the thermal safety ceiling cannot act until one appears - only the WHEA/TDR guard is live.";
 
         LastComparisonText = string.Empty;
@@ -256,18 +256,16 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
                 {
                     while (true)
                     {
-                        trace.Add(BuildTraceSample(safety));
+                        // GPU-driving test types guard both CPU and GPU - a combined soak can push
+                        // either past a safe ceiling. Round 18, #1020: read off the lock-protected
+                        // scalar snapshot, never the UI-owned sensor collections/properties, from
+                        // this background thread. One read feeds both the trace and the guard, so
+                        // the recorded temperature is exactly what the ceiling acted on.
+                        var sensors = ReadFreshSensorSnapshot();
+                        var (cpuTemp, gpuTemp) = GuardTemperatures(type, sensors);
+                        trace.Add(BuildTraceSample(safety, sensors, HotterOf(cpuTemp, gpuTemp)));
 
-                        // GPU-driving test types watch whichever of CPU/GPU is hotter, not just
-                        // one - a combined soak can push either past a safe ceiling. Round 18,
-                        // #1020: read off the lock-protected scalar snapshot, never the UI-owned
-                        // sensor collections/properties, from this background thread.
-                        var sensors = _energyThermals.GetStressSensorSnapshot();
-                        double? tempForSafety = type is StressTestType.GpuLoad or StressTestType.CombinedSoak
-                            ? HotterOf(sensors.CpuPackageTempC, sensors.GpuTempC)
-                            : sensors.CpuPackageTempC;
-
-                        var reason = safety.CheckSample(tempForSafety);
+                        var reason = safety.CheckSample(cpuTemp, gpuTemp);
                         if (reason is not null) { abortReason = reason; break; }
 
                         if (Stopwatch.GetElapsedTime(runStartTimestamp) >= requestedDuration) break; // natural completion (#1053: monotonic)
@@ -370,22 +368,38 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>#699: resolves and (once) persists the effective abort-trigger temperature - 5°C of
-    /// margin below EnergyThermalsViewModel's own #608 throttle-point reference, or a conservative
-    /// 90°C when no reported/inferred reference exists at all yet (a fresh install with no thermal
-    /// history). Resolved once and written back to stress-test.json so it stays stable across runs
-    /// unless the user explicitly changes it afterward.</summary>
+    /// <summary>#699: resolves the effective abort-trigger temperature - the user's override when
+    /// set, else 5°C of margin below EnergyThermalsViewModel's own #608 throttle-point reference, or
+    /// a conservative 90°C when no reported/inferred reference exists at all yet (a fresh install
+    /// with no thermal history). The auto value is re-derived each run rather than written into
+    /// TempCeilingC, so it follows the reference as it's learned and is never shown as "(custom)".</summary>
     private double ResolveEffectiveTempCeiling()
     {
-        if (_settings.TempCeilingC > 0) return _settings.TempCeilingC;
-
-        double resolved = _energyThermals.CpuThrottlePointReferenceC is { } refC ? refC - 5.0 : 90.0;
-        _settings.TempCeilingC = resolved;
-        StressTestSettingsService.Save(_settings);
-        OnPropertyChanged(nameof(TempCeilingC));
-        OnPropertyChanged(nameof(EffectiveTempCeilingText));
-        return resolved;
+        if (_settings.TempCeilingC > 0) return Math.Min(_settings.TempCeilingC, MaxTempCeilingC);
+        return _energyThermals.CpuThrottlePointReferenceC is { } refC ? Math.Min(refC - 5.0, MaxTempCeilingC) : 90.0;
     }
+
+    // Upper bound on the abort ceiling - above any real CPU/GPU throttle point, so a typo or a
+    // hand-edited stress-test.json can't park the always-on thermal check where it never fires.
+    private const double MaxTempCeilingC = 110.0;
+
+    /// <summary>The sensor snapshot, or an all-null one when it hasn't been republished within a
+    /// few poll intervals: a sensor tick that faults or hangs before publishing leaves the last
+    /// reading frozen, and the safety ceiling must see that as "no reading", not a live one.</summary>
+    private StressSensorSnapshot ReadFreshSensorSnapshot()
+    {
+        var s = _energyThermals.GetStressSensorSnapshot();
+        if (s.PublishedTickMs <= 0) return default;
+        double staleAfterMs = Math.Max(5000, 3 * s.PollIntervalSeconds * 1000);
+        return Environment.TickCount64 - s.PublishedTickMs <= staleAfterMs ? s : default;
+    }
+
+    /// <summary>The temperatures the safety ceiling guards for this test type: CPU package always,
+    /// GPU only for the types that load the GPU.</summary>
+    private static (double? CpuTempC, double? GpuTempC) GuardTemperatures(StressTestType type, StressSensorSnapshot s)
+        => type is StressTestType.GpuLoad or StressTestType.CombinedSoak
+            ? (s.CpuPackageTempC, s.GpuTempC)
+            : (s.CpuPackageTempC, null);
 
     /// <summary>Round 18, #1020: runs on the supervisor's background thread, so it never touches
     /// the source ViewModels' UI-owned ObservableCollections (Voltages/Fans/LiveAdapters), whose
@@ -393,16 +407,15 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
     /// mid-enumeration reader here - those values come from the lock-protected scalar snapshots
     /// the ViewModels publish each tick instead. The remaining direct reads are plain (non-nullable)
     /// doubles off PerformanceViewModel, whose aligned 64-bit reads are atomic.</summary>
-    private StressTestTraceSample BuildTraceSample(StressTestSafetyMonitor safety)
+    private StressTestTraceSample BuildTraceSample(StressTestSafetyMonitor safety, StressSensorSnapshot sensors, double? guardTempC)
     {
         double? throttlePercent = _performance.CpuVsBasePercent < 0 ? Math.Min(100, -_performance.CpuVsBasePercent) : 0;
-        var sensors = _energyThermals.GetStressSensorSnapshot();
         double? gpuUtilization = _gpu.GetMaxAdapterUtilizationSnapshot();
 
         return new StressTestTraceSample
         {
             Timestamp = DateTime.Now,
-            TempC = HotterOf(sensors.CpuPackageTempC, sensors.GpuTempC),
+            TempC = guardTempC,
             ClockGhz = _performance.CpuCurrentClockGhz > 0 ? _performance.CpuCurrentClockGhz : null,
             PackagePowerW = sensors.TotalPackagePowerW,
             ThrottlePercent = throttlePercent,
@@ -415,8 +428,8 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>The higher of two optional temperature readings - null only when neither is
-    /// available. Used both for the trace's headline TempC and the safety monitor's own check, so
-    /// a combined CPU+GPU load can never hide behind whichever of the two happens to run cooler.</summary>
+    /// available. The trace's headline TempC for the guarded readings, so a combined CPU+GPU load
+    /// can never hide behind whichever of the two happens to run cooler.</summary>
     private static double? HotterOf(double? a, double? b) => (a, b) switch
     {
         ({ } av, { } bv) => Math.Max(av, bv),
@@ -427,8 +440,12 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
 
     private void FinishRun(StressTestType type, DateTime runStart, TimeSpan requestedDuration, TimeSpan actualDuration, List<StressTestTraceSample> trace, string? abortReason, double effectiveCeiling, int wheaCount, int tdrCount)
     {
-        bool computationChecked = _cpuResult is not null || _memoryResult is not null;
-        bool computationOk = (_cpuResult?.Passed ?? true) && (_memoryResult?.Passed ?? true);
+        // A memory test that skipped itself (too little free memory, allocation refused) tested
+        // nothing - neither a computation failure nor a pass; the run reports SKIPPED instead.
+        bool memorySkipped = _memoryResult is { Skipped: true };
+        var testedMemory = memorySkipped ? null : _memoryResult;
+        bool computationChecked = _cpuResult is not null || testedMemory is not null;
+        bool computationOk = (_cpuResult?.Passed ?? true) && (testedMemory?.Passed ?? true);
 
         bool clockChecked = type is StressTestType.CpuTorture or StressTestType.CombinedSoak;
         var clockSamples = trace.Where(t => t.ClockGhz.HasValue).Select(t => t.ClockGhz!.Value).ToList();
@@ -463,6 +480,8 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
             PeakTempBelowThrottlePoint = peakTempOk,
             Aborted = abortReason is not null,
             AbortReason = abortReason,
+            Skipped = memorySkipped,
+            SkipReason = memorySkipped ? _memoryResult!.SkipReason : null,
         };
 
         int threadCount = type is StressTestType.CpuTorture or StressTestType.CombinedSoak ? CpuThreadCount : 0;
@@ -487,6 +506,15 @@ public sealed class StressTestViewModel : ObservableObject, IDisposable
         };
 
         LastResult = result;
+
+        // A skipped run has nothing to compare - kept out of the run-to-run history so it can't
+        // show up there as a failure (or be compared against as if it had run).
+        if (memorySkipped && abortReason is null)
+        {
+            LastComparisonText = string.Empty;
+            StatusText = $"Run SKIPPED: {criteria.SkipReason ?? "the memory test couldn't run"}";
+            return;
+        }
 
         var historyEntry = new StressTestHistoryEntry
         {

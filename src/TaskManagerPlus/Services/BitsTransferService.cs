@@ -6,7 +6,7 @@ using TaskManagerPlus.Models;
 namespace TaskManagerPlus.Services;
 
 /// <summary>
-/// #291: lists active BITS (Background Intelligent Transfer Service) jobs by shelling out to
+/// #291: lists BITS (Background Intelligent Transfer Service) jobs by shelling out to
 /// `bitsadmin.exe /list /allusers /verbose` and parsing its text output - the same "known Windows
 /// tool over raw interop" tradeoff every other shelled-out reader in this app takes (there is a
 /// BITS COM API, but no service in this app takes a COM interop dependency anywhere else). Exact
@@ -36,13 +36,23 @@ public static class BitsTransferService
 
         var rows = ParseVerboseOutput(output);
 
-        // bitsadmin returns 0 whether or not there are jobs - an empty parse just means "no active
-        // BITS transfers right now", the common case, not a failure.
+        // bitsadmin returns 0 whether or not there are jobs - an empty parse just means "no BITS
+        // jobs right now", the common case, not a failure. The list includes finished jobs
+        // (TRANSFERRED but not yet completed by their owning app), which aren't moving data.
+        int inProgress = rows.Count(IsInProgress);
         string message = rows.Count == 0
-            ? "No active BITS transfers found."
-            : $"{rows.Count} active BITS transfer(s).";
+            ? "No BITS jobs found."
+            : inProgress == rows.Count
+                ? $"{rows.Count} BITS transfer(s) in progress or waiting."
+                : $"{rows.Count} BITS job(s): {inProgress} in progress or waiting, {rows.Count - inProgress} finished or stopped (not transferring).";
         return (true, message, rows);
     }
+
+    /// <summary>True for a job that still has data to move (QUEUED, CONNECTING, TRANSFERRING,
+    /// SUSPENDED, TRANSIENT_ERROR); false for TRANSFERRED/ACKNOWLEDGED/CANCELLED (done) and ERROR
+    /// (stopped until its owner intervenes). An unrecognized state counts as in progress.</summary>
+    public static bool IsInProgress(BitsTransferRow row) =>
+        row.StateText.Trim().ToUpperInvariant() is not ("TRANSFERRED" or "ACKNOWLEDGED" or "CANCELLED" or "ERROR");
 
     private static List<BitsTransferRow> ParseVerboseOutput(string output)
     {

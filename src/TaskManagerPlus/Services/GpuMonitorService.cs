@@ -15,17 +15,19 @@ namespace TaskManagerPlus.Services;
 /// registry Class subkey.
 ///
 /// Both perf-counter categories key their instances by a LUID (the 64-bit locally-unique adapter
-/// identifier Windows assigns each GPU, split into two hex halves in the instance name) - there is
-/// no public API mapping a LUID back to a Win32_VideoController row, so this only ever *pairs* live
-/// LUID-keyed data with a static identity when the live LUID count matches the static adapter count
-/// exactly (by far the common single-GPU case): each live group is then assigned the identity at the
-/// same ordinal position. When the counts don't match (a hybrid laptop where the integrated GPU has
-/// no live counter data until something actually renders on it, multiple LUIDs for one physical
-/// adapter, ...) this deliberately does NOT guess a pairing - the live row falls back to a generic
-/// "GPU N" label with its identity fields left blank, rather than risk showing one adapter's driver
-/// info next to another adapter's live utilization. The "Installed adapters" identity list is always
-/// shown in full regardless, so #55/#56 (driver info, multi-GPU list) are honestly answered even
-/// when the live pairing above can't be.
+/// identifier Windows assigns each GPU, split into "0x{HighPart}_0x{LowPart}" in the instance
+/// name). Win32_VideoController carries no LUID, so a live LUID is named through DirectX's own
+/// per-adapter cache (HKLM\SOFTWARE\Microsoft\DirectX\{guid}: AdapterLuid + Description), and the
+/// static identity is the Win32_VideoController row with that exact description. Pairing by
+/// position used to be the rule when the counts matched, and the counts match by coincidence: a
+/// "Microsoft Basic Render Driver" LUID (no Win32_VideoController row) plus an indirect display
+/// adapter with no LUID (no counters) put the NVIDIA card's live data under the virtual monitor's
+/// name. The cache keeps entries from earlier boots, so it is only ever looked up by a LUID that is
+/// live now, and a LUID claimed by entries with different descriptions is treated as unknown. When
+/// the cache can't name a LUID this only pairs the one-adapter, one-LUID case; anything else gets a
+/// generic "GPU N" label with its identity fields blank rather than another adapter's driver info.
+/// The "Installed adapters" identity list is always shown in full regardless, so #55/#56 (driver
+/// info, multi-GPU list) are honestly answered even when the live pairing above can't be.
 /// </summary>
 public sealed class GpuMonitorService : IDisposable
 {
@@ -94,7 +96,8 @@ public sealed class GpuMonitorService : IDisposable
             .OrderBy(l => l, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        bool canPairOrdinal = Adapters.Count > 0 && Adapters.Count == liveLuids.Count;
+        RefreshLuidDescriptionsIfNeeded(liveLuids);
+        bool canPairSingle = Adapters.Count == 1 && liveLuids.Count == 1;
 
         var result = new List<GpuAdapterSnapshot>();
         for (int i = 0; i < liveLuids.Count; i++)
@@ -105,7 +108,10 @@ public sealed class GpuMonitorService : IDisposable
             sharedByLuid.TryGetValue(luid, out var sharedUsed);
             committedByLuid.TryGetValue(luid, out var committedUsed);
 
-            var identity = canPairOrdinal ? Adapters[i] : null;
+            string? description = TryParseLuid(luid) is { } key && _descriptionByLuid.TryGetValue(key, out var d) ? d : null;
+            var identity = description is not null
+                ? Adapters.FirstOrDefault(a => a.Name.Equals(description, StringComparison.OrdinalIgnoreCase))
+                : canPairSingle ? Adapters[0] : null;
             var engineList = (engines ?? new Dictionary<string, double>())
                 .Select(kv => new GpuEngineUsage { EngineType = kv.Key, Percent = Math.Round(Math.Clamp(kv.Value, 0, 100), 1) })
                 .OrderByDescending(e => e.Percent)
@@ -114,7 +120,7 @@ public sealed class GpuMonitorService : IDisposable
             result.Add(new GpuAdapterSnapshot
             {
                 Luid = luid,
-                Name = identity?.Name ?? $"GPU {i + 1}",
+                Name = identity?.Name ?? description ?? $"GPU {i + 1}",
                 NameIsExact = identity is not null,
                 IsIntegrated = identity?.IsIntegrated ?? false,
                 Engines = engineList,
@@ -129,6 +135,61 @@ public sealed class GpuMonitorService : IDisposable
             });
         }
         return result;
+    }
+
+    // Live LUID (HighPart << 32 | LowPart) -> DirectX adapter description; null value = ambiguous.
+    private Dictionary<ulong, string?> _descriptionByLuid = new();
+    private long _luidDescriptionsReadAtMs = long.MinValue;
+    private const long LuidDescriptionsRefreshMs = 30_000;
+
+    /// <summary>Re-reads the DirectX adapter cache when a live LUID isn't in the map yet (a new
+    /// adapter, or a driver restart/update, which assigns a new LUID) - at most every 30s, since a
+    /// LUID with no cache entry would otherwise re-read the key every tick.</summary>
+    private void RefreshLuidDescriptionsIfNeeded(List<string> liveLuids)
+    {
+        bool unknown = liveLuids.Any(l => TryParseLuid(l) is not { } k || !_descriptionByLuid.ContainsKey(k));
+        if (!unknown) return;
+        long now = Environment.TickCount64;
+        if (_luidDescriptionsReadAtMs != long.MinValue && now - _luidDescriptionsReadAtMs < LuidDescriptionsRefreshMs) return;
+        _luidDescriptionsReadAtMs = now;
+        _descriptionByLuid = ReadDirectXAdapterDescriptions();
+    }
+
+    private static Dictionary<ulong, string?> ReadDirectXAdapterDescriptions()
+    {
+        var map = new Dictionary<ulong, string?>();
+        try
+        {
+            using var root = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\DirectX");
+            if (root is null) return map;
+            foreach (var name in root.GetSubKeyNames())
+            {
+                using var sub = root.OpenSubKey(name);
+                if (sub?.GetValue("AdapterLuid") is not long luid) continue; // REG_QWORD
+                if (sub.GetValue("Description") is not string desc || desc.Trim().Length == 0) continue;
+                desc = desc.Trim();
+                ulong key = unchecked((ulong)luid);
+                // Two entries for one LUID that disagree on the name can't be resolved - unknown.
+                if (!map.TryGetValue(key, out var existing)) map[key] = desc;
+                else if (existing is not null && !existing.Equals(desc, StringComparison.OrdinalIgnoreCase)) map[key] = null;
+            }
+        }
+        catch
+        {
+            // Key unreadable - the map stays empty and only the single-adapter pairing applies.
+        }
+        return map;
+    }
+
+    /// <summary>"0x00000000_0x0000C6FE" (HighPart_LowPart, as the counter instance names print it)
+    /// -> 0x000000000000C6FE, the same value DirectX stores as AdapterLuid.</summary>
+    private static ulong? TryParseLuid(string luid)
+    {
+        var parts = luid.Split('_');
+        if (parts.Length != 2) return null;
+        static uint? Hex(string s) => uint.TryParse(s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? s[2..] : s,
+            System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
+        return Hex(parts[0]) is { } hi && Hex(parts[1]) is { } lo ? ((ulong)hi << 32) | lo : null;
     }
 
     /// <summary>Sums "Utilization Percentage" per (LUID, engine type) AND, #680, per (pid, engine

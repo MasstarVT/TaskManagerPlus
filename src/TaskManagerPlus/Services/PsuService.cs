@@ -4,9 +4,9 @@ using TaskManagerPlus.Models;
 namespace TaskManagerPlus.Services;
 
 /// <summary>
-/// #624: best-effort PSU identification via Win32_PowerSupply (rarely populated - most consumer/
-/// DIY boards don't implement the optional SMBus PSU-reporting side-channel this class depends
-/// on) and, when that's empty, Win32_SystemEnclosure's own free-text Description/Caption fields
+/// #624: best-effort PSU identification via root\cimv2\power Win32_PowerSupply (its rating is
+/// rarely populated - most consumer/DIY boards don't implement the optional PSU-reporting
+/// side-channel it depends on) and, when that's empty, Win32_SystemEnclosure's own free-text Description/Caption fields
 /// (some OEM pre-builts stamp a wattage into the chassis description). Either way this is a
 /// best-effort identification, not a guaranteed reading - EnergyThermalsViewModel falls back to
 /// the user-entered wattage in psu.json (PsuSettingsService) whenever this returns a name with no
@@ -22,30 +22,36 @@ public static class PsuService
         return TryReadSystemEnclosure();
     }
 
+    /// <summary>Win32_PowerSupply lives in root\cimv2\power (there is no such class in root\cimv2,
+    /// which is where this used to look), and its rating is TotalOutputPower in milliwatts (CIM
+    /// qualifier Units=MilliWatts; 0/null = unknown) - there is no MaxOutputWattage property.
+    /// Windows exposes a generic "Microsoft Power Supply Device" instance there even when nothing
+    /// reports a rating, so an instance only counts when it carries a plausible wattage;
+    /// otherwise this falls through to the enclosure check.</summary>
     private static PsuInfo? TryReadWin32PowerSupply()
     {
         try
         {
-            using var searcher = new ManagementObjectSearcher(
-                "SELECT Name, Caption, MaxOutputWattage FROM Win32_PowerSupply");
+            using var searcher = new ManagementObjectSearcher(@"root\cimv2\power",
+                "SELECT Name, Caption, TotalOutputPower FROM Win32_PowerSupply");
             foreach (ManagementObject mo in searcher.Get())
             {
-                string name = (mo["Name"] as string ?? mo["Caption"] as string ?? "Power supply").Trim();
-                double? wattage = null;
+                double watts;
                 try
                 {
-                    if (mo["MaxOutputWattage"] is { } raw && Convert.ToDouble(raw) > 0)
-                        wattage = Convert.ToDouble(raw);
+                    if (mo["TotalOutputPower"] is not { } raw) continue;
+                    watts = Convert.ToDouble(raw, System.Globalization.CultureInfo.InvariantCulture) / 1000.0;
                 }
-                catch { /* leave null - not every implementation populates this field */ }
+                catch { continue; /* not every implementation populates this field */ }
+                if (watts is < 50 or > 5000) continue; // 0 = unknown; anything else this far out isn't a real rating
 
-                return new PsuInfo { Name = name, RatedWattageW = wattage, Source = "Win32_PowerSupply" };
+                string name = (mo["Name"] as string ?? mo["Caption"] as string ?? "Power supply").Trim();
+                return new PsuInfo { Name = name, RatedWattageW = watts, Source = "Win32_PowerSupply" };
             }
         }
         catch
         {
-            // Class unavailable (the common case - it's an optional SMBus-backed class most
-            // consumer boards never implement) - fall through to the enclosure check.
+            // Namespace/class unavailable - fall through to the enclosure check.
         }
         return null;
     }

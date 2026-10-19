@@ -353,7 +353,8 @@ public static class PowerPlanService
                 6 => "Efficient Aggressive At Guaranteed",
                 _ => $"{v} (unrecognized)",
             },
-            "System cooling policy" => v switch { 0 => "Active", 1 => "Passive", _ => $"{v} (unrecognized)" },
+            // powercfg /qh SYSCOOLPOL: index 000 = Passive, 001 = Active.
+            "System cooling policy" => v switch { 0 => "Passive", 1 => "Active", _ => $"{v} (unrecognized)" },
             _ => $"{v}%",
         };
     }

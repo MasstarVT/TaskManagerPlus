@@ -22,6 +22,11 @@ public static class PowerTimelineService
     private const int LookbackDays = 30;
     private const int MaxEvents = 300;
 
+    // How far around the next boot's Kernel-Boot 27 an unexpected-shutdown signal is accepted as
+    // that boot's report on the previous session (see ReadFailedResumes).
+    private static readonly TimeSpan FailureSignalLeadTolerance = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan FailureSignalWindowAfterBoot = TimeSpan.FromMinutes(5);
+
     public static List<PowerTimelineEntry> Read()
     {
         var results = new List<PowerTimelineEntry>();
@@ -125,11 +130,17 @@ public static class PowerTimelineService
 
             foreach (var resume in resumeEvents)
             {
-                DateTime? nextBoot = bootTimesAsc.FirstOrDefault(t => t > resume.Time);
-                if (nextBoot == default(DateTime)) nextBoot = null;
+                // Kernel-Power 41 and EventLog 6008 describe the PREVIOUS session and are written
+                // during the next boot, a little after that boot's own Kernel-Boot 27 - so they're
+                // looked for just around the next boot, not before it. No later boot recorded
+                // means the resumed session hasn't ended (or isn't logged), so nothing to flag.
+                DateTime nextBoot = bootTimesAsc.FirstOrDefault(t => t > resume.Time);
+                if (nextBoot == default) continue;
 
                 var failure = failureSignals.FirstOrDefault(f =>
-                    f.TimeCreated > resume.Time && (nextBoot is null || f.TimeCreated < nextBoot.Value));
+                    f.TimeCreated > resume.Time &&
+                    f.TimeCreated >= nextBoot - FailureSignalLeadTolerance &&
+                    f.TimeCreated <= nextBoot + FailureSignalWindowAfterBoot);
                 if (failure is not null)
                 {
                     results.Add(new FailedResumeEntry

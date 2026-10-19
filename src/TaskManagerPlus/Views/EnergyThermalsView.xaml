@@ -637,9 +637,34 @@
                                                     <Run Text="{Binding Start, StringFormat={}{0:g}, Mode=OneWay}" />
                                                     <Run Text=" — " /><Run Text="{Binding ReasonClass, Mode=OneWay}" />
                                                 </TextBlock>
+                                                <!-- An episode with no CPU temperature / package-power sensor is persisted
+                                                     with 0 for that field (Firmware/zone/core-parked episodes need neither) -
+                                                     shown as unknown, never as a measured 0. -->
                                                 <TextBlock Style="{StaticResource SubStat}">
-                                                    <Run Text="{Binding PeakTempC, StringFormat={}Peak {0:0.#}°C, Mode=OneWay}" />
-                                                    <Run Text=" · " /><Run Text="{Binding PeakPackagePowerW, StringFormat={}{0:0.#}W, Mode=OneWay}" />
+                                                    <Run>
+                                                        <Run.Style>
+                                                            <Style TargetType="Run">
+                                                                <Setter Property="Text" Value="{Binding PeakTempC, StringFormat={}Peak {0:0.#}°C, Mode=OneWay}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding PeakTempC}" Value="0">
+                                                                        <Setter Property="Text" Value="Peak temp unknown" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Run.Style>
+                                                    </Run>
+                                                    <Run Text=" · " /><Run>
+                                                        <Run.Style>
+                                                            <Style TargetType="Run">
+                                                                <Setter Property="Text" Value="{Binding PeakPackagePowerW, StringFormat={}{0:0.#}W, Mode=OneWay}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding PeakPackagePowerW}" Value="0">
+                                                                        <Setter Property="Text" Value="power unknown" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Run.Style>
+                                                    </Run>
                                                     <Run Text=" · " /><Run Text="{Binding MeanEffectiveMhz, StringFormat={}{0:0} MHz avg, Mode=OneWay}" />
                                                 </TextBlock>
                                             </StackPanel>
@@ -954,7 +979,9 @@
                     </ItemsControl>
                     <!-- #614: RPM step-loss list - "Max RPM 1120 (was 1480)" for any fan whose session
                          ceiling has dropped 20%+ below its historical max, a bearing wearing out even
-                         though the fan still spins. Hidden entirely when no fan currently qualifies. -->
+                         though the fan still spins. Only judged once this session has run hot enough to
+                         ramp the fans (StepLossDetected is null until then). Hidden entirely when no fan
+                         currently qualifies. -->
                     <ItemsControl ItemsSource="{Binding Fans}" Margin="0,-8,0,16">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -2044,7 +2071,8 @@
                                 </DataGrid.Style>
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Start" Binding="{Binding Start, StringFormat={}{0:g}, TargetNullValue=Unknown}" Width="1.4*" />
-                                    <DataGridTextColumn Header="Duration" Binding="{Binding Duration, StringFormat={}{0:hh\\:mm\\:ss}, TargetNullValue=Unknown}" Width="*" />
+                                    <!-- Days shown explicitly: "hh" alone wraps a 26h session to 02:00:00. -->
+                                    <DataGridTextColumn Header="Duration" Binding="{Binding Duration, StringFormat={}{0:%d}d {0:hh\\:mm\\:ss}, TargetNullValue=Unknown}" Width="*" />
                                     <DataGridTextColumn Header="Low-power %" Binding="{Binding LowPowerPercent, StringFormat={}{0:0.#}%, TargetNullValue=Unknown}" Width="*" />
                                     <DataGridTextColumn Header="Drain %" Binding="{Binding DrainPercent, StringFormat={}{0:0.#}%, TargetNullValue=Unknown}" Width="*" />
                                 </DataGrid.Columns>

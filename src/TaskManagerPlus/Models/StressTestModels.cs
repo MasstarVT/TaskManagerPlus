@@ -17,12 +17,11 @@ public enum StressTestType
 /// </summary>
 public sealed class StressTestSettings
 {
-    /// <summary>The abort-trigger temperature. Zero/negative means "not yet customized by the
-    /// user" - StressTestViewModel resolves the effective ceiling from
-    /// EnergyThermalsViewModel.CpuThrottlePointReferenceC (5°C of margin below it) the first time
-    /// a run needs one, falling back to 90°C when no reported/inferred throttle-point reference
-    /// exists at all. Once resolved, the effective value is written back here so it stays stable
-    /// across runs unless the user changes it.</summary>
+    /// <summary>The abort-trigger temperature. Zero/negative means "not customized by the user" -
+    /// StressTestViewModel then derives the effective ceiling each run from
+    /// EnergyThermalsViewModel.CpuThrottlePointReferenceC (5°C of margin below it), falling back to
+    /// 90°C when no reported/inferred throttle-point reference exists at all. The derived value is
+    /// not written back here, so only a user-entered value ever shows as "custom".</summary>
     public double TempCeilingC { get; set; }
 
     public bool AbortOnWheaDelta { get; set; } = true;
@@ -142,8 +141,14 @@ public sealed class StressTestCriteria
     public bool Aborted { get; init; }
     public string? AbortReason { get; init; }
 
+    /// <summary>The workload declined to run (the memory test with too little free memory, or an
+    /// allocation it couldn't get) - nothing was tested, so the run is neither a pass nor a
+    /// computation failure.</summary>
+    public bool Skipped { get; init; }
+    public string? SkipReason { get; init; }
+
     // Unmeasured criteria are excluded rather than counted as passes; the per-row text says Unknown.
-    public bool OverallPass => !Aborted
+    public bool OverallPass => !Aborted && !Skipped
         && (!ComputationChecked || ComputationOk)
         && NoWheaDelta && NoTdr
         && (!ClockChecked || !ClockMeasured || SustainedClockAtOrAboveBase)
@@ -151,7 +156,7 @@ public sealed class StressTestCriteria
 
     // Plain display-text properties (not just raw bools) so StressTestPanel.xaml can bind each row
     // directly without needing a multi-value converter for the *Checked/*Ok pairing.
-    public string ComputationResultText => !ComputationChecked ? "N/A" : ComputationOk ? "Pass" : "Fail";
+    public string ComputationResultText => Skipped ? "Not run (skipped)" : !ComputationChecked ? "N/A" : ComputationOk ? "Pass" : "Fail";
     public string WheaResultText => NoWheaDelta ? "Pass" : "Fail";
     public string TdrResultText => NoTdr ? "Pass" : "Fail";
     public string ClockResultText => !ClockChecked ? "N/A" : !ClockMeasured ? "Unknown (no clock reading)" : SustainedClockAtOrAboveBase ? "Pass" : "Fail";

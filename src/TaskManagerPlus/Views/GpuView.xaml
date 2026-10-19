@@ -196,9 +196,10 @@
                         </StackPanel>
                     </Border>
                     <!-- #53/#54: live per-engine utilization + VRAM usage, one section per detected LUID.
-                         The name is only the real adapter name when it could be confidently paired (see
-                         GpuMonitorService's remarks) - otherwise a generic "GPU N" label, deliberately not
-                         guessed. -->
+                         The name comes from the LUID's own DirectX adapter entry (see GpuMonitorService's
+                         remarks); NameIsExact (no caption) only when that also matched an installed
+                         adapter's identity - otherwise the DirectX name or a generic "GPU N" label,
+                         deliberately not guessed. -->
                     <ItemsControl ItemsSource="{Binding LiveAdapters}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>

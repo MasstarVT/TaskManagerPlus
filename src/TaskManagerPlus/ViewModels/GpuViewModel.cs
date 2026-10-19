@@ -1,6 +1,4 @@
 using System.Collections.ObjectModel;
-using System.ComponentModel;
-using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Threading;
 using LibreHardwareMonitor.Hardware;
@@ -71,10 +69,13 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
     public ObservableCollection<GpuAdapterSnapshot> LiveAdapters { get; } = new();
 
     /// <summary>#56: "which app is using it" - the same per-process GPU% Round 4 already samples
-    /// (ProcessMonitorService.ReadGpuUsageByPid), just re-presented live-sorted here rather than
-    /// sampled a second time - the same "second ICollectionView over one shared collection" pattern
-    /// MemoryViewModel.TopMemoryProcesses already established.</summary>
-    public ICollectionView TopGpuProcesses { get; }
+    /// (ProcessMonitorService.ReadGpuUsageByPid), re-presented here rather than sampled a second
+    /// time. The top TopGpuProcessesShown live ProcessRow objects, re-picked each GPU tick (their
+    /// numbers still update every Processes tick) - a live-sorted view over every process in the
+    /// view's non-virtualizing ItemsControl realized and re-sorted hundreds of rows to show a few,
+    /// the same fix SummaryViewModel's Top CPU tiles got.</summary>
+    public ObservableCollection<ProcessRow> TopGpuProcesses { get; } = new();
+    private const int TopGpuProcessesShown = 15;
 
     // #253 (nice-to-have): a short refresh-rate summary line, reusing the same
     // DisplayModeService.ReadAudit the Responsiveness tab's own display-mode card is built from -
@@ -272,15 +273,6 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
         _processes = processes;
         _performance = performance;
         foreach (var a in _service.Adapters) InstalledAdapters.Add(a);
-
-        var view = new CollectionViewSource { Source = processes.Processes }.View;
-        if (view is ICollectionViewLiveShaping liveShaping && liveShaping.CanChangeLiveSorting)
-        {
-            liveShaping.LiveSortingProperties.Add(nameof(ProcessRow.GpuPercent));
-            liveShaping.IsLiveSorting = true;
-        }
-        view.SortDescriptions.Add(new SortDescription(nameof(ProcessRow.GpuPercent), ListSortDirection.Descending));
-        TopGpuProcesses = view;
 
         // #674: shared-VRAM ("spillover from system memory") trend chart - same glow+core LineOf
         // pattern every other history chart in this app follows.
@@ -546,6 +538,7 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
             UpdateEngineHistory(primary);
             UpdateProcessEngineAttribution();
             UpdateGpuClockState(primary);
+            SyncTopGpuProcesses();
 
             if (NvidiaSmiAvailable && DateTime.Now - _lastNvidiaSmiCheck >= NvidiaSmiCheckInterval)
             {
@@ -565,6 +558,19 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>In-place re-pick of TopGpuProcesses (same shape as SummaryViewModel.SyncTop), so
+    /// unchanged rows aren't removed and re-added every tick.</summary>
+    private void SyncTopGpuProcesses()
+    {
+        var top = _processes.Processes.OrderByDescending(p => p.GpuPercent).Take(TopGpuProcessesShown).ToList();
+        for (int i = 0; i < top.Count; i++)
+        {
+            if (i >= TopGpuProcesses.Count) TopGpuProcesses.Add(top[i]);
+            else if (!ReferenceEquals(TopGpuProcesses[i], top[i])) TopGpuProcesses[i] = top[i];
+        }
+        while (TopGpuProcesses.Count > top.Count) TopGpuProcesses.RemoveAt(TopGpuProcesses.Count - 1);
+    }
+
     /// <summary>#674: charts the primary (best-identified, else first) adapter's shared-VRAM usage
     /// over time and derives a sustained-spillover verdict. See GpuAdapterSnapshot's remarks for
     /// exactly which perf counters back Dedicated/Shared/TotalCommitted here - "Committed", not the
@@ -572,14 +578,16 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
     private void UpdateVramPressure(List<GpuAdapterSnapshot> snapshot)
     {
         var primary = snapshot.FirstOrDefault(a => a.NameIsExact) ?? snapshot.FirstOrDefault();
-        double sharedBytes = primary?.SharedVramUsedBytes ?? 0;
-        PushHistory(VramSpilloverHistory, sharedBytes);
 
+        // No live adapter this tick means no reading, not 0 bytes - the chart gets no point.
         if (primary is null)
         {
             VramPressureVerdictText = string.Empty;
             return;
         }
+
+        double sharedBytes = primary.SharedVramUsedBytes;
+        PushHistory(VramSpilloverHistory, sharedBytes);
 
         bool overThreshold = sharedBytes > SpilloverThresholdBytes;
         _spilloverSustainWindow.Enqueue(overThreshold);
@@ -628,7 +636,10 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
             int streak = unchanged ? state.StreakTicks + 1 : 1;
             _engineFlatlineTracking[adapter.Luid] = (engine3D.Percent, streak);
 
-            if (streak != FlatlineTicksThreshold || engine3D.Percent <= 0) continue;
+            // A 3D engine pinned at the (clamped) 100% ceiling is a fully-loaded GPU - a GPU-bound
+            // game sits there for minutes - and can't be told apart from a hang, so only a stuck
+            // value below the ceiling counts.
+            if (streak != FlatlineTicksThreshold || engine3D.Percent <= 0 || engine3D.Percent >= 99.5) continue;
 
             int fgPid = ForegroundProcessService.GetForegroundProcessId();
             var fgProcess = fgPid > 0 ? _processes.Processes.FirstOrDefault(p => p.Pid == fgPid) : null;
@@ -707,14 +718,15 @@ public sealed class GpuViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>#679: pushes this tick's per-engine percentages (3D/Copy/Video Decode/Video Encode/
-    /// Compute) onto their own history series - an engine this adapter didn't report at all this
-    /// tick (or no primary adapter at all) pushes 0, same "flat 0 rather than a gap" convention
-    /// every other history chart in this app already follows.</summary>
+    /// Compute) onto their own history series. An engine the primary adapter didn't report this
+    /// tick pushes 0 - no process has a counter instance on it, so idle is the real reading. No
+    /// primary adapter at all is no reading, and pushes nothing.</summary>
     private void UpdateEngineHistory(GpuAdapterSnapshot? primary)
     {
+        if (primary is null) return;
         foreach (var (engineType, history) in _engineHistories)
         {
-            double value = primary?.Engines.FirstOrDefault(e => e.EngineType.Equals(engineType, StringComparison.OrdinalIgnoreCase))?.Percent ?? 0;
+            double value = primary.Engines.FirstOrDefault(e => e.EngineType.Equals(engineType, StringComparison.OrdinalIgnoreCase))?.Percent ?? 0;
             PushHistory(history, value);
         }
     }

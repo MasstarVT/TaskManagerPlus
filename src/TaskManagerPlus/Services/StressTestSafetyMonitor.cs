@@ -16,10 +16,20 @@ namespace TaskManagerPlus.Services;
 /// convention this is throttled to at most once every HardwareErrorCheckInterval internally, but
 /// that throttling only changes HOW OFTEN the hardware-error half runs; the temperature half (the
 /// fast-acting guard against actually damaging the machine) runs on every single call, unthrottled.
+///
+/// The temperature half also fails closed: CPU and GPU readings are watched separately, and once a
+/// reading has been seen during the run, losing it (null, or a stale snapshot the caller nulls
+/// out) for MaxConsecutiveMissingTempSamples samples in a row aborts the run, since the ceiling
+/// can no longer act on it. A run that never had a reading is warned about up front instead.
 /// </summary>
 public sealed class StressTestSafetyMonitor
 {
     private static readonly TimeSpan HardwareErrorCheckInterval = TimeSpan.FromSeconds(5);
+
+    private const int MaxConsecutiveMissingTempSamples = 5;
+
+    private readonly TempWatch _cpuTemp = new("CPU");
+    private readonly TempWatch _gpuTemp = new("GPU");
 
     private readonly StressTestSettings _settings;
     private readonly EventLogService _eventLog = new();
@@ -52,18 +62,20 @@ public sealed class StressTestSafetyMonitor
         _nextHardwareErrorCheckDueMs = long.MinValue; // force an immediate first check
         _wheaEventsSinceStart = 0;
         _tdrEventsSinceStart = 0;
+        _cpuTemp.Reset();
+        _gpuTemp.Reset();
     }
 
     /// <summary>Returns a non-null abort reason the instant the run must stop - unconditional,
     /// called every sample regardless of test type. Never throws (every event-log read is
     /// individually try/caught) - a safety check that itself could crash the run would defeat the
-    /// point.</summary>
-    public string? CheckSample(double? tempC)
+    /// point. Pass null for <paramref name="gpuTempC"/> on test types that don't load the GPU.</summary>
+    public string? CheckSample(double? cpuTempC, double? gpuTempC)
     {
         // Temperature: always checked, every call, never throttled - this is the guard that
         // actually protects the hardware.
-        if (tempC is { } t && t >= EffectiveTempCeilingC)
-            return $"temperature {t:0.#}°C reached the safety ceiling ({EffectiveTempCeilingC:0.#}°C)";
+        var tempAbort = _cpuTemp.Check(cpuTempC, EffectiveTempCeilingC) ?? _gpuTemp.Check(gpuTempC, EffectiveTempCeilingC);
+        if (tempAbort is not null) return tempAbort;
 
         if (!_settings.AbortOnTdr && !_settings.AbortOnWheaDelta) return null;
 
@@ -94,5 +106,40 @@ public sealed class StressTestSafetyMonitor
     {
         try { return read(); }
         catch { return 0; }
+    }
+
+    /// <summary>One guarded temperature source: the ceiling check, plus the lost-reading abort
+    /// for a source that was live earlier in the run.</summary>
+    private sealed class TempWatch
+    {
+        private readonly string _label;
+        private bool _seenThisRun;
+        private int _consecutiveMissing;
+
+        public TempWatch(string label) => _label = label;
+
+        public void Reset()
+        {
+            _seenThisRun = false;
+            _consecutiveMissing = 0;
+        }
+
+        public string? Check(double? tempC, double ceilingC)
+        {
+            // NaN/infinity compares false against the ceiling, so it counts as missing, not live.
+            if (tempC is { } t && double.IsFinite(t))
+            {
+                _seenThisRun = true;
+                _consecutiveMissing = 0;
+                return t >= ceilingC
+                    ? $"{_label} temperature {t:0.#}°C reached the safety ceiling ({ceilingC:0.#}°C)"
+                    : null;
+            }
+
+            if (!_seenThisRun) return null;
+            return ++_consecutiveMissing >= MaxConsecutiveMissingTempSamples
+                ? $"the {_label} temperature reading stopped updating for {_consecutiveMissing} consecutive samples, so the thermal safety ceiling could no longer act"
+                : null;
+        }
     }
 }
