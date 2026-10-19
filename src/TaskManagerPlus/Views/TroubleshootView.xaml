@@ -154,54 +154,57 @@
         <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16"
                       Visibility="{Binding ShowLanding, Converter={StaticResource BoolToVisibilityConverter}}">
             <StackPanel>
+                <!-- The button row sits in the star column as a WrapPanel: an Auto column measures
+                     its content at infinite width, so nine buttons in one line clipped once the
+                     window (or the UI scale) left them less room than that. -->
                 <Grid Margin="0,0,0,4">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="What's the problem?" FontSize="{StaticResource FontTitle}" FontWeight="Light" VerticalAlignment="Center" />
-                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <TextBlock Grid.Column="0" Text="What's the problem?" FontSize="{StaticResource FontTitle}" FontWeight="Light" VerticalAlignment="Center" Margin="0,0,16,0" />
+                    <WrapPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                         <!-- #938: one shared time axis overlaying every dated event this app can
                              find - crashes, updates, driver installs, software installs, thermal
                              events, service failures, perf spikes, and user notes. -->
-                        <Button Content="Timeline" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                        <Button Content="Timeline" Padding="10,4" Margin="0,0,8,4" VerticalAlignment="Center"
                                 Command="{Binding ShowTimelineCommand}" />
                         <!-- #950-958: opt-in performance-baseline capture/trend/regression/
                              before-after-change tracking. -->
-                        <Button Content="Baselines" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                        <Button Content="Baselines" Padding="10,4" Margin="0,0,8,4" VerticalAlignment="Center"
                                 Command="{Binding ShowBaselinesCommand}" />
                         <!-- #959-966: the always-on background health collector's history browser,
                              cost readout, and alerting settings. -->
-                        <Button Content="Background Health" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                        <Button Content="Background Health" Padding="10,4" Margin="0,0,8,4" VerticalAlignment="Center"
                                 Command="{Binding ShowBackgroundHealthCommand}" />
                         <!-- #915: reopen a saved run's transcript, or re-run its symptom fresh. -->
-                        <Button Content="Past runs" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                        <Button Content="Past runs" Padding="10,4" Margin="0,0,8,4" VerticalAlignment="Center"
                                 Command="{Binding ShowPastRunsCommand}" />
                         <!-- #973: everything this app has changed on the system, with Undo where
                              reversible. -->
-                        <Button Content="Changes" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                        <Button Content="Changes" Padding="10,4" Margin="0,0,8,4" VerticalAlignment="Center"
                                 Command="{Binding ShowChangeJournalCommand}" />
                         <!-- suggestions.md #981-987: one-click evidence bundle export (msinfo32/
                              dxdiag/event logs/minidumps/this app's own findings), with an opt-out
                              checklist, an opt-in PII scrub review, and a manifest. -->
-                        <Button Content="Evidence Bundle" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                        <Button Content="Evidence Bundle" Padding="10,4" Margin="0,0,8,4" VerticalAlignment="Center"
                                 Command="{Binding ShowEvidenceBundleCommand}" />
                         <!-- suggestions.md #995: open someone else's exported evidence bundle and
                              review it read-only. -->
-                        <Button Content="Bundle Review" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                        <Button Content="Bundle Review" Padding="10,4" Margin="0,0,8,4" VerticalAlignment="Center"
                                 Command="{Binding ShowBundleReviewCommand}"
                                 AutomationProperties.Name="Open bundle review panel" />
                         <!-- suggestions.md #999: read-only disclosure of every outbound network
                              call this app can make, plus the Offline mode switch. -->
-                        <Button Content="Network Activity" Padding="10,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                        <Button Content="Network Activity" Padding="10,4" Margin="0,0,8,4" VerticalAlignment="Center"
                                 Command="{Binding ShowNetworkActivityCommand}"
                                 AutomationProperties.Name="Open network activity disclosure panel" />
                         <!-- suggestions.md #990: searchable plain-English glossary for this app's
                              own jargon. -->
-                        <Button Content="Glossary" Padding="10,4" VerticalAlignment="Center"
+                        <Button Content="Glossary" Padding="10,4" Margin="0,0,0,4" VerticalAlignment="Center"
                                 Command="{Binding ShowGlossaryCommand}"
                                 AutomationProperties.Name="Open glossary panel" />
-                    </StackPanel>
+                    </WrapPanel>
                 </Grid>
                 <TextBlock Text="Pick the symptom that best matches what you're seeing - this runs a scripted set of checks instead of making you guess which tab to open."
                            Style="{StaticResource SubStat}" TextWrapping="Wrap" Margin="0,0,0,16" />

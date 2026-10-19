@@ -38,7 +38,10 @@
 
         <!-- One lane row: display name + event count on the left, its horizontal marker track on
              the right, positioned via TimelineMarkerPositionConverter against the view-model's
-             currently resolved WindowStartLocal/WindowEndLocal/TrackWidthPx. -->
+             currently resolved WindowStartLocal/WindowEndLocal and the track's own rendered
+             width (a fixed width left the newest events short of the edge on a wide window and
+             clipped them on a narrow one). The right margin keeps a marker at the very end of
+             the window - its left edge sits at the full width - inside the track. -->
         <DataTemplate x:Key="TimelineLaneRowTemplate" DataType="{x:Type vm:TimelineLaneRow}">
             <Grid Margin="0,0,0,4">
                 <Grid.ColumnDefinitions>
@@ -52,10 +55,10 @@
                     </TextBlock>
                 </StackPanel>
                 <Border Grid.Column="1" Background="{DynamicResource BgElevatedBrush}" CornerRadius="4" Height="26" ClipToBounds="True">
-                    <ItemsControl ItemsSource="{Binding Events}" ItemTemplate="{StaticResource TimelineMarkerTemplate}">
+                    <ItemsControl ItemsSource="{Binding Events}" ItemTemplate="{StaticResource TimelineMarkerTemplate}" Margin="0,0,14,0">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <Canvas Width="{Binding DataContext.TrackWidthPx, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                                <Canvas />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemContainerStyle>
@@ -67,7 +70,7 @@
                                             <Binding Path="Timestamp" />
                                             <Binding Path="DataContext.WindowStartLocal" RelativeSource="{RelativeSource AncestorType=UserControl}" />
                                             <Binding Path="DataContext.WindowEndLocal" RelativeSource="{RelativeSource AncestorType=UserControl}" />
-                                            <Binding Path="DataContext.TrackWidthPx" RelativeSource="{RelativeSource AncestorType=UserControl}" />
+                                            <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=ItemsControl}" />
                                         </MultiBinding>
                                     </Setter.Value>
                                 </Setter>
@@ -104,9 +107,12 @@
             <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Margin="0,0,0,10">
                 <TextBlock.Style>
                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
-                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Setter Property="Visibility" Value="Visible" />
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding StatusText}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding StatusText}" Value="">
                                 <Setter Property="Visibility" Value="Collapsed" />
                             </DataTrigger>
                         </Style.Triggers>

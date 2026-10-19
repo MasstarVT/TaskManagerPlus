@@ -58,13 +58,14 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     public PerformanceViewModel Performance { get; }
     public ProcessesViewModel Processes { get; }
 
-    /// <summary>All processes, live-sorted by CPU% descending, for the "Top processes" card.</summary>
-    public ICollectionView TopProcesses { get; }
+    /// <summary>The top few processes by CPU% descending, for the "Top processes" card - see
+    /// RefreshTopProcesses.</summary>
+    public ObservableCollection<ProcessRow> TopProcesses { get; } = new();
 
-    /// <summary>All processes, live-sorted by the rolling ~10s CPU average descending (#11) -
+    /// <summary>The top few processes by the rolling ~10s CPU average descending (#11) -
     /// "what's actually been eating CPU over the last several seconds", a steadier answer than
     /// TopProcesses' instantaneous per-tick reading for a bursty process.</summary>
-    public ICollectionView TopProcesses10sAvg { get; }
+    public ObservableCollection<ProcessRow> TopProcesses10sAvg { get; } = new();
 
     public ObservableCollection<HealthIssue> HealthIssues { get; } = new();
 
@@ -207,6 +208,7 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     // RefreshHealthIssues pass to detect first-seen/resolved transitions.
     private readonly HashSet<string> _previousFiredRuleIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _lastKnownRuleTitles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, HealthIssue> _latestIssuesByRuleId = new(StringComparer.OrdinalIgnoreCase);
 
     // Round 11, #69: hideable/reorderable dashboard tiles - see DashboardTileConfig's remarks for
     // why this is up/down reordering within a fixed two-column layout rather than freeform
@@ -467,28 +469,35 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
         BuildTiles();
 
-        var view = new CollectionViewSource { Source = processes.Processes }.View;
-        if (view is ICollectionViewLiveShaping liveShaping && liveShaping.CanChangeLiveSorting)
-        {
-            liveShaping.LiveSortingProperties.Add(nameof(ProcessRow.CpuPercent));
-            liveShaping.IsLiveSorting = true;
-        }
-        view.SortDescriptions.Add(new SortDescription(nameof(ProcessRow.CpuPercent), ListSortDirection.Descending));
-        TopProcesses = view;
-
-        var view10s = new CollectionViewSource { Source = processes.Processes }.View;
-        if (view10s is ICollectionViewLiveShaping liveShaping10s && liveShaping10s.CanChangeLiveSorting)
-        {
-            liveShaping10s.LiveSortingProperties.Add(nameof(ProcessRow.CpuPercent10sAvg));
-            liveShaping10s.IsLiveSorting = true;
-        }
-        view10s.SortDescriptions.Add(new SortDescription(nameof(ProcessRow.CpuPercent10sAvg), ListSortDirection.Descending));
-        TopProcesses10sAvg = view10s;
-
         _healthTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
-        _healthTimer.Tick += (_, _) => { RefreshHealthIssues(); CheckThresholdAlerts(); };
+        _healthTimer.Tick += (_, _) => { RefreshHealthIssues(); CheckThresholdAlerts(); RefreshTopProcesses(); };
         _healthTimer.Start();
         RefreshHealthIssues();
+        RefreshTopProcesses();
+    }
+
+    // The two Top CPU tiles show this many rows (about what their old MaxHeight clip fit).
+    private const int TopProcessesShown = 7;
+    private const int TopProcesses10sShown = 5;
+
+    /// <summary>Re-picks both Top CPU tiles' rows. The rows are the live ProcessRow objects, so
+    /// their numbers still update every Processes tick; only membership/order follows this 2s
+    /// cadence. Replaces a live-sorted view over every process in a non-virtualizing
+    /// ItemsControl, which realized and re-sorted hundreds of rows to show a handful.</summary>
+    private void RefreshTopProcesses()
+    {
+        SyncTop(TopProcesses, Processes.Processes.OrderByDescending(p => p.CpuPercent).Take(TopProcessesShown).ToList());
+        SyncTop(TopProcesses10sAvg, Processes.Processes.OrderByDescending(p => p.CpuPercent10sAvg).Take(TopProcesses10sShown).ToList());
+    }
+
+    private static void SyncTop(ObservableCollection<ProcessRow> target, List<ProcessRow> top)
+    {
+        for (int i = 0; i < top.Count; i++)
+        {
+            if (i >= target.Count) target.Add(top[i]);
+            else if (!ReferenceEquals(target[i], top[i])) target[i] = top[i];
+        }
+        while (target.Count > top.Count) target.RemoveAt(target.Count - 1);
     }
 
     /// <summary>#72: fires a toast the moment a metric crosses above its configured threshold -
@@ -791,13 +800,15 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         Line($"<tr><td>RAM</td><td>{Esc(_systemSpecs.RamTotal)} ({Esc(_systemSpecs.RamDetails)})</td></tr>");
         Line("</table>");
 
+        // Real samples only - the chart buffers' zero pre-fill isn't a reading.
+        var history = Performance.History;
         Line("<h2>Current load (last minute)</h2>");
         Line($"<p>CPU: {Performance.CpuCurrentPercent:0.0}% @ {Performance.CpuCurrentClockGhz:0.00} GHz</p>");
-        Line(Sparkline(Performance.CpuHistory, "#3C9EE8"));
+        Line(Sparkline(history.Cpu, "#3C9EE8"));
         Line($"<p>Memory: {Performance.RamUsedGb:0.0} / {Performance.RamTotalGb:0.0} GB ({Performance.RamPercent:0.0}%)</p>");
-        Line(Sparkline(Performance.RamHistory, "#9B7FE0"));
+        Line(Sparkline(history.Ram, "#9B7FE0"));
         Line($"<p>Disk activity: {Performance.DiskPercent:0.0}%</p>");
-        Line(Sparkline(Performance.DiskHistory, "#E8A23C"));
+        Line(Sparkline(history.Disk, "#E8A23C"));
         if (_energyThermals.CpuPackageTempC is { } temp) Line($"<p>CPU package temperature: {temp:0.#}°C</p>");
         if (_energyThermals.TotalPackagePowerW is { } power) Line($"<p>CPU package power draw: {power:0.#} W</p>");
 
@@ -1394,16 +1405,21 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         // its own last-minute history, even without a fixed threshold. Requires both a meaningful
         // raw jump (>=20 points) AND a real statistical deviation (>=3 std dev past a small floor)
         // so a metric that's merely a little above its own noisy baseline isn't flagged.
-        CheckAnomaly(issues, "CPU", Performance.CpuHistory, Performance.CpuCurrentPercent);
-        CheckAnomaly(issues, "Memory", Performance.RamHistory, Performance.RamPercent);
-        CheckAnomaly(issues, "Disk activity", Performance.DiskHistory, Performance.DiskPercent);
+        var history = Performance.History;
+        CheckAnomaly(issues, "CPU", history.Cpu, Performance.CpuCurrentPercent);
+        CheckAnomaly(issues, "Memory", history.Ram, Performance.RamPercent);
+        CheckAnomaly(issues, "Disk activity", history.Disk, Performance.DiskPercent);
 
         // #933: sort by the selected criterion before anything below renders/diffs the list.
         issues = SortIssues(issues, FindingSortMode);
 
+        _latestIssuesByRuleId.Clear();
+        foreach (var i in issues)
+            if (i.RuleId is { Length: > 0 } id) _latestIssuesByRuleId[id] = i;
+
         // Replace in place only when the content actually changed, so the UI doesn't flicker/
         // lose scroll position on every 2s tick when nothing is different.
-        if (!issues.Select(i => i.Message).SequenceEqual(HealthIssues.Select(i => i.Message)))
+        if (!issues.Select(IssueContentKey).SequenceEqual(HealthIssues.Select(IssueContentKey)))
         {
             HealthIssues.Clear();
             foreach (var issue in issues) HealthIssues.Add(issue);
@@ -1521,13 +1537,25 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
         }
 
         bool changed = groups.Count != GroupedHealthIssues.Count ||
-            groups.Zip(GroupedHealthIssues, (a, b) => a.Findings.Select(f => f.Message).SequenceEqual(b.Findings.Select(f => f.Message))).Any(same => !same);
+            groups.Zip(GroupedHealthIssues, (a, b) => a.Findings.Select(IssueContentKey).SequenceEqual(b.Findings.Select(IssueContentKey))).Any(same => !same);
         if (changed)
         {
             GroupedHealthIssues.Clear();
             foreach (var g in groups) GroupedHealthIssues.Add(g);
         }
     }
+
+    /// <summary>What decides whether a Health Check row is replaced: every field a rule edit can
+    /// change (severity, confidence, title, links, actions, which evidence it shows), not just the
+    /// Message. Live evidence values are deliberately left out - they move on every tick, and
+    /// replacing the row each time would collapse an open "Why am I seeing this?" drill-down every
+    /// 2s (rules whose Body templates a value already change Message when it moves). "Not a
+    /// problem" reads the freshest evaluation instead, via _latestIssuesByRuleId.</summary>
+    private static string IssueContentKey(HealthIssue i) => string.Join('\u001f',
+        i.RuleId, i.Title, i.Message, i.PlainEnglishMessage, i.Severity, i.Confidence, i.IsCritical, i.Category,
+        i.DocsUrl, i.GroupKey, i.ExplainerId, i.CounterEvidence,
+        i.ActionIds is null ? null : string.Join(",", i.ActionIds),
+        string.Join(",", i.Evidence.Select(e => e.Label)));
 
     /// <summary>#936: diffs `issues`' RuleId-bearing findings against the previous pass's set,
     /// appending an edge-triggered "first-seen"/"resolved" line to findings-history.jsonl for
@@ -1609,9 +1637,11 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
 
     /// <summary>#67: flags `current` as an outlier vs. the mean/stddev of `history` (which already
     /// includes `current` as its most recent sample - PerformanceViewModel pushes each tick's
-    /// value before this timer's own tick runs). A minimum stddev floor keeps a near-flat history
-    /// from making every tiny blip look like a 3-sigma event.</summary>
-    private static void CheckAnomaly(List<HealthIssue> issues, string label, ObservableCollection<double> history, double current)
+    /// value before this timer's own tick runs). `history` is real samples only
+    /// (PerformanceViewModel.History) - the charts' zero pre-fill would otherwise read as a 0%
+    /// baseline and flag every metric right after launch. A minimum stddev floor keeps a
+    /// near-flat history from making every tiny blip look like a 3-sigma event.</summary>
+    private static void CheckAnomaly(List<HealthIssue> issues, string label, IReadOnlyList<double> history, double current)
     {
         if (history.Count < 30) return; // not enough history yet for a meaningful baseline
 
@@ -1706,10 +1736,13 @@ public sealed class SummaryViewModel : ObservableObject, IDisposable
     {
         if (parameter is not HealthIssue { RuleId: { Length: > 0 } ruleId } issue) return;
 
+        // The bound row can be several ticks old (see IssueContentKey) - record the values from
+        // the latest evaluation of the same rule when it's still firing.
+        var current = _latestIssuesByRuleId.TryGetValue(ruleId, out var latest) ? latest : issue;
         FeedbackService.Append(new FeedbackEntry
         {
             RuleId = ruleId,
-            MetricValuesAtTime = issue.Evidence.ToDictionary(e => e.Label, e => e.Value),
+            MetricValuesAtTime = current.Evidence.ToDictionary(e => e.Label, e => e.Value),
         });
 
         _lastFeedbackRuleId = ruleId;

@@ -565,6 +565,17 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
 
     private static DiagnosticStep? StepById(TroubleshootRun run, string id) => run.Steps.FirstOrDefault(s => s.Id == id);
 
+    /// <summary>True when a step never produced a real answer - timed out, errored, skipped, or
+    /// never ran. A verdict gated on such a step must say it couldn't check, not read the step's
+    /// silence as "nothing found".</summary>
+    private static bool DidNotComplete(DiagnosticStep? step) => step is null || step.Status is
+        DiagnosticStepStatus.Skipped or DiagnosticStepStatus.TimedOut or DiagnosticStepStatus.Failed or
+        DiagnosticStepStatus.Pending or DiagnosticStepStatus.Running;
+
+    private static string CouldNotCheck(DiagnosticStep? step, string what) =>
+        $"Couldn't check {what}, so this isn't a clean result - " +
+        (step is null || string.IsNullOrWhiteSpace(step.ResultText) ? "the step didn't run." : step.ResultText);
+
     // ==================================================================================
     // Branch definitions - one per symptom, registered in the constructor via RegisterBranch
     // (#914). Each pair below builds the ordered step list plus a verdict function that reads the
@@ -579,10 +590,15 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     {
         new DiagnosticStep
         {
-            Id = "slow.resources", Label = "CPU, RAM, and disk (last ~10 seconds)",
-            Description = "Averages the shared performance sampler's last ~10 one-second samples, not an instantaneous reading.",
+            Id = "slow.resources", Label = "CPU, RAM, and disk (last ~10 samples)",
+            Description = "Averages the shared performance sampler's last ~10 samples, not an instantaneous reading.",
             Timeout = TimeSpan.FromSeconds(5),
-            Check = _ => Task.FromResult(TroubleshootService.CheckResourceAverages(_performance.CpuHistory, _performance.RamHistory, _performance.DiskHistory)),
+            Check = _ =>
+            {
+                // Real samples only - the chart buffers start as 60 zeros.
+                var history = _performance.History;
+                return Task.FromResult(TroubleshootService.CheckResourceAverages(history.Cpu, history.Ram, history.Disk, history.PollIntervalSeconds));
+            },
         },
         new DiagnosticStep
         {
@@ -644,7 +660,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Id = "crash.events", Label = "BugCheck (1001) & Kernel-Power (41) events",
                 Description = "The System/Application log scan Windows' own Reliability Monitor is based on, last 30 days.",
                 Timeout = TimeSpan.FromSeconds(20),
-                Check = _ => Task.Run(() => TroubleshootService.CheckCrashEvents(ctx)),
+                Check = ct => Task.Run(() => TroubleshootService.CheckCrashEvents(ctx, ct)),
             },
             new DiagnosticStep
             {
@@ -672,7 +688,8 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Id = "crash.drivers", Label = "Recently-installed drivers (pnputil)",
                 Description = "Correlates staged driver packages dated within 7 days before the first crash - a lead, not a verdict.",
                 Timeout = TimeSpan.FromSeconds(20),
-                Check = _ => TroubleshootService.CheckRecentDriverCorrelationAsync(ctx),
+                // Task.Run: the pnputil output parse would otherwise resume on the dispatcher.
+                Check = _ => Task.Run(() => TroubleshootService.CheckRecentDriverCorrelationAsync(ctx)),
             },
         };
     }
@@ -683,7 +700,9 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
         var drivers = StepById(run, "crash.drivers");
         var whea = StepById(run, "crash.whea");
 
-        if (events?.Status != DiagnosticStepStatus.Warning)
+        if (DidNotComplete(events))
+            return CouldNotCheck(events, "the event logs for crash-like events");
+        if (events!.Status != DiagnosticStepStatus.Warning)
             return "No crash-like events (BugCheck 1001 / Kernel-Power 41) were found in the last 30 days.";
         if (drivers?.Status == DiagnosticStepStatus.Warning)
             return drivers.ResultText;
@@ -720,7 +739,8 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             Id = "sleep.study", Label = "Sleep study report (powercfg /sleepstudy)",
             Description = "Modern Standby's own diagnostic report - top DRIPS offenders and exit reasons, best-effort parsed.",
             Timeout = TimeSpan.FromSeconds(35),
-            Check = _ => TroubleshootService.CheckSleepStudyAsync(),
+            // Task.Run: the report's tag-strip/regex pass is over a large HTML file.
+            Check = _ => Task.Run(TroubleshootService.CheckSleepStudyAsync),
         },
     };
 
@@ -787,9 +807,14 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     private static string BuildNoInternetVerdict(TroubleshootRun run)
     {
         var failed = run.Steps.FirstOrDefault(s => s.Status == DiagnosticStepStatus.Failed);
-        if (failed is null)
-            return "Internet connectivity looks fine end-to-end - adapter, address, gateway, DNS, and an outbound connection all checked out.";
-        return $"Stopped at \"{failed.Label}\": {failed.ResultText}";
+        if (failed is not null)
+            return $"Stopped at \"{failed.Label}\": {failed.ResultText}";
+        // StopOnFailure only trips on Failed - a layer that timed out or was skipped (e.g. no
+        // default gateway configured) lets the run continue, but it didn't check out.
+        var unconfirmed = run.Steps.FirstOrDefault(s => DidNotComplete(s));
+        if (unconfirmed is not null)
+            return $"No layer failed outright, but \"{unconfirmed.Label}\" couldn't be confirmed: {unconfirmed.ResultText}";
+        return "Internet connectivity looks fine end-to-end - adapter, address, gateway, DNS, and an outbound connection all checked out.";
     }
 
     // ---------------------------- 906: Fans are loud / it runs hot ----------------------------
@@ -853,6 +878,8 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 ? "Verdict: hot without load. Possible contributor(s): " + string.Join(" ", reasons)
                 : "Verdict: hot without load, and no specific power-plan/process contributor was found - worth checking dust/airflow or a stuck fan curve directly.";
         }
+        if (DidNotComplete(correlation))
+            return CouldNotCheck(correlation, "the fan and temperature sensors");
         return "Fan speeds and temperatures look normal right now - if the noise/heat is intermittent, try running this again while it's happening.";
     }
 
@@ -868,7 +895,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Id = "boot.events", Label = "Boot-performance degradation events (100-110)",
                 Description = "Microsoft-Windows-Diagnostics-Performance/Operational - degraded boot, slow services, slow startup apps, slow group policy, slow profile load.",
                 Timeout = TimeSpan.FromSeconds(20),
-                Check = _ => Task.Run(() => TroubleshootService.CheckBootDegradationEvents(ctx)),
+                Check = ct => Task.Run(() => TroubleshootService.CheckBootDegradationEvents(ctx, ct)),
             },
             new DiagnosticStep
             {
@@ -889,6 +916,8 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             return join.ResultText;
         if (events?.Status == DiagnosticStepStatus.Warning)
             return "Boot-degradation events were found, but no specific named delay could be confidently matched to a Startup/Services item. " + events.ResultText;
+        if (DidNotComplete(events))
+            return CouldNotCheck(events, "the boot-performance event log");
         return "No boot-performance degradation events were found in the last 30 days.";
     }
 
@@ -904,7 +933,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Id = "shutdown.events", Label = "Shutdown-degradation events (200-208)",
                 Description = "Microsoft-Windows-Diagnostics-Performance/Operational.",
                 Timeout = TimeSpan.FromSeconds(20),
-                Check = _ => Task.Run(() => TroubleshootService.CheckShutdownDegradationEvents(ctx)),
+                Check = ct => Task.Run(() => TroubleshootService.CheckShutdownDegradationEvents(ctx, ct)),
             },
             new DiagnosticStep
             {
@@ -933,11 +962,19 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     {
         var summary = StepById(run, "shutdown.summary");
         var profile = StepById(run, "shutdown.profile");
+        var events = StepById(run, "shutdown.events");
 
         if (summary?.Status == DiagnosticStepStatus.Warning)
             return summary.ResultText;
+        if (events?.Status == DiagnosticStepStatus.Warning)
+            return "Shutdown-degradation events were found, but no specific named item with a measured delay could be extracted from them. " + events.ResultText +
+                (profile?.Status == DiagnosticStepStatus.Warning ? " " + profile.ResultText : string.Empty);
         if (profile?.Status == DiagnosticStepStatus.Warning)
             return "No clear timed culprit from the degradation events, but profile-unload events were found. " + profile.ResultText;
+        if (DidNotComplete(events))
+            return CouldNotCheck(events, "the shutdown-performance event log");
+        if (DidNotComplete(profile))
+            return CouldNotCheck(profile, "the User Profile Service events");
         return "No shutdown-degradation or profile-unload events were found in the last 30 days.";
     }
 
@@ -992,7 +1029,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Description = "netsh wlan show wlanreport - the adapter's own disconnect-reason timeline.",
                 Timeout = TimeSpan.FromSeconds(25),
                 ShouldRun = run => StepById(run, "wifi.adapter")?.Status == DiagnosticStepStatus.Passed,
-                Check = _ => TroubleshootService.CheckWlanReportAsync(ctx),
+                Check = _ => Task.Run(() => TroubleshootService.CheckWlanReportAsync(ctx)),
             },
             new DiagnosticStep
             {
@@ -1015,7 +1052,13 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     {
         var adapter = StepById(run, "wifi.adapter");
         if (adapter?.Status != DiagnosticStepStatus.Passed)
-            return "No wireless adapter was found on this system.";
+        {
+            // The presence check Skips both for "none found" and for a timeout/error - only the
+            // former is an answer.
+            return adapter?.Status == DiagnosticStepStatus.Skipped && adapter.ResultText == TroubleshootService.NoWirelessAdapterSummary
+                ? "No wireless adapter was found on this system."
+                : CouldNotCheck(adapter, "for a wireless adapter");
+        }
 
         var report = StepById(run, "wifi.report");
         var events = StepById(run, "wifi.events");
@@ -1112,7 +1155,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Description = "Design vs. full-charge capacity, and recent usage.",
                 Timeout = TimeSpan.FromSeconds(25),
                 ShouldRun = run => StepById(run, "battery.presence")?.Status == DiagnosticStepStatus.Passed,
-                Check = _ => TroubleshootService.CheckBatteryReportAsync(),
+                Check = _ => Task.Run(TroubleshootService.CheckBatteryReportAsync),
             },
             new DiagnosticStep
             {
@@ -1120,7 +1163,8 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
                 Description = "Less universally present than the battery report - degrades gracefully if unavailable on this Windows build.",
                 Timeout = TimeSpan.FromSeconds(30),
                 ShouldRun = run => StepById(run, "battery.presence")?.Status == DiagnosticStepStatus.Passed,
-                Check = _ => TroubleshootService.CheckSrumEnergyAsync(),
+                // Task.Run: the SRUM XML export can be tens of MB.
+                Check = _ => Task.Run(TroubleshootService.CheckSrumEnergyAsync),
             },
             new DiagnosticStep
             {
@@ -1136,7 +1180,12 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     {
         var presence = StepById(run, "battery.presence");
         if (presence?.Status != DiagnosticStepStatus.Passed)
-            return "No battery detected - this looks like a desktop, so battery life isn't applicable.";
+        {
+            // Same Skip-for-both-cases shape as the Wi-Fi adapter check above.
+            return presence?.Status == DiagnosticStepStatus.Skipped && presence.ResultText == TroubleshootService.NoBatterySummary
+                ? "No battery detected - this looks like a desktop, so battery life isn't applicable."
+                : CouldNotCheck(presence, "for a battery");
+        }
 
         var report = StepById(run, "battery.report");
         var srum = StepById(run, "battery.srum");
@@ -1195,8 +1244,13 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
             string powerNote = power?.Status == DiagnosticStepStatus.Warning ? " " + power.ResultText : string.Empty;
             return pnp.ResultText + extra + powerNote;
         }
+        if (DidNotComplete(pnp))
+            return CouldNotCheck(pnp, "Device Manager for problem devices") +
+                (power?.Status == DiagnosticStepStatus.Warning ? " Separately, " + power.ResultText : string.Empty);
         if (power?.Status == DiagnosticStepStatus.Warning)
             return "No device currently reports a Device Manager problem, but " + power.ResultText;
+        if (DidNotComplete(power))
+            return "No device currently reports a problem in Device Manager. " + CouldNotCheck(power, "the USB root hub power settings");
         return "No device currently reports a problem in Device Manager, and USB root hub power settings look fine.";
     }
 
@@ -1204,5 +1258,7 @@ public sealed class TroubleshootViewModel : ObservableObject, IDisposable
     {
         Baselines.Dispose();
         BackgroundHealth.Dispose();
+        // An app exit mid-capture would otherwise leave the DiagEasy trace session recording.
+        TroubleshootService.CancelOwnDpcCapture();
     }
 }

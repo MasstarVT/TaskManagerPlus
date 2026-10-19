@@ -142,18 +142,27 @@ public static class TroubleshootService
 
     /// <summary>Averages the last ~10 samples already sitting in the shared performance sampler's
     /// history buffers rather than sampling fresh - "what's actually been happening for the last
-    /// several seconds", not an instantaneous reading that a single busy tick can skew.</summary>
-    public static DiagnosticStepResult CheckResourceAverages(IReadOnlyList<double> cpuHistory, IReadOnlyList<double> ramHistory, IReadOnlyList<double> diskHistory)
+    /// several seconds", not an instantaneous reading that a single busy tick can skew. The
+    /// histories must be real samples only (PerformanceViewModel.History) - the chart buffers'
+    /// zero pre-fill would halve a pegged CPU's average right after launch.</summary>
+    public static DiagnosticStepResult CheckResourceAverages(IReadOnlyList<double> cpuHistory, IReadOnlyList<double> ramHistory, IReadOnlyList<double> diskHistory,
+        double pollIntervalSeconds)
     {
+        const int minSamples = 5;
         try
         {
-            double cpuAvg = AverageLast(cpuHistory);
-            double ramAvg = AverageLast(ramHistory);
-            double diskAvg = AverageLast(diskHistory);
+            int samples = Math.Min(10, Math.Min(cpuHistory.Count, Math.Min(ramHistory.Count, diskHistory.Count)));
+            if (samples < minSamples)
+                return DiagnosticStepResult.Skip($"Only {samples} performance sample(s) recorded so far - wait a few seconds after launch and run this again.");
 
+            double cpuAvg = AverageLast(cpuHistory, samples);
+            double ramAvg = AverageLast(ramHistory, samples);
+            double diskAvg = AverageLast(diskHistory, samples);
+
+            double windowSeconds = samples * pollIntervalSeconds;
             var evidence = new List<string>
             {
-                $"CPU: {cpuAvg:0.#}% (avg of last {Math.Min(10, cpuHistory.Count)}s)",
+                $"CPU: {cpuAvg:0.#}% (avg of last {samples} samples, ~{windowSeconds:0.#}s)",
                 $"RAM: {ramAvg:0.#}%",
                 $"Disk active time: {diskAvg:0.#}%",
             };
@@ -309,26 +318,35 @@ public static class TroubleshootService
     /// correlation (last step) needs the crash timestamps the first step found.</summary>
     public sealed class CrashContext
     {
-        public List<DateTime> CrashTimes { get; } = new();
+        // Replaced whole (never mutated in place) and only by a check that beat its timeout - a
+        // later step reading it on another thread can't see a half-filled list.
+        public IReadOnlyList<DateTime> CrashTimes { get; set; } = Array.Empty<DateTime>();
         public StabilitySnapshot? Snapshot { get; set; }
     }
 
     /// <summary>BugCheck 1001 (WER's own "a blue screen just happened" summary) and Kernel-Power 41
     /// (unclean shutdown), via EventLogService's existing System/Application scan - reused rather
-    /// than re-querying, since it already reads exactly these event IDs.</summary>
-    public static DiagnosticStepResult CheckCrashEvents(CrashContext ctx)
+    /// than re-querying, since it already reads exactly these event IDs.
+    ///
+    /// `ct` is the step's own token, which the step runner cancels once the step's timeout race is
+    /// decided: a scan that finishes after its step already reported "Timed out" must not hand the
+    /// later steps (already running) data that contradicts that.</summary>
+    public static DiagnosticStepResult CheckCrashEvents(CrashContext ctx, CancellationToken ct = default)
     {
         try
         {
             var snapshot = new EventLogService().Query();
-            ctx.Snapshot = snapshot;
 
             var crashLikeIds = new HashSet<int> { 41, 6008, 1001 };
             var crashes = snapshot.RecentEvents
                 .Where(e => crashLikeIds.Contains(e.EventId))
                 .OrderByDescending(e => e.TimeCreated)
                 .ToList();
-            ctx.CrashTimes.AddRange(crashes.Select(c => c.TimeCreated));
+            if (!ct.IsCancellationRequested)
+            {
+                ctx.Snapshot = snapshot;
+                ctx.CrashTimes = crashes.Select(c => c.TimeCreated).ToList();
+            }
 
             if (crashes.Count == 0)
                 return DiagnosticStepResult.Pass("No BugCheck (1001) or Kernel-Power (41) crash events found in the last 30 days.");
@@ -371,7 +389,8 @@ public static class TroubleshootService
     {
         try
         {
-            DateTime center = ctx.CrashTimes.Count > 0 ? ctx.CrashTimes.Max() : DateTime.Now;
+            var crashTimes = ctx.CrashTimes;
+            DateTime center = crashTimes.Count > 0 ? crashTimes.Max() : DateTime.Now;
             var records = new List<(DateTime Time, string Source, string Message)>();
 
             using var searcher = new ManagementObjectSearcher(
@@ -424,7 +443,8 @@ public static class TroubleshootService
     {
         try
         {
-            if (ctx.CrashTimes.Count == 0)
+            var crashTimes = ctx.CrashTimes;
+            if (crashTimes.Count == 0)
                 return DiagnosticStepResult.Skip("No crash events were found earlier in this run, so there's nothing to correlate driver installs against.");
 
             var (output, exitCode) = await RunCapturedAsync("pnputil.exe", "/enum-drivers");
@@ -435,7 +455,7 @@ public static class TroubleshootService
             // No parseable date at all (unrecognized/localized labels) is "unknown", not "none found".
             if (!drivers.Any(d => d.Date is not null))
                 return DiagnosticStepResult.Skip("Couldn't read driver dates from pnputil's output on this system.");
-            DateTime firstCrash = ctx.CrashTimes.Min();
+            DateTime firstCrash = crashTimes.Min();
 
             var candidates = drivers
                 .Where(d => d.Date is { } dt && dt <= firstCrash.AddDays(1) && dt >= firstCrash.AddDays(-7))
@@ -517,22 +537,36 @@ public static class TroubleshootService
         }
     }
 
+    /// <summary>One entry per request. A request is a "[DRIVER]/[PROCESS]/[SERVICE] name" line,
+    /// usually followed by a free-text reason line, which is folded into that request rather than
+    /// counted as a second one. Anything else - section headers, "None." or its localized
+    /// equivalent - is not a request.</summary>
     private static List<string> ParsePowerRequestSections(string output)
     {
         var result = new List<string>();
         string? currentSection = null;
+        bool lastWasRequest = false;
         foreach (var raw in output.Replace("\r\n", "\n").Split('\n'))
         {
             string line = raw.Trim();
-            if (line.Length == 0) continue;
+            if (line.Length == 0) { lastWasRequest = false; continue; }
             if (line.EndsWith(':') && !line.StartsWith('['))
             {
                 currentSection = line.TrimEnd(':');
+                lastWasRequest = false;
                 continue;
             }
-            if (line.Equals("None.", StringComparison.OrdinalIgnoreCase)) continue;
-            if (currentSection is not null)
-                result.Add($"{currentSection}: {line}");
+            if (line.StartsWith('['))
+            {
+                result.Add(currentSection is null ? line : $"{currentSection}: {line}");
+                lastWasRequest = true;
+                continue;
+            }
+            if (lastWasRequest)
+            {
+                result[^1] += $" - {line}";
+                lastWasRequest = false;
+            }
         }
         return result;
     }
@@ -979,19 +1013,25 @@ public static class TroubleshootService
     #region 907 - "It boots or signs in slowly"
 
     /// <summary>Microsoft-Windows-Diagnostics-Performance/Operational events 100-110 - boot
-    /// degradation, slow services, slow startup apps, slow group policy, slow profile load.</summary>
-    public static DiagnosticStepResult CheckBootDegradationEvents(BootShutdownContext ctx)
+    /// degradation, slow services, slow startup apps, slow group policy, slow profile load.
+    /// Publishes into `ctx` only while `ct` (the step's token) is uncancelled - see
+    /// CheckCrashEvents' remarks.</summary>
+    public static DiagnosticStepResult CheckBootDegradationEvents(BootShutdownContext ctx, CancellationToken ct = default)
     {
         var events = ReadProviderEvents(DiagnosticsPerformanceLog, null, Enumerable.Range(100, 11).ToArray(), BootShutdownLookbackDays, maxEvents: 50);
-        ctx.BootEvents = events;
-        ctx.BootCulprits = ExtractCulprits(events);
+        var culprits = ExtractCulprits(events);
+        if (!ct.IsCancellationRequested)
+        {
+            ctx.BootEvents = events;
+            ctx.BootCulprits = culprits;
+        }
 
         if (events.Count == 0)
             return DiagnosticStepResult.Pass($"No boot-performance degradation events (100-110) found in the last {BootShutdownLookbackDays} days, or this channel isn't enabled on this Windows build.");
 
         var evidence = events.Take(10).Select(e => $"{e.TimeCreated:g} - event {e.EventId}: {Truncate(e.Message, 160)}").ToList();
-        string summary = ctx.BootCulprits.Count > 0
-            ? $"{events.Count} boot-degradation event(s) found - {ctx.BootCulprits.Count} named item(s) with a measured delay (see next step)."
+        string summary = culprits.Count > 0
+            ? $"{events.Count} boot-degradation event(s) found - {culprits.Count} named item(s) with a measured delay (see next step)."
             : $"{events.Count} boot-degradation event(s) found, but no specific named delay could be confidently extracted from the event text.";
         return DiagnosticStepResult.Warn(summary, evidence);
     }
@@ -1004,13 +1044,14 @@ public static class TroubleshootService
     {
         try
         {
-            if (ctx.BootCulprits.Count == 0)
+            var culprits = ctx.BootCulprits;
+            if (culprits.Count == 0)
                 return DiagnosticStepResult.Skip("No named culprits with a measured delay were extracted from the boot-degradation events.");
 
             var startupItems = await Task.Run(() => new StartupManagerService().Sample());
             var services = await Task.Run(() => new ServiceControlService().Sample());
 
-            var ranked = ctx.BootCulprits.OrderByDescending(c => c.Milliseconds).Take(3).ToList();
+            var ranked = culprits.OrderByDescending(c => c.Milliseconds).Take(3).ToList();
             double totalMs = ranked.Sum(c => c.Milliseconds);
 
             var evidence = new List<string>();
@@ -1043,12 +1084,17 @@ public static class TroubleshootService
 
     #region 908 - "It takes forever to shut down"
 
-    /// <summary>Diagnostics-Performance shutdown-degradation events 200-208.</summary>
-    public static DiagnosticStepResult CheckShutdownDegradationEvents(BootShutdownContext ctx)
+    /// <summary>Diagnostics-Performance shutdown-degradation events 200-208. Publishes into `ctx`
+    /// only while `ct` is uncancelled - see CheckCrashEvents' remarks.</summary>
+    public static DiagnosticStepResult CheckShutdownDegradationEvents(BootShutdownContext ctx, CancellationToken ct = default)
     {
         var events = ReadProviderEvents(DiagnosticsPerformanceLog, null, Enumerable.Range(200, 9).ToArray(), BootShutdownLookbackDays, maxEvents: 50);
-        ctx.ShutdownEvents = events;
-        ctx.ShutdownCulprits = ExtractCulprits(events);
+        var culprits = ExtractCulprits(events);
+        if (!ct.IsCancellationRequested)
+        {
+            ctx.ShutdownEvents = events;
+            ctx.ShutdownCulprits = culprits;
+        }
 
         if (events.Count == 0)
             return DiagnosticStepResult.Pass($"No shutdown-degradation events (200-208) found in the last {BootShutdownLookbackDays} days.");
@@ -1097,10 +1143,11 @@ public static class TroubleshootService
     /// shutdown-degradation events the first step of this branch already parsed.</summary>
     public static DiagnosticStepResult SummarizeShutdownCulprits(BootShutdownContext ctx)
     {
-        if (ctx.ShutdownCulprits.Count == 0)
+        var culprits = ctx.ShutdownCulprits;
+        if (culprits.Count == 0)
             return DiagnosticStepResult.Skip("No named culprits with a measured duration were extracted from the shutdown-degradation events.");
 
-        var ranked = ctx.ShutdownCulprits.OrderByDescending(c => c.Milliseconds).Take(3).ToList();
+        var ranked = culprits.OrderByDescending(c => c.Milliseconds).Take(3).ToList();
         var evidence = ranked.Select(c => $"{c.Name}: {c.Milliseconds:0} ms ({c.TimeCreated:g})").ToList();
         var top = ranked[0];
         return DiagnosticStepResult.Warn($"\"{top.Name}\" blocked shutdown the longest at last measurement: {top.Milliseconds:0} ms.", evidence);
@@ -1174,6 +1221,25 @@ public static class TroubleshootService
         }
     }
 
+    // 1 only between this app's own successful `wpr -start DiagEasy` and the stop/cancel that ends
+    // it, so CancelOwnDpcCapture can never cancel a trace the user started themselves.
+    private static int _dpcCaptureArmed;
+
+    /// <summary>Called from TroubleshootViewModel.Dispose: an app exit during the capture window
+    /// would otherwise leave the system-wide DiagEasy session recording (and blocking every later
+    /// wpr capture) until someone ran `wpr -cancel` by hand. Blocking, but only ever runs when this
+    /// app's own capture is still armed.</summary>
+    public static void CancelOwnDpcCapture()
+    {
+        if (Interlocked.Exchange(ref _dpcCaptureArmed, 0) == 0) return;
+        try
+        {
+            string wpr = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wpr.exe");
+            ToolRunner.RunCaptured(wpr, "-cancel", TimeSpan.FromSeconds(10));
+        }
+        catch { /* best-effort at shutdown */ }
+    }
+
     /// <summary>#909: the heavy, opt-in half of this branch - a short `wpr -start DiagEasy` /
     /// `wpr -stop` capture, then a best-effort `tracerpt` summary. This is deliberately not part of
     /// the automatic step sequence (see <see cref="DiagnosticStep.IsManual"/>) - even a short
@@ -1203,6 +1269,7 @@ public static class TroubleshootService
             var (startOutput, startExit) = await RunCapturedAsync(wpr, "-start DiagEasy -filemode", timeoutMs: 20000);
             if (startExit != 0)
                 return DiagnosticStepResult.Skip($"Couldn't start the wpr capture: {Truncate(startOutput.Trim(), 300)}");
+            Interlocked.Exchange(ref _dpcCaptureArmed, 1);
 
             try
             {
@@ -1213,11 +1280,15 @@ public static class TroubleshootService
                 // Don't leave an active trace session behind for a canceled/timed-out capture -
                 // wpr only allows one at a time, and an abandoned session would block every
                 // future capture until manually stopped.
-                try { await RunCapturedAsync(wpr, "-cancel", timeoutMs: 15000); } catch { /* best-effort */ }
+                if (Interlocked.Exchange(ref _dpcCaptureArmed, 0) == 1)
+                    try { await RunCapturedAsync(wpr, "-cancel", timeoutMs: 15000); } catch { /* best-effort */ }
                 throw;
             }
 
             var (stopOutput, stopExit) = await RunCapturedAsync(wpr, $"-stop \"{etlPath}\"", timeoutMs: 60000);
+            // A stop that ran to completion ended the session either way; one killed on timeout may
+            // not have, so it stays armed for CancelOwnDpcCapture.
+            if (stopExit is not null) Interlocked.Exchange(ref _dpcCaptureArmed, 0);
             if (stopExit != 0 || !File.Exists(etlPath))
                 return DiagnosticStepResult.Skip($"Couldn't stop/save the wpr capture: {Truncate(stopOutput.Trim(), 300)}");
 
@@ -1268,6 +1339,10 @@ public static class TroubleshootService
         public bool HasWirelessAdapter { get; set; }
     }
 
+    /// <summary>The adapter-presence check's Skip summary when it positively found no adapter -
+    /// its timeout/error Skips use other text, and the branch verdict must tell the two apart.</summary>
+    internal const string NoWirelessAdapterSummary = "No wireless adapter found on this system - the rest of this check doesn't apply.";
+
     /// <summary>Whether this machine has a wireless network adapter at all, via
     /// `netsh wlan show interfaces` (the same tool the rest of this branch already shells out to) -
     /// its own "There is no wireless interface on the system." text is the simplest reliable
@@ -1283,7 +1358,7 @@ public static class TroubleshootService
             ctx.HasWirelessAdapter = !none && output.Contains("Name", StringComparison.OrdinalIgnoreCase);
 
             if (!ctx.HasWirelessAdapter)
-                return DiagnosticStepResult.Skip("No wireless adapter found on this system - the rest of this check doesn't apply.");
+                return DiagnosticStepResult.Skip(NoWirelessAdapterSummary);
             return DiagnosticStepResult.Pass("A wireless adapter was found.", new[] { output.Trim() });
         }
         catch (Exception ex)
@@ -1598,6 +1673,10 @@ public static class TroubleshootService
         public bool HasBattery { get; set; }
     }
 
+    /// <summary>The presence check's Skip summary when Win32_Battery positively reported none - see
+    /// NoWirelessAdapterSummary for why the verdict needs to recognize it.</summary>
+    internal const string NoBatterySummary = "No battery detected - this looks like a desktop, so the rest of this check doesn't apply.";
+
     /// <summary>Win32_Battery presence check - gates the rest of this branch via each later step's
     /// ShouldRun predicate (#914), since running powercfg /batteryreport on a desktop with no
     /// battery at all just produces its own "This machine has no batteries" error text rather than
@@ -1611,7 +1690,7 @@ public static class TroubleshootService
             ctx.HasBattery = batteries.Count > 0;
 
             if (!ctx.HasBattery)
-                return DiagnosticStepResult.Skip("No battery detected - this looks like a desktop, so the rest of this check doesn't apply.");
+                return DiagnosticStepResult.Skip(NoBatterySummary);
 
             var evidence = batteries.Select(b => $"{b["DeviceID"]}: {b["EstimatedChargeRemaining"]}% estimated charge remaining").ToList();
             return DiagnosticStepResult.Pass($"{batteries.Count} battery(ies) detected.", evidence);

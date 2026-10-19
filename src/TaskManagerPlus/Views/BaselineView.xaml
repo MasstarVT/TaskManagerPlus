@@ -129,9 +129,12 @@
                         <Button Content="Capture full baseline (includes WinSAT, ~1 min)" Padding="10,4"
                                 Command="{Binding CaptureBaselineCommand}" />
                     </StackPanel>
-                    <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}" Text="Idle status: not idle right now - a capture will still save, just flagged as not comparable for idle metrics.">
+                    <TextBlock TextWrapping="Wrap" FontSize="{StaticResource FontBody}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
+                                <!-- Default as a Setter, not a local Text value - a local value
+                                     outranks the trigger, so the idle text could never show. -->
+                                <Setter Property="Text" Value="Idle status: not idle right now - a capture will still save, just flagged as not comparable for idle metrics." />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsCurrentlyIdle}" Value="True">
                                         <Setter Property="Text" Value="Idle status: this PC currently looks idle - a capture right now is fully comparable." />
@@ -210,9 +213,12 @@
                     <StackPanel Margin="0,4,0,0">
                         <StackPanel.Style>
                             <Style TargetType="StackPanel">
-                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Setter Property="Visibility" Value="Visible" />
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding ChangeSummaryText}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding ChangeSummaryText}" Value="{x:Null}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                     </DataTrigger>
                                 </Style.Triggers>
@@ -399,7 +405,7 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding ReferenceDiff.HasChanges}" Value="False">
+                                            <DataTrigger Binding="{Binding ReferenceDiffHasListedChanges}" Value="False">
                                                 <Setter Property="Visibility" Value="Visible" />
                                             </DataTrigger>
                                         </Style.Triggers>

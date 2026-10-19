@@ -193,7 +193,20 @@ public sealed class BaselineViewModel : ObservableObject, IDisposable
     public ObservableCollection<BaselineMetricComparison> ReferencePerformanceComparison { get; } = new();
 
     private SnapshotDiff? _referenceDiff;
-    public SnapshotDiff? ReferenceDiff { get => _referenceDiff; private set => SetProperty(ref _referenceDiff, value); }
+    public SnapshotDiff? ReferenceDiff
+    {
+        get => _referenceDiff;
+        private set { if (SetProperty(ref _referenceDiff, value)) OnPropertyChanged(nameof(ReferenceDiffHasListedChanges)); }
+    }
+
+    /// <summary>Whether ReferenceDiff differs in the three categories the reference section lists.
+    /// SnapshotDiff.HasChanges also counts driver inventory/driver-store differences, which that
+    /// section doesn't show - driving "No differences found" off it left an empty section whenever
+    /// only drivers differed.</summary>
+    public bool ReferenceDiffHasListedChanges => ReferenceDiff is { } d &&
+        (d.SoftwareAdded.Count > 0 || d.SoftwareRemoved.Count > 0 ||
+         d.ServicesAdded.Count > 0 || d.ServicesRemoved.Count > 0 ||
+         d.StartupAdded.Count > 0 || d.StartupRemoved.Count > 0);
 
     private string _referenceStatusText = "No reference profile imported yet. Import an exported baseline (Baselines panel \"Capture a baseline\" on a known-good machine, then bring that file here) to compare it against this machine.";
     public string ReferenceStatusText { get => _referenceStatusText; private set => SetProperty(ref _referenceStatusText, value); }

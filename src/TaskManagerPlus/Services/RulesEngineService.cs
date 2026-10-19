@@ -731,12 +731,12 @@ public sealed class RulesEngineService : IDisposable
     /// display values, so dwell time against them would silently compare the wrong scale - those
     /// metrics fall through to the instantaneous degrade below instead, same as any metric with no
     /// history buffer at all.</summary>
-    private static readonly Dictionary<string, Func<PerformanceViewModel, ObservableCollection<double>>> HistoryAccessors =
+    private static readonly Dictionary<string, Func<PerformanceViewModel.HistorySnapshot, double[]>> HistoryAccessors =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            ["cpu.percent"] = p => p.CpuHistory,
-            ["mem.percent"] = p => p.RamHistory,
-            ["disk.percent"] = p => p.DiskHistory,
+            ["cpu.percent"] = h => h.Cpu,
+            ["mem.percent"] = h => h.Ram,
+            ["disk.percent"] = h => h.Disk,
         };
 
     /// <summary>#920: evaluates one rule's condition, honoring SustainedForSeconds where possible.
@@ -744,9 +744,17 @@ public sealed class RulesEngineService : IDisposable
     /// (no all/any/not) against a metric in <see cref="HistoryAccessors"/> with a comparison
     /// operator (not exists) - every other shape (a combinator, a metric with no known history
     /// buffer, an exists check) degrades to a plain instantaneous evaluation of the full condition,
-    /// which is the documented, intentional fallback rather than a crash or a guess.</summary>
-    private bool EvaluateWithSustain(LoadedRule lr, IReadOnlyDictionary<string, object> bag, out string? error)
+    /// which is the documented, intentional fallback rather than a crash or a guess.
+    ///
+    /// `history` holds real samples only (see PerformanceViewModel.HistorySnapshot). When every
+    /// sample so far satisfies the condition but there aren't enough of them to cover the window
+    /// (just launched, or a window longer than the buffer can ever hold), the rule genuinely
+    /// can't be decided yet: it returns false with `notEnoughHistory` set, which Evaluate reports
+    /// as "could not check" rather than "checked, clean".</summary>
+    private static bool EvaluateWithSustain(LoadedRule lr, IReadOnlyDictionary<string, object> bag, PerformanceViewModel.HistorySnapshot history,
+        out string? error, out bool notEnoughHistory)
     {
+        notEnoughHistory = false;
         var cond = lr.Rule.Condition;
         int? sustain = lr.Rule.SustainedForSeconds;
         if (sustain is not { } seconds || seconds <= 0)
@@ -758,26 +766,27 @@ public sealed class RulesEngineService : IDisposable
 
         if (isSingleLeaf && HistoryAccessors.TryGetValue(cond.Metric!, out var accessor))
         {
-            var history = accessor(_performance);
-            double pollSeconds = Math.Max(0.1, _performance.PollIntervalSeconds);
+            var samples = accessor(history);
+            double pollSeconds = Math.Max(0.1, history.PollIntervalSeconds);
             int samplesNeeded = Math.Max(1, (int)Math.Ceiling(seconds / pollSeconds));
-            int available = Math.Min(samplesNeeded, history.Count);
-
-            if (available == 0)
-            {
-                error = null;
-                return EvaluateCondition(cond, bag, out error);
-            }
+            int available = Math.Min(samplesNeeded, samples.Length);
 
             error = null;
-            for (int i = history.Count - available; i < history.Count; i++)
+            for (int i = samples.Length - available; i < samples.Length; i++)
             {
-                var sampleBag = new Dictionary<string, object>(bag, StringComparer.OrdinalIgnoreCase) { [cond.Metric!] = history[i] };
+                var sampleBag = new Dictionary<string, object>(bag, StringComparer.OrdinalIgnoreCase) { [cond.Metric!] = samples[i] };
+                // Any real sample inside the window failing the condition settles it: not sustained.
                 if (!EvaluateCondition(cond, sampleBag, out error)) return false;
             }
             // Only genuinely "sustained" once there's enough history to cover the full window -
             // otherwise a metric that just started trending up would falsely read as sustained.
-            return available >= samplesNeeded;
+            if (available >= samplesNeeded) return true;
+
+            notEnoughHistory = true;
+            error = samplesNeeded > PerformanceViewModel.HistoryCapacity
+                ? $"the {seconds}s window is longer than the {PerformanceViewModel.HistoryCapacity}-sample history kept at this poll interval"
+                : $"not enough history yet for the {seconds}s window";
+            return false;
         }
 
         // No history available for this metric/shape - degrade to instantaneous rather than crash
@@ -797,20 +806,26 @@ public sealed class RulesEngineService : IDisposable
     /// fixed two-pass evaluation, not a full dependency graph - a composite rule that references
     /// another composite rule's outcome simply sees that key as absent (=> false) in this same
     /// pass, which also quietly breaks any cycle instead of recursing forever.</summary>
-    public List<RulePreviewResult> PreviewAll(IReadOnlyDictionary<string, object> baseBag) => PreviewAllInternal(baseBag, out _);
+    public List<RulePreviewResult> PreviewAll(IReadOnlyDictionary<string, object> baseBag) => PreviewAllInternal(baseBag, out _, out _);
 
     /// <summary>Does the actual work for PreviewAll, additionally handing back the fully augmented
     /// working bag (base bag + every non-composite rule's `finding.&lt;id&gt;.fired` key) so
     /// Evaluate can capture #929's condition-reading trail (and resolve #932's ImpactTemplate)
     /// against the same bag a composite rule actually fired against, not just the caller's base
-    /// bag.</summary>
-    private List<RulePreviewResult> PreviewAllInternal(IReadOnlyDictionary<string, object> baseBag, out Dictionary<string, object> augmentedBag)
+    /// bag, plus the ids of sustained rules that didn't have enough history to decide.</summary>
+    private List<RulePreviewResult> PreviewAllInternal(IReadOnlyDictionary<string, object> baseBag, out Dictionary<string, object> augmentedBag,
+        out HashSet<string> notEnoughHistoryRuleIds)
     {
         List<LoadedRule> rules;
         lock (_lock) rules = _loadedRules.ToList();
 
+        // One immutable snapshot for the whole pass - callers include Task.Run paths, and the live
+        // history collections are only ever safe to touch on the dispatcher.
+        var history = _performance.History;
+
         var bag = new Dictionary<string, object>(baseBag, StringComparer.OrdinalIgnoreCase);
         var results = new List<RulePreviewResult>();
+        notEnoughHistoryRuleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var nonComposite = rules.Where(r => !ReferencesFinding(r.Rule.Condition)).ToList();
         var composite = rules.Where(r => ReferencesFinding(r.Rule.Condition)).ToList();
@@ -820,15 +835,17 @@ public sealed class RulesEngineService : IDisposable
             // Always evaluate (rather than short-circuiting on !lr.Enabled) so `err` is assigned
             // on every path - a disabled rule's condition is still evaluated for its
             // finding.<id>.fired key (kept false regardless below), just not surfaced as firing.
-            bool conditionTrue = EvaluateWithSustain(lr, bag, out var err);
+            bool conditionTrue = EvaluateWithSustain(lr, bag, history, out var err, out bool notEnough);
             bool fired = lr.Enabled && conditionTrue;
             bag[$"finding.{lr.Rule.Id}.fired"] = fired;
+            if (notEnough) notEnoughHistoryRuleIds.Add(lr.Rule.Id);
             results.Add(new RulePreviewResult { Rule = lr, WouldFire = fired, Error = err });
         }
         foreach (var lr in composite)
         {
-            bool conditionTrue = EvaluateWithSustain(lr, bag, out var err);
+            bool conditionTrue = EvaluateWithSustain(lr, bag, history, out var err, out bool notEnough);
             bool fired = lr.Enabled && conditionTrue;
+            if (notEnough) notEnoughHistoryRuleIds.Add(lr.Rule.Id);
             results.Add(new RulePreviewResult { Rule = lr, WouldFire = fired, Error = err });
         }
 
@@ -866,7 +883,7 @@ public sealed class RulesEngineService : IDisposable
     /// BuildMetricBag's out-parameter overload).</summary>
     public RuleEvaluationResult Evaluate(IReadOnlyDictionary<string, object> bag, IReadOnlySet<string> unavailableMetrics)
     {
-        var preview = PreviewAllInternal(bag, out var augmentedBag);
+        var preview = PreviewAllInternal(bag, out var augmentedBag, out var notEnoughHistoryRuleIds);
 
         List<RuleSuppression> suppressions;
         lock (_lock) suppressions = _suppressions.ToList();
@@ -887,6 +904,19 @@ public sealed class RulesEngineService : IDisposable
             if (unavailableRefs.Count > 0)
             {
                 result.CouldNotCheck.Add(new CouldNotEvaluateInfo { RuleId = rule.Id, Title = rule.Title, UnavailableMetrics = unavailableRefs });
+                continue;
+            }
+
+            // A sustained rule whose window isn't covered by real samples yet: undecided, not clean.
+            // Static text - SummaryViewModel diffs this list by RuleId only.
+            if (notEnoughHistoryRuleIds.Contains(rule.Id))
+            {
+                result.CouldNotCheck.Add(new CouldNotEvaluateInfo
+                {
+                    RuleId = rule.Id,
+                    Title = rule.Title,
+                    UnavailableMetrics = new List<string> { $"{rule.Condition.Metric} history for {rule.SustainedForSeconds}s" },
+                });
                 continue;
             }
 

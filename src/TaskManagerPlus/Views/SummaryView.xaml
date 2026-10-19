@@ -85,7 +85,7 @@
                         <TextBlock Grid.Column="0" Text="Top CPU processes" Style="{StaticResource CardTitle}" Margin="0" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="1" Text="{Binding DataContext.Processes.ProcessCount, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat={}{0} total}" Style="{StaticResource SubStat}" VerticalAlignment="Center" />
                     </Grid>
-                    <ItemsControl ItemsSource="{Binding DataContext.TopProcesses, RelativeSource={RelativeSource AncestorType=UserControl}}" MaxHeight="330">
+                    <ItemsControl ItemsSource="{Binding DataContext.TopProcesses, RelativeSource={RelativeSource AncestorType=UserControl}}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Grid Margin="0,0,0,8">
@@ -117,7 +117,7 @@
             <Border Style="{StaticResource CardStyle}" Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibilityConverter}}">
                 <StackPanel>
                     <TextBlock Text="Top CPU (10s avg)" Style="{StaticResource CardTitle}" />
-                    <ItemsControl ItemsSource="{Binding DataContext.TopProcesses10sAvg, RelativeSource={RelativeSource AncestorType=UserControl}}" MaxHeight="150">
+                    <ItemsControl ItemsSource="{Binding DataContext.TopProcesses10sAvg, RelativeSource={RelativeSource AncestorType=UserControl}}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Grid Margin="0,0,0,8">
@@ -462,7 +462,7 @@
                             <!-- #976: batches every currently-fired finding whose fix is entirely
                                  low-risk and reversible - anything Medium/High risk or
                                  non-undoable stays one-at-a-time via its own "Fix this" button. -->
-                            <Button Content="{Binding SafeFixes.Items.Count, StringFormat='Run safe fixes ({0})'}"
+                            <Button Content="{Binding SafeFixes.Items.Count}" ContentStringFormat="Run safe fixes ({0})"
                                     Command="{Binding OpenSafeFixBatchCommand}"
                                     ToolTip="Only low-risk, reversible fixes are batched." />
                         </StackPanel>
@@ -602,8 +602,10 @@
 
                     <!-- #936: rules that were firing recently but have since cleared - so "it
                          cleared up" is visible without checking findings-history.jsonl by hand. -->
-                    <Expander Header="{Binding RecentlyResolvedFindings.Count, StringFormat={}{0} recently resolved}"
-                              Margin="0,10,0,0" FontSize="{StaticResource FontBody}">
+                    <Expander Margin="0,10,0,0" FontSize="{StaticResource FontBody}">
+                        <Expander.Header>
+                            <TextBlock><Run Text="{Binding RecentlyResolvedFindings.Count, Mode=OneWay}" /><Run Text=" recently resolved" /></TextBlock>
+                        </Expander.Header>
                         <Expander.Style>
                             <Style TargetType="Expander">
                                 <Setter Property="Visibility" Value="Visible" />
@@ -628,8 +630,10 @@
                     </Expander>
 
                     <!-- #924: suppressed findings stay listable/reversible rather than just vanishing. -->
-                    <Expander Header="{Binding SuppressedFindings.Count, StringFormat={}{0} finding(s) suppressed}"
-                              IsExpanded="{Binding IsSuppressedListExpanded}" Margin="0,10,0,0" FontSize="{StaticResource FontBody}">
+                    <Expander IsExpanded="{Binding IsSuppressedListExpanded}" Margin="0,10,0,0" FontSize="{StaticResource FontBody}">
+                        <Expander.Header>
+                            <TextBlock><Run Text="{Binding SuppressedFindings.Count, Mode=OneWay}" /><Run Text=" finding(s) suppressed" /></TextBlock>
+                        </Expander.Header>
                         <Expander.Style>
                             <Style TargetType="Expander">
                                 <Setter Property="Visibility" Value="Visible" />

@@ -89,11 +89,6 @@ public sealed class TimelineViewModel : ObservableObject
     /// marker or a range preset should always show exactly what range is now in effect.</summary>
     public string WindowRangeText => $"{WindowStartLocal:g} – {WindowEndLocal:g}";
 
-    /// <summary>Fixed pixel width of each lane's marker track - shared between TimelineView.xaml's
-    /// Canvas Width and TimelineMarkerPositionConverter's MultiBinding (see the converter's
-    /// remarks) so both agree on the same scale.</summary>
-    public double TrackWidthPx => 900;
-
     private double _correlationWindowHours;
     public double CorrelationWindowHours
     {

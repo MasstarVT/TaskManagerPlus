@@ -45,7 +45,8 @@ public static class DiagnosticReportFormatting
         {
             double x = i / (double)(list.Count - 1) * width;
             double y = height - Math.Clamp((v - min) / (max - min), 0, 1) * height;
-            return $"{x:0.#},{y:0.#}";
+            // SVG coordinates are machine syntax: a comma-decimal culture would emit "10,2,30,5".
+            return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{x:0.#},{y:0.#}");
         });
         return $"<svg viewBox=\"0 0 {width} {height}\" width=\"100%\" height=\"{height}\">" +
                $"<polyline points=\"{string.Join(' ', points)}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"2\" /></svg>";

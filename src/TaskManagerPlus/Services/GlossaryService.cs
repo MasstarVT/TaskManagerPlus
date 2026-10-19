@@ -62,6 +62,14 @@ public static class GlossaryService
                 // when a good default is available).
             }
 
+            // A hand-edited file can hold a null entry or "Term": null - either would throw from
+            // the dictionary build below on every All/Find call, so drop them (and blank a null
+            // Definition, which callers .Contains() on) before deciding whether to fall back.
+            loaded = loaded?
+                .Where(t => t is not null && !string.IsNullOrWhiteSpace(t.Term))
+                .Select(t => t.Definition is null ? new GlossaryTerm { Term = t.Term, Definition = string.Empty } : t)
+                .ToList();
+
             if (loaded is null || loaded.Count == 0)
             {
                 loaded = JsonSerializer.Deserialize<List<GlossaryTerm>>(SeedJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();

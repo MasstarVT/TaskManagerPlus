@@ -40,7 +40,9 @@
                 <TextBlock Grid.Column="1" Text="{Binding Title}" FontSize="{StaticResource FontBody}" TextWrapping="Wrap" Margin="10,0,10,0" />
                 <TextBlock Grid.Column="2" FontSize="{StaticResource FontCaption}" Foreground="{DynamicResource TextTertiaryBrush}">
                     <Run Text="{Binding Channel, Mode=OneWay}" />
-                    <Run Text=" (quiet-hours suppressed)">
+                    <!-- No local Text on these two Runs: a local value outranks the style, so
+                         every row read "(quiet-hours suppressed) (escalated)". -->
+                    <Run>
                         <Run.Style>
                             <Style TargetType="Run">
                                 <Setter Property="Text" Value="" />
@@ -52,7 +54,7 @@
                             </Style>
                         </Run.Style>
                     </Run>
-                    <Run Text=" (escalated)">
+                    <Run>
                         <Run.Style>
                             <Style TargetType="Run">
                                 <Setter Property="Text" Value="" />

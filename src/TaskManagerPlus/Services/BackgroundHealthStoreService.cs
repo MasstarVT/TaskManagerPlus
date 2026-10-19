@@ -63,7 +63,17 @@ public static class BackgroundHealthStoreService
             {
                 source.CopyTo(gzip);
             }
-            File.Delete(LiveLogPath);
+            try
+            {
+                File.Delete(LiveLogPath);
+            }
+            catch
+            {
+                // The live file survives, so the segment just written duplicates every row in it -
+                // drop the segment, or ReadRows/aggregates would count those rows twice.
+                try { File.Delete(segPath); } catch { /* best-effort */ }
+                throw;
+            }
         }
         catch
         {
@@ -149,7 +159,7 @@ public static class BackgroundHealthStoreService
         try
         {
             if (File.Exists(LiveLogPath))
-                foreach (var line in File.ReadLines(LiveLogPath))
+                foreach (var line in ReadSharedLines(LiveLogPath))
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     try
@@ -163,6 +173,19 @@ public static class BackgroundHealthStoreService
         catch { }
 
         return null;
+    }
+
+    /// <summary>Line reader that doesn't lock the collector out. File.ReadLines shares Read only,
+    /// so while a (now off-thread) aggregate parse held the live file open, AppendRow's write was a
+    /// swallowed sharing violation (a lost row) and RollAndPrune's delete failed. A half-written
+    /// last line just fails to deserialize and is skipped like any malformed line.</summary>
+    private static IEnumerable<string> ReadSharedLines(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+            yield return line;
     }
 
     // ----- reading (used by #961's aggregate conditions and #962's chart/worst-moments) --------
@@ -205,7 +228,7 @@ public static class BackgroundHealthStoreService
         try
         {
             if (File.Exists(LiveLogPath))
-                foreach (var line in File.ReadLines(LiveLogPath))
+                foreach (var line in ReadSharedLines(LiveLogPath))
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     try
@@ -227,7 +250,8 @@ public static class BackgroundHealthStoreService
         List<HealthHistoryRow> rows = new();
         try
         {
-            using var source = File.OpenRead(gzPath);
+            // Delete share too, so a concurrent PruneToBudget can still remove this segment.
+            using var source = new FileStream(gzPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
             using var gzip = new GZipStream(source, CompressionMode.Decompress);
             using var reader = new StreamReader(gzip);
             string? line;
