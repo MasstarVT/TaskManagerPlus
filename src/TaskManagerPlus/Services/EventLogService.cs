@@ -76,20 +76,19 @@ public sealed class EventLogService
 
         // Display 4101 is Warning-level, so the Level=1|2 `events` list above never contains one -
         // the count and last-seen time come from the dedicated 4101 query instead.
-        // A capped count is a floor, not the total; StabilitySnapshot has no flag to carry that
-        // to the tile yet, so it is only known here.
-        var (tdrEvents, tdrTotalCount, _) = ReadTdrEventDetails();
+        // A capped count is a floor, not the total - carried to the tile as TdrEventCountCapped.
+        var (tdrEvents, tdrTotalCount, tdrCapped) = ReadTdrEventDetails();
 
         var crashLikeIds = new HashSet<int> { KernelPowerEventId, LegacyUncleanShutdownEventId, BlueScreenEventId };
         var lastCrash = events.Where(e => crashLikeIds.Contains(e.EventId)).OrderByDescending(e => e.TimeCreated).FirstOrDefault();
 
         var (lowMemCount, lowMemLast) = ReadLowMemoryEvents();
-        var correctedMemoryErrors = ReadCorrectedMemoryErrors();
+        var (correctedMemoryErrors, correctedMemoryErrorTotal, correctedMemoryErrorsCapped) = ReadCorrectedMemoryErrorsCounted();
 
         // #487/#488/#489/#490/#492: the broad WHEA-Logger read, plus the crash-like event list
         // (unexpected shutdown, BSOD report, and - unlike crashLikeIds above - also TDR) that #492
         // correlates it against.
-        var wheaEvents = ReadWheaHardwareErrors();
+        var wheaEvents = ReadWheaHardwareErrors(out bool wheaCapped, out bool wheaFailed);
         // TDRs come from tdrEvents (Warning-level, never in `events`).
         var crashTimelineIds = new HashSet<int> { KernelPowerEventId, LegacyUncleanShutdownEventId, BlueScreenEventId };
         var crashTimelineEvents = events.Where(e => crashTimelineIds.Contains(e.EventId))
@@ -121,9 +120,9 @@ public sealed class EventLogService
         // parameters + dump path) over the event-41 property-index guess ReadLog already filled in
         // above, when a WER 1001 was logged within 10 minutes of the Kernel-Power 41 - the existing
         // guess stays untouched (fallback) for any 41 with no matching WER 1001 nearby. Independent
-        // of the authoritative BugCheckRecord path above (round 13, items 1/2/8), which matches off
-        // the BugCheck-provider's own 1001 event rather than the WER-summary one - both are kept,
-        // this one enriching the flat RecentEvents list directly for immediate display.
+        // of the BugCheckRecord path above (round 13, items 1/2/8), which reads the same 1001
+        // event's properties - both are kept, this one enriching the flat RecentEvents list
+        // directly for immediate display.
         var werBugchecks = ReadWerBugcheckEvents();
         foreach (var kp41 in events.Where(e => e.EventId == KernelPowerEventId))
         {
@@ -142,6 +141,7 @@ public sealed class EventLogService
             WasLastShutdownUnexpected = wasUnexpected,
             LastUnexpectedShutdown = mostRecentShutdownEvent?.TimeCreated,
             TdrEventCount = tdrTotalCount,
+            TdrEventCountCapped = tdrCapped,
             LastTdrEvent = tdrEvents.FirstOrDefault()?.TimeCreated,
             LastCrashTime = lastCrash?.TimeCreated,
             Minidumps = ReadMinidumps(shutdownEvents, bugChecks, werBugchecks),
@@ -163,7 +163,8 @@ public sealed class EventLogService
             // #447: corrected-memory-error events - also read independently (this same method) by
             // SystemSpecsService for the System Specs memory section, so the two tabs' figures stay
             // in sync without SystemSpecsViewModel needing a reference to StabilityViewModel.
-            CorrectedMemoryErrorCount = correctedMemoryErrors.Count,
+            CorrectedMemoryErrorCount = correctedMemoryErrorTotal,
+            CorrectedMemoryErrorCountCapped = correctedMemoryErrorsCapped,
             LastCorrectedMemoryError = correctedMemoryErrors.Count > 0 ? correctedMemoryErrors[0].TimeCreated : null,
             CorrectedMemoryErrors = correctedMemoryErrors,
             // #451: memory-related bugcheck count, for the Stability tab's own display and for
@@ -176,7 +177,7 @@ public sealed class EventLogService
             // event 47), its daily corrected-error trend, and its correlation against the crash-like
             // events already gathered above.
             WheaHardwareErrors = wheaEvents,
-            DailyWheaCorrectedCounts = BuildDailyWheaCorrectedCounts(wheaEvents),
+            DailyWheaCorrectedCounts = BuildDailyWheaCorrectedCounts(wheaEvents, wheaCapped, wheaFailed),
             HardwareErrorCorrelations = BuildHardwareErrorCorrelations(crashTimelineEvents, wheaEvents),
             ThermalCriticalEvents = ReadThermalCriticalEvents(),
             LastUnexpectedShutdownBugcheckCode = mostRecentShutdownEvent?.BugcheckCode,
@@ -374,12 +375,13 @@ public sealed class EventLogService
             // undocumented built-in defaults, not something this app should guess at.
         }
 
+        // Per Microsoft's TDR registry-key reference: Off / Bugcheck / RecoverVGA / Recover.
         string levelText = level switch
         {
             0 => "0 — detection disabled",
-            1 => "1 — detection enabled, recovery disabled (bugchecks instead of recovering)",
-            2 => "2 — detection and recovery both disabled",
-            3 => "3 — detection and recovery enabled (Windows default)",
+            1 => "1 — bug check on a detected timeout (no recovery)",
+            2 => "2 — recover to VGA (documented as not implemented)",
+            3 => "3 — recover on timeout (Windows default)",
             null => "not set (Windows default applies)",
             _ => $"{level} (unrecognized value)",
         };
@@ -543,9 +545,20 @@ public sealed class EventLogService
     /// figure independently for the System Specs memory section (#447) without depending on
     /// StabilityViewModel - a single, cheap, dedicated targeted query (same shape as
     /// ReadLowMemoryEvents), not the full dual-log Query() scan.</summary>
-    public List<CorrectedMemoryErrorEvent> ReadCorrectedMemoryErrors()
+    public List<CorrectedMemoryErrorEvent> ReadCorrectedMemoryErrors() => ReadCorrectedMemoryErrorsCore(countPastDetails: false).Details;
+
+    /// <summary>Same read, but keeps counting past the newest MaxCorrectedMemoryErrorsReturned
+    /// detail rows (no message formatting) so a count isn't pinned at exactly 100 - the
+    /// ReadTdrEventDetails shape. Capped is true when more events exist past the counting
+    /// ceiling, i.e. TotalCount is a lower bound.</summary>
+    public (List<CorrectedMemoryErrorEvent> Details, int TotalCount, bool Capped) ReadCorrectedMemoryErrorsCounted()
+        => ReadCorrectedMemoryErrorsCore(countPastDetails: true);
+
+    private (List<CorrectedMemoryErrorEvent> Details, int TotalCount, bool Capped) ReadCorrectedMemoryErrorsCore(bool countPastDetails)
     {
         var results = new List<CorrectedMemoryErrorEvent>();
+        int total = 0;
+        bool capped = false;
         try
         {
             long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
@@ -557,11 +570,15 @@ public sealed class EventLogService
             };
 
             using var reader = new EventLogReader(query);
+            // The details-only caller stops at the detail cap, as before.
+            int maxCountedEvents = countPastDetails ? 100_000 : MaxCorrectedMemoryErrorsReturned;
             int count = 0;
-            while (count < MaxCorrectedMemoryErrorsReturned && reader.ReadEvent() is { } record)
+            while (total < maxCountedEvents && reader.ReadEvent() is { } record)
             {
                 using (record)
                 {
+                    total++;
+                    if (count >= MaxCorrectedMemoryErrorsReturned) continue;
                     count++;
                     if (record.TimeCreated is null) continue;
 
@@ -581,13 +598,18 @@ public sealed class EventLogService
                     });
                 }
             }
+            if (total >= maxCountedEvents && reader.ReadEvent() is { } extra)
+            {
+                extra.Dispose();
+                capped = true;
+            }
         }
         catch
         {
             // Provider/log unavailable, or no WHEA-capable hardware on this system at all - "none
             // found", same degrade-to-empty shape as every other targeted query in this service.
         }
-        return results;
+        return (results, total, capped);
     }
 
     // #449: the built-in Windows Memory Diagnostic's own results provider/event IDs, per the
@@ -1773,22 +1795,23 @@ public sealed class EventLogService
     // ---------------------------------------------------------------------------------------
 
     /// <summary>
-    /// Item 1: reads every occurrence of the `BugCheck` provider's System-log event 1001 ("The
-    /// computer has rebooted from a bugcheck") in the lookback window - a legacy classic ETW
-    /// provider whose insertion strings are read positionally (like ExtractBugcheckCode already
-    /// does for Kernel-Power 41): [0] stop code, [1]-[4] the four bugcheck parameters, [5] dump
-    /// path, [6] WER Report Id. When the provider itself isn't present in the log at all (older
-    /// Windows versions, or a log that's rolled the event off), item 8's
-    /// WER-SystemErrorReporting 1001 summary is used as a second, independent source instead.
+    /// Item 1: reads every System-log event 1001 ("The computer has rebooted from a bugcheck") in
+    /// the lookback window. Event Viewer shows its source as "BugCheck", but that is only the
+    /// provider's EventSourceName - the provider Name an XPath query has to match is
+    /// Microsoft-Windows-WER-SystemErrorReporting. Its template has three strings: [0] the
+    /// bugcheck line ("0x0000009f (0x..., 0x..., 0x..., 0x...)", parameters 16 hex digits on
+    /// x64), [1] the dump path, [2] the WER Report Id. If no record's properties parse, item 8's
+    /// message-text parse is used instead.
     /// </summary>
     private static List<BugCheckRecord> ReadBugCheckRecords()
     {
         var result = new List<BugCheckRecord>();
+        List<(string Dir, string Text)>? werArchive = null; // read lazily, once, for the Report Id join
         try
         {
             long maxAgeMs = LookbackDays * 24L * 60 * 60 * 1000;
             var query = new EventLogQuery("System", PathType.LogName,
-                $"*[System[Provider[@Name='BugCheck'] and (EventID=1001) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
+                $"*[System[Provider[@Name='{WerSystemErrorReportingProvider}'] and (EventID={WerBugcheckEventId}) and TimeCreated[timediff(@SystemTime) <= {maxAgeMs}]]]")
             {
                 ReverseDirection = true,
             };
@@ -1804,18 +1827,26 @@ public sealed class EventLogService
                     try
                     {
                         var props = record.Properties;
-                        string? stop = props.Count > 0 ? FormatBugcheckValue(props[0].Value) : null;
-                        if (stop is null) continue;
+                        string? line = props.Count > 0 ? props[0].Value as string : null;
+                        if (string.IsNullOrWhiteSpace(line)) continue;
 
+                        string? stop;
                         var parameters = new List<string>();
-                        for (int i = 1; i <= 4 && i < props.Count; i++)
+                        var lineMatch = WerBugcheckLineRegex.Match(line);
+                        if (lineMatch.Success)
                         {
-                            var v = FormatBugcheckValue(props[i].Value);
-                            if (v is not null) parameters.Add(v);
+                            stop = lineMatch.Groups[1].Value;
+                            for (int g = 2; g <= 5; g++) parameters.Add(lineMatch.Groups[g].Value);
+                        }
+                        else
+                        {
+                            // A bare code with no parameter list - keep the code, no parameters.
+                            stop = FormatBugcheckValue(line.Trim());
+                            if (stop is null || !stop.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) continue;
                         }
 
-                        string? dumpPath = props.Count > 5 ? props[5].Value as string : null;
-                        string? reportId = props.Count > 6 ? props[6].Value as string : null;
+                        string? dumpPath = props.Count > 1 ? props[1].Value as string : null;
+                        string? reportId = props.Count > 2 ? props[2].Value as string : null;
                         dumpPath = string.IsNullOrWhiteSpace(dumpPath) ? null : dumpPath;
                         reportId = string.IsNullOrWhiteSpace(reportId) ? null : reportId;
 
@@ -1827,7 +1858,7 @@ public sealed class EventLogService
                             DumpPath = dumpPath,
                             ReportId = reportId,
                             FromWerSummary = false,
-                            WerReport = reportId is null ? null : ResolveWerReport(reportId),
+                            WerReport = reportId is null ? null : ResolveWerReport(reportId, werArchive ??= ReadWerArchiveReports()),
                         });
                     }
                     catch { /* one malformed record shouldn't stop the rest of the scan */ }
@@ -1836,8 +1867,8 @@ public sealed class EventLogService
         }
         catch
         {
-            // Provider not present in this log (older Windows versions can lack it), or access
-            // denied - fall through to the WER-summary source below.
+            // Provider not present in this log, or access denied - fall through to the
+            // message-text parse below.
         }
 
         if (result.Count == 0)
@@ -1873,12 +1904,10 @@ public sealed class EventLogService
     }
 
     /// <summary>
-    /// Item 8: Microsoft-Windows-WER-SystemErrorReporting's own "BlueScreen" 1001 summary entry -
-    /// a second, independent confirmation of a bugcheck, used only to fill in when the BugCheck
-    /// provider's own 1001 entry is missing. Parsed from the event's formatted message text (regex,
-    /// like ExtractFaultingModule already does for Application-log crash entries) rather than
-    /// positional properties, since this provider's own property layout isn't the one item 1's
-    /// parsing was derived from. Never recovers a Report Id, so WerReport is always null for these.
+    /// Item 8: the same WER-SystemErrorReporting 1001 event read through its formatted message
+    /// text instead, used only when item 1's property parse produced nothing (like
+    /// ExtractFaultingModule does for Application-log crash entries). Never recovers a Report Id,
+    /// so WerReport is always null for these.
     /// </summary>
     private static List<BugCheckRecord> ReadWerSummaryBugChecks()
     {
@@ -1904,11 +1933,12 @@ public sealed class EventLogService
                     try { message = record.FormatDescription() ?? string.Empty; }
                     catch { message = string.Empty; }
 
+                    // Parameters are 16 hex digits on x64, 8 on x86 - accept either width.
                     var hexGroupMatch = Regex.Match(message,
-                        @"0x[0-9A-Fa-f]{8}(?:\s*\(\s*0x[0-9A-Fa-f]{8}(?:\s*,\s*0x[0-9A-Fa-f]{8}){0,3}\s*\))?");
+                        @"0x[0-9A-Fa-f]{8}(?:\s*\(\s*0x[0-9A-Fa-f]{1,16}(?:\s*,\s*0x[0-9A-Fa-f]{1,16}){0,3}\s*\))?");
                     if (!hexGroupMatch.Success) continue;
 
-                    var allHex = Regex.Matches(hexGroupMatch.Value, @"0x[0-9A-Fa-f]{8}").Select(m => m.Value).ToList();
+                    var allHex = Regex.Matches(hexGroupMatch.Value, @"0x[0-9A-Fa-f]{1,16}").Select(m => m.Value).ToList();
                     var dumpMatch = Regex.Match(message, @"([A-Za-z]:\\[^\r\n]*?\.dmp)", RegexOptions.IgnoreCase);
 
                     result.Add(new BugCheckRecord
@@ -1941,23 +1971,12 @@ public sealed class EventLogService
     /// a directory listing of the matched folder, which is normally the most reliable way to see
     /// what WER actually archived (typically including the .dmp itself alongside Report.wer).
     /// </summary>
-    private static WerReportFolderMetadata? ResolveWerReport(string reportId)
+    private static WerReportFolderMetadata? ResolveWerReport(string reportId, List<(string Dir, string Text)> archive)
     {
         try
         {
-            var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
-            var archiveRoot = Path.Combine(programData, "Microsoft", "Windows", "WER", "ReportArchive");
-            if (!Directory.Exists(archiveRoot)) return null;
-
-            foreach (var dir in Directory.GetDirectories(archiveRoot))
+            foreach (var (dir, text) in archive)
             {
-                var werFile = Path.Combine(dir, "Report.wer");
-                if (!File.Exists(werFile)) continue;
-
-                string text;
-                try { text = File.ReadAllText(werFile); }
-                catch { continue; }
-
                 if (text.IndexOf(reportId, StringComparison.OrdinalIgnoreCase) < 0) continue;
 
                 string? osVersion = ExtractWerValue(text, "OSVersionInformation") ?? ExtractWerValue(text, "OsVersion");
@@ -1988,6 +2007,34 @@ public sealed class EventLogService
             // ReportArchive missing/access denied - "no full crash record found", not an error.
         }
         return null;
+    }
+
+    /// <summary>Every ReportArchive folder's Report.wer text, read once per ReadBugCheckRecords
+    /// call rather than once per bugcheck record.</summary>
+    private static List<(string Dir, string Text)> ReadWerArchiveReports()
+    {
+        var result = new List<(string Dir, string Text)>();
+        try
+        {
+            var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            var archiveRoot = Path.Combine(programData, "Microsoft", "Windows", "WER", "ReportArchive");
+            if (!Directory.Exists(archiveRoot)) return result;
+
+            foreach (var dir in Directory.GetDirectories(archiveRoot))
+            {
+                var werFile = Path.Combine(dir, "Report.wer");
+                try
+                {
+                    if (File.Exists(werFile)) result.Add((dir, File.ReadAllText(werFile)));
+                }
+                catch { /* unreadable/locked report - skip just this one */ }
+            }
+        }
+        catch
+        {
+            // ReportArchive missing/access denied - nothing to join against.
+        }
+        return result;
     }
 
     private static string? ExtractWerValue(string text, string key)
@@ -2357,31 +2404,34 @@ public sealed class EventLogService
             _ => "Freeze without crash: no bugcheck and no dump file were recorded before the system went silent.",
         };
 
-        return (label, ReadEventsBeforeSilence(nearest.TimeCreated));
+        // Kernel-Power 41 is logged during the NEXT boot, so its timestamp sits after that boot's
+        // own startup events - the dirty boot's marker time is the edge of the silence instead.
+        return (label, ReadEventsBeforeSilence(bootTime));
     }
 
-    /// <summary>Item 68: the last handful of System-log events recorded at or before beforeTime -
-    /// context for DetectFreezeWithoutCrash's label. A bounded, on-demand scan (this whole tab is
-    /// queried on demand, not polled - see StabilityViewModel's own remarks) run only for boots
-    /// already flagged as a probable freeze, so it stays cheap even though it isn't filtered by
-    /// provider/event ID the way every other read in this file is.</summary>
+    /// <summary>Item 68: the last handful of System-log events recorded strictly before beforeTime
+    /// (the dirty boot's own marker) - context for DetectFreezeWithoutCrash's label. The upper
+    /// bound is in the XPath itself, so the reader starts at the silence rather than walking down
+    /// from "now". On-demand only (this whole tab is queried on demand, not polled), run only for
+    /// boots already flagged as a probable freeze.</summary>
     private static List<string> ReadEventsBeforeSilence(DateTime beforeTime)
     {
         var result = new List<string>();
         try
         {
-            var query = new EventLogQuery("System", PathType.LogName, "*") { ReverseDirection = true };
+            string upper = beforeTime.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
+            var query = new EventLogQuery("System", PathType.LogName,
+                $"*[System[TimeCreated[@SystemTime<'{upper}']]]") { ReverseDirection = true };
             using var reader = new EventLogReader(query);
             int scanned = 0;
-            const int maxScan = 500; // bounded - newest-first, so this only walks forward from "now"
-                                      // until it passes beforeTime, not the whole log.
+            const int maxScan = 500;
             while (result.Count < FreezeContextEventCount && scanned < maxScan && reader.ReadEvent() is { } record)
             {
                 using (record)
                 {
                     scanned++;
                     var t = record.TimeCreated;
-                    if (t is null || t.Value > beforeTime) continue; // still newer than the freeze marker itself
+                    if (t is null || t.Value >= beforeTime) continue; // the boot marker itself or later
 
                     string message;
                     try { message = record.FormatDescription() ?? string.Empty; }
@@ -2566,8 +2616,9 @@ public sealed class EventLogService
             uint signature = BitConverter.ToUInt32(blob, 0);
             if (signature != 0x52455043) return "Unknown hardware error section"; // "CPER" magic
 
-            ushort sectionCount = BitConverter.ToUInt16(blob, 14);
-            uint severity = BitConverter.ToUInt32(blob, 16);
+            // CPER header: SignatureStart(4) Revision(2) SignatureEnd(4) SectionCount(2) @10, ErrorSeverity(4) @12.
+            ushort sectionCount = BitConverter.ToUInt16(blob, 10);
+            uint severity = BitConverter.ToUInt32(blob, 12);
             string severityText = severity switch
             {
                 0 => "Recoverable",
@@ -2580,11 +2631,12 @@ public sealed class EventLogService
             if (sectionCount == 0) return $"{severityText} hardware error (no section descriptors present)";
 
             // The first section descriptor starts immediately after the 128-byte header; per the
-            // CPER spec its SectionType GUID sits at offset 20 within the fixed 72-byte descriptor,
-            // and its own Offset/Length fields (pointing at the section's data, elsewhere in the
-            // blob) sit at offsets 0 and 4.
+            // CPER spec its SectionType GUID sits at offset 16 within the fixed 72-byte descriptor
+            // (after Offset(4) Length(4) Revision(2) ValidationBits(1) Reserved(1) Flags(4)), and its
+            // own Offset/Length fields (pointing at the section's data, elsewhere in the blob) sit at
+            // offsets 0 and 4.
             int descriptorOffset = headerSize;
-            int sectionTypeOffset = descriptorOffset + 20;
+            int sectionTypeOffset = descriptorOffset + 16;
             if (blob.Length < sectionTypeOffset + 16) return $"{severityText} hardware error";
 
             var typeBytes = new byte[16];
@@ -2616,8 +2668,9 @@ public sealed class EventLogService
         }
     }
 
-    /// <summary>Best-effort CPER Memory Error section decode: ValidationBits (u64 @ offset 0) bit 2
-    /// = "physical address valid" per the spec's own bit assignment; PhysicalAddress itself sits at
+    /// <summary>Best-effort CPER Memory Error section decode: ValidationBits (u64 @ offset 0) bit 1
+    /// = "physical address valid" per the spec's own bit assignment (bit 0 is error status, bit 2
+    /// the address mask); PhysicalAddress itself sits at
     /// offset 16. Not re-verified against every firmware's real output, hence "best-effort".</summary>
     private static ulong? TryDecodeMemoryAddress(byte[] blob, uint sectionOffset, uint sectionLength)
     {
@@ -2629,7 +2682,7 @@ public sealed class EventLogService
             ulong validationBits = BitConverter.ToUInt64(blob, (int)sectionOffset + 0);
             ulong physicalAddress = BitConverter.ToUInt64(blob, (int)sectionOffset + 16);
 
-            if ((validationBits & 0x4) == 0) return null; // address not marked valid
+            if ((validationBits & 0x2) == 0) return null; // address not marked valid
             if (physicalAddress == 0 || physicalAddress == ulong.MaxValue) return null; // implausible
             return physicalAddress;
         }
@@ -3261,13 +3314,13 @@ public sealed class EventLogService
             {
                 // 7034: "The %1 service terminated unexpectedly. It has done this %2 time(s)."
                 // 7031: same, plus "The following corrective action will be taken in %3
-                // milliseconds: %4."
+                // milliseconds: %5." - %4 is the action's numeric index, %5 its text.
                 case 7034:
                 case 7031:
                 {
                     string? name = props.Count > 0 ? props[0].Value as string : null;
                     int? restartCount = props.Count > 1 && TryToInt(props[1].Value, out var c) ? c : null;
-                    string? action = record.Id == 7031 && props.Count > 3 ? props[3].Value as string : null;
+                    string? action = record.Id == 7031 && props.Count > 4 ? props[4].Value as string : null;
                     return new ServiceFailureEvent
                     {
                         TimeCreated = time,
@@ -3278,11 +3331,19 @@ public sealed class EventLogService
                         Message = Truncate(message, 300),
                     };
                 }
-                // 7024: "The %1 service terminated with service-specific error %2."
+                // 7024: "The %1 service terminated with the following service-specific error: %2" -
+                // %2 is logged as "%%N", a Win32 error number the message renderer expands.
                 case 7024:
                 {
                     string? name = props.Count > 0 ? props[0].Value as string : null;
-                    string? exitCode = props.Count > 1 ? FormatBugcheckValue(props[1].Value) : null;
+                    string? exitCode = null;
+                    if (props.Count > 1)
+                    {
+                        exitCode = props[1].Value is string raw && raw.StartsWith("%%", StringComparison.Ordinal)
+                                   && uint.TryParse(raw.AsSpan(2), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var win32)
+                            ? $"0x{win32:X8}"
+                            : FormatBugcheckValue(props[1].Value);
+                    }
                     return new ServiceFailureEvent
                     {
                         TimeCreated = time,
@@ -3572,7 +3633,8 @@ public sealed class EventLogService
         [7011] = new Regex(@"transaction response from the (?<svc>.+?) service", RegexOptions.IgnoreCase),
         [7022] = new Regex(@"^The (?<svc>.+?) service hung on starting", RegexOptions.IgnoreCase),
         [7023] = new Regex(@"^The (?<svc>.+?) service terminated with the following error", RegexOptions.IgnoreCase),
-        [7024] = new Regex(@"^The (?<svc>.+?) service terminated with service-specific error", RegexOptions.IgnoreCase),
+        // Real template: "The %1 service terminated with the following service-specific error: %2".
+        [7024] = new Regex(@"^The (?<svc>.+?) service terminated with (?:the following )?service-specific error", RegexOptions.IgnoreCase),
         [7031] = new Regex(@"^The (?<svc>.+?) service terminated unexpectedly", RegexOptions.IgnoreCase),
         [7034] = new Regex(@"^The (?<svc>.+?) service terminated unexpectedly", RegexOptions.IgnoreCase),
         [7043] = new Regex(@"^The (?<svc>.+?) service did not shut down properly", RegexOptions.IgnoreCase),
@@ -3833,12 +3895,18 @@ public sealed class EventLogService
     private static readonly int[] TaskFailureEventIds = { 101, 103, 111, 203, 322, 332 };
     private static readonly Regex QuotedTaskNameRegex = new(@"""([^""]+)""", RegexOptions.Compiled);
 
-    /// <summary>Every Task Scheduler operational event template quotes the affected task's path as
-    /// its first quoted segment - the same "extract from the rendered message, not an indexed
-    /// property" approach ScmServiceNamePatterns already takes for the #749 failure-event family,
-    /// used here instead of guessing at an unverified manifest property order.</summary>
-    private static string ExtractTaskSchedulerTaskName(string message)
+    /// <summary>Every Task Scheduler operational template this file reads (100, 101, 103, 111, 129,
+    /// 203, 322, 332) declares TaskName as its first data field, so Properties[0] is the task. The
+    /// rendered message's first quoted segment is NOT reliable - 100/103/111 quote the instance
+    /// GUID first and 203 the action - so it's only a fallback when the property is missing.</summary>
+    private static string ExtractTaskSchedulerTaskName(EventRecord record, string message)
     {
+        try
+        {
+            if (record.Properties.Count > 0 && record.Properties[0].Value is string name && !string.IsNullOrWhiteSpace(name))
+                return name.Trim();
+        }
+        catch { /* fall back to the message text */ }
         var m = QuotedTaskNameRegex.Match(message);
         return m.Success ? m.Groups[1].Value.Trim() : "(unknown task)";
     }
@@ -3882,7 +3950,7 @@ public sealed class EventLogService
                     {
                         TimeCreated = record.TimeCreated.Value,
                         EventId = record.Id,
-                        TaskName = ExtractTaskSchedulerTaskName(message),
+                        TaskName = ExtractTaskSchedulerTaskName(record, message),
                         Message = Truncate(message, 300),
                     });
                 }
@@ -3937,7 +4005,7 @@ public sealed class EventLogService
                     {
                         string message;
                         try { message = record.FormatDescription() ?? string.Empty; } catch { message = string.Empty; }
-                        starts[activityId] = (record.TimeCreated.Value, ExtractTaskSchedulerTaskName(message));
+                        starts[activityId] = (record.TimeCreated.Value, ExtractTaskSchedulerTaskName(record, message));
                     }
                     else if (TaskCompleteEventIds.Contains(record.Id) && starts.TryGetValue(activityId, out var start))
                     {
@@ -4181,10 +4249,17 @@ public sealed class EventLogService
     /// currently-present PCI devices (PnpDeviceTreeService.BuildPciLocationLookup) rather than once
     /// per WHEA event - a single native enumeration pass is plenty cheap enough to repeat per
     /// refresh, and this keeps the lookup fresh against whatever's plugged in right now.</summary>
-    public List<WheaHardwareErrorEvent> ReadWheaHardwareErrors()
+    public List<WheaHardwareErrorEvent> ReadWheaHardwareErrors() => ReadWheaHardwareErrors(out _, out _);
+
+    /// <summary>Capped: more records existed past MaxWheaEventsReturned, so the oldest days in the
+    /// window were not (fully) read. Failed: the query itself threw, so the list is not a
+    /// confirmed "none found".</summary>
+    private List<WheaHardwareErrorEvent> ReadWheaHardwareErrors(out bool capped, out bool failed)
     {
         var results = new List<WheaHardwareErrorEvent>();
         Dictionary<(int, int, int), string>? pciLocations = null;
+        capped = false;
+        failed = false;
 
         try
         {
@@ -4222,11 +4297,17 @@ public sealed class EventLogService
                     }
                 }
             }
+            if (count >= MaxWheaEventsReturned && reader.ReadEvent() is { } extra)
+            {
+                extra.Dispose();
+                capped = true;
+            }
         }
         catch
         {
             // Provider/log unavailable, or no WHEA-capable hardware on this system - degrade to
             // "none found", same as every other targeted query in this service.
+            failed = true;
         }
         return results;
     }
@@ -4400,21 +4481,28 @@ public sealed class EventLogService
 
     /// <summary>#488: corrected-severity WHEA records per day across the lookback window, oldest
     /// first - the same zero-filled daily-bucket shape as BuildDailyCounts above, just over
-    /// WheaHardwareErrors' own Severity field instead of System/Application Critical/Error entries.</summary>
-    private static List<DailyEventCount> BuildDailyWheaCorrectedCounts(List<WheaHardwareErrorEvent> wheaEvents)
+    /// WheaHardwareErrors' own Severity field instead of System/Application Critical/Error entries.
+    /// Like BuildDailyCounts, a capped read leaves out the days at or before the oldest (partially)
+    /// read day rather than zero-filling them, and a failed read returns an empty list.</summary>
+    private static List<DailyEventCount> BuildDailyWheaCorrectedCounts(List<WheaHardwareErrorEvent> wheaEvents, bool capped, bool failed)
     {
+        var result = new List<DailyEventCount>();
+        if (failed) return result;
+
         var counts = wheaEvents
             .Where(e => e.Severity == WheaErrorSeverity.Corrected)
             .GroupBy(e => e.TimeCreated.Date)
             .ToDictionary(g => g.Key, g => g.Count());
 
-        var result = new List<DailyEventCount>();
         var today = DateTime.Now.Date;
-        for (int i = LookbackDays - 1; i >= 0; i--)
+        var firstDay = today.AddDays(-(LookbackDays - 1));
+        if (capped && wheaEvents.Count > 0)
         {
-            var day = today.AddDays(-i);
-            result.Add(new DailyEventCount { Date = day, Count = counts.TryGetValue(day, out var c) ? c : 0 });
+            var cutoff = wheaEvents.Min(e => e.TimeCreated).Date.AddDays(1);
+            if (cutoff > firstDay) firstDay = cutoff;
         }
+        for (var day = firstDay; day <= today; day = day.AddDays(1))
+            result.Add(new DailyEventCount { Date = day, Count = counts.TryGetValue(day, out var c) ? c : 0 });
         return result;
     }
 

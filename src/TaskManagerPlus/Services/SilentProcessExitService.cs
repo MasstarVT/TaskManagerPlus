@@ -31,13 +31,15 @@ public static class SilentProcessExitService
             using var key = Registry.LocalMachine.OpenSubKey(path);
             if (key is null) return new SilentProcessExitConfig { TargetExecutable = exeName, Exists = false };
 
+            // Both string values are REG_EXPAND_SZ and WriteConfig writes back whatever is shown -
+            // read them unexpanded so a "%LOCALAPPDATA%\..." path isn't baked to one user's folder.
             return new SilentProcessExitConfig
             {
                 TargetExecutable = exeName,
                 Exists = true,
                 ReportingMode = key.GetValue("ReportingMode") is { } rm ? Convert.ToInt32(rm) : null,
-                LocalDumpFolder = key.GetValue("LocalDumpFolder") as string,
-                MonitorProcess = key.GetValue("MonitorProcess") as string,
+                LocalDumpFolder = key.GetValue("LocalDumpFolder", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string,
+                MonitorProcess = key.GetValue("MonitorProcess", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string,
             };
         }
         catch

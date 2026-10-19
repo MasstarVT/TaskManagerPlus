@@ -96,11 +96,16 @@ public static class BugcheckDecoder
     private static string? DescribeDriverPowerStateSubcode(IReadOnlyList<string> parameters)
     {
         if (parameters.Count == 0 || !BugcheckHex.TryParse(parameters[0], out var subcode)) return null;
+        // Texts follow Microsoft's 0x9F parameter table.
         return subcode switch
         {
-            1 => "Subcode 1: a driver failed to complete a power IRP within the allowed time.",
-            2 => "Subcode 2: an IRP queued to a device stack never completed.",
-            3 => "Subcode 3: a device power-down/up request failed.",
+            1 => "Subcode 1: a device object was freed while it still had an outstanding power request.",
+            2 => "Subcode 2: a device object completed a system power IRP but didn't call PoStartNextPowerIrp.",
+            3 => "Subcode 3: a device object blocked a power IRP for too long (the classic sleep/resume hang).",
+            4 => "Subcode 4: the power transition timed out waiting to synchronize with the Plug and Play subsystem.",
+            5 => "Subcode 5: a device failed to complete a directed power transition in time.",
+            6 => "Subcode 6: a device didn't complete its directed power transition callback successfully.",
+            0x500 => "Subcode 0x500: a device object completed a system power IRP but didn't call PoStartNextPowerIrp.",
             _ => $"Subcode {subcode} — see the blamed driver/analysis below for which device stack.",
         };
     }

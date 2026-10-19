@@ -318,7 +318,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     private string _werPurgeStatusText = string.Empty;
     public string WerPurgeStatusText { get => _werPurgeStatusText; private set => SetProperty(ref _werPurgeStatusText, value); }
 
-    public RelayCommand PurgeWerReportsCommand { get; }
+    public AsyncRelayCommand PurgeWerReportsCommand { get; }
 
     // Item 42: LocalDumps "Capture settings" - global by default (blank target), or for one
     // named executable.
@@ -460,7 +460,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     public RelayCommand DisableAutoRebootCommand { get; }
     public RelayCommand EnableFastStartupCommand { get; }
     public RelayCommand DisableFastStartupCommand { get; }
-    public RelayCommand ApplyRecommendedCrashDumpConfigCommand { get; }
+    public AsyncRelayCommand ApplyRecommendedCrashDumpConfigCommand { get; }
 
     // ---------------------------------------------------------------------------------------
     // Round 19, items 81-88: "Driver Verifier and kernel pool corruption" - a "Driver Verifier"
@@ -695,8 +695,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     public string? PerflibStatusText { get => _perflibStatusText; private set => SetProperty(ref _perflibStatusText, value); }
 
     /// <summary>#195: `lodctr /R` - a real system change, gated behind its own explicit MessageBox
-    /// confirmation (same shape as #165/#172's registry writes) - see RunLodctrRebuild.</summary>
-    public RelayCommand RunLodctrRebuildCommand { get; }
+    /// confirmation (same shape as #165/#172's registry writes) - see RunLodctrRebuildAsync.</summary>
+    public AsyncRelayCommand RunLodctrRebuildCommand { get; }
 
     // ---- #196: assorted subsystem error families rollup ----
     public ObservableCollection<SubsystemFamilyGroup> SubsystemFamilies { get; } = new();
@@ -748,6 +748,10 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     private int _correctedMemoryErrorCount;
     public int CorrectedMemoryErrorCount { get => _correctedMemoryErrorCount; private set => SetProperty(ref _correctedMemoryErrorCount, value); }
 
+    // "N+" when the count read hit its ceiling and is a lower bound.
+    private string _correctedMemoryErrorCountText = "0";
+    public string CorrectedMemoryErrorCountText { get => _correctedMemoryErrorCountText; private set => SetProperty(ref _correctedMemoryErrorCountText, value); }
+
     private string _lastCorrectedMemoryErrorText = "None in the last 30 days";
     public string LastCorrectedMemoryErrorText { get => _lastCorrectedMemoryErrorText; private set => SetProperty(ref _lastCorrectedMemoryErrorText, value); }
 
@@ -791,6 +795,10 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
     private int _tdrEventCount;
     public int TdrEventCount { get => _tdrEventCount; private set => SetProperty(ref _tdrEventCount, value); }
+
+    // "N+" when the 4101 count read hit its ceiling and is a lower bound.
+    private string _tdrEventCountText = "0";
+    public string TdrEventCountText { get => _tdrEventCountText; private set => SetProperty(ref _tdrEventCountText, value); }
 
     private string _lastTdrEventText = "None in the last 30 days";
     public string LastTdrEventText { get => _lastTdrEventText; private set => SetProperty(ref _lastTdrEventText, value); }
@@ -921,6 +929,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     /// failed or still-running read isn't mistaken for "0 hardware errors".</summary>
     private string _wheaStatusText = string.Empty;
     public string WheaStatusText { get => _wheaStatusText; private set => SetProperty(ref _wheaStatusText, value); }
+
+    /// <summary>True only after the latest WHEA read finished successfully - gates the 0/0 meters
+    /// and the "none found" line so neither shows while a read is running or after it failed.</summary>
+    private bool _wheaLoadedOk;
+    public bool WheaLoadedOk { get => _wheaLoadedOk; private set => SetProperty(ref _wheaLoadedOk, value); }
 
     private int _wheaCorrectedCount;
     public int WheaCorrectedCount { get => _wheaCorrectedCount; private set => SetProperty(ref _wheaCorrectedCount, value); }
@@ -1105,8 +1118,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         RevertLocalDumpsCommand = new RelayCommand(RevertLocalDumps, () => CanRevertLocalDumps && !ReadOnlyModeService.IsReadOnly);
         CanRevertLocalDumps = WerReportService.BackupExists();
 
-        // #195: gated behind its own explicit MessageBox confirmation - see RunLodctrRebuild.
-        RunLodctrRebuildCommand = new RelayCommand(RunLodctrRebuild, () => !ReadOnlyModeService.IsReadOnly);
+        // #195: gated behind its own explicit MessageBox confirmation - see RunLodctrRebuildAsync.
+        RunLodctrRebuildCommand = new AsyncRelayCommand(RunLodctrRebuildAsync, () => !ReadOnlyModeService.IsReadOnly);
 
         // #171: its own action (runs the RAC task, then re-queries) - not folded into RefreshCommand.
         RefreshReliabilityCommand = new AsyncRelayCommand(RunReliabilityRefreshAsync);
@@ -1258,7 +1271,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         // Round 16, item 43: explicit, warned purge - MessageBox confirmation, the same pattern
         // ProcessesViewModel.EndSelected already uses for a destructive action.
-        PurgeWerReportsCommand = new RelayCommand(() =>
+        PurgeWerReportsCommand = new AsyncRelayCommand(async () =>
         {
             var confirm = System.Windows.MessageBox.Show(
                 "Permanently delete every WER report folder this app found (machine and per-user, archive and queue)?\nThis destroys crash history and cannot be undone.",
@@ -1267,7 +1280,9 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 System.Windows.MessageBoxImage.Warning);
             if (confirm != System.Windows.MessageBoxResult.Yes) return;
 
-            int deleted = WerReportService.PurgeAll();
+            // Recursive deletes across every profile's WER folders - off the UI thread.
+            WerPurgeStatusText = "Deleting report folders…";
+            int deleted = await Task.Run(WerReportService.PurgeAll);
             WerPurgeStatusText = $"Deleted {deleted} report folder(s).";
             _ = RefreshAsync();
         }, () => !ReadOnlyModeService.IsReadOnly);
@@ -1468,7 +1483,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             if (ok) _ = RefreshAsync();
         }, () => !ReadOnlyModeService.IsReadOnly);
 
-        ApplyRecommendedCrashDumpConfigCommand = new RelayCommand(() =>
+        ApplyRecommendedCrashDumpConfigCommand = new AsyncRelayCommand(async () =>
         {
             var confirm = System.Windows.MessageBox.Show(
                 "Sets the dump type to Automatic memory dump, sets MinidumpsCount to 10, and switches the page file to system-managed so Windows sizes it itself.\n\n" +
@@ -1478,7 +1493,9 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
                 System.Windows.MessageBoxImage.Warning);
             if (confirm != System.Windows.MessageBoxResult.Yes) return;
 
-            var (ok, notes) = CrashDumpConfigService.ApplyRecommendedConfiguration();
+            // WMI query + Put on Win32_ComputerSystem - off the UI thread.
+            CrashDumpConfigStatusText = "Applying…";
+            var (ok, notes) = await Task.Run(CrashDumpConfigService.ApplyRecommendedConfiguration);
             CrashDumpConfigStatusText = (ok ? "Applied. " : "Some settings couldn't be applied. ") + string.Join(" ", notes);
             _ = RefreshAsync();
         }, () => !ReadOnlyModeService.IsReadOnly);
@@ -2666,7 +2683,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     /// "state what the write does, then confirm" shape as EnableLocalDumps/EnableReliabilityAnalysis
     /// above. No backup/revert offered here (unlike #165/#172's registry-value toggles) - lodctr /R
     /// is a repair action with no meaningful "previous state" to restore, not a settings change.</summary>
-    private void RunLodctrRebuild()
+    private async Task RunLodctrRebuildAsync()
     {
         var confirm = MessageBox.Show(
             "This runs `lodctr /R`, which rebuilds the Windows performance-counter registry from the "
@@ -2679,13 +2696,11 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
             MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes) return;
 
-        _ = RunLodctrRebuildInnerAsync();
-    }
-
-    private async Task RunLodctrRebuildInnerAsync()
-    {
+        // Awaited inside the AsyncRelayCommand, so the button stays disabled until it finishes
+        // and a second click can't start an overlapping run.
         PerflibStatusText = "Running lodctr /R - this can take a minute or more…";
         var (success, output) = await SubsystemErrorFamilyService.RunLodctrRebuildAsync();
+        AppendRepairJournal("Performance counters", "Rebuilt the performance-counter registry", "lodctr.exe /R", success);
         string trimmed = output.Length > 300 ? output[..300] + "…" : output;
         PerflibStatusText = success
             ? "Performance-counter registry rebuilt. Click Refresh to see if the Perflib failures above clear."
@@ -3606,6 +3621,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         LastShutdownCauseText = DescribeShutdownCause(snapshot.LastShutdownCause);
 
         TdrEventCount = snapshot.TdrEventCount;
+        TdrEventCountText = snapshot.TdrEventCountCapped ? $"{snapshot.TdrEventCount:N0}+" : snapshot.TdrEventCount.ToString("N0");
         LastTdrEventText = snapshot.LastTdrEvent is { } tdr
             ? $"Last: {tdr:g}" : "None in the last 30 days";
 
@@ -3694,6 +3710,8 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
         CorrectedMemoryErrors.Clear();
         foreach (var e in snapshot.CorrectedMemoryErrors) CorrectedMemoryErrors.Add(e);
         CorrectedMemoryErrorCount = snapshot.CorrectedMemoryErrorCount;
+        CorrectedMemoryErrorCountText = snapshot.CorrectedMemoryErrorCountCapped
+            ? $"{snapshot.CorrectedMemoryErrorCount:N0}+" : snapshot.CorrectedMemoryErrorCount.ToString("N0");
         LastCorrectedMemoryErrorText = snapshot.LastCorrectedMemoryError is { } last
             ? $"Last: {last:g}" : "None in the last 30 days";
 
@@ -3885,6 +3903,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
     private async Task LoadWheaEventsAsync()
     {
         WheaStatusText = "Reading WHEA events...";
+        WheaLoadedOk = false;
         List<WheaEvent> events;
         List<WheaConditionRow> conditionRows;
         try
@@ -3922,6 +3941,7 @@ public sealed class StabilityViewModel : ObservableObject, IDisposable
 
         WheaFatalCount = events.Count(e => e.IsFatal);
         WheaCorrectedCount = events.Count(e => !e.IsFatal);
+        WheaLoadedOk = true;
 
         RefreshWheaCorrectedDailyChart(events);
 

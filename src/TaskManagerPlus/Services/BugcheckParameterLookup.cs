@@ -133,10 +133,10 @@ public static class BugcheckParameterLookup
         },
         [0x00000124] = new[]
         {
-            new BugcheckParamLabel("Error source type (1 = machine check, 2 = firmware, 3 = PCI Express, 4 = software)"),
+            new BugcheckParamLabel("Error source type (0 = machine check, 1 = corrected machine check, 2 = corrected platform, 3 = NMI, 4 = PCI Express, 5 = generic)"),
             new BugcheckParamLabel("Address of the WHEA_ERROR_RECORD structure"),
-            new BugcheckParamLabel("Reserved"),
-            new BugcheckParamLabel("Reserved"),
+            new BugcheckParamLabel("High 32 bits of MCi_STATUS when parameter 1 is 0 (machine check), otherwise reserved"),
+            new BugcheckParamLabel("Low 32 bits of MCi_STATUS when parameter 1 is 0 (machine check), otherwise reserved"),
         },
         [0x0000007A] = new[]
         {
@@ -148,16 +148,16 @@ public static class BugcheckParameterLookup
         [0x00000116] = new[]
         {
             new BugcheckParamLabel("Pointer to the internal TDR recovery context (or 0)"),
-            new BugcheckParamLabel("Reserved"),
-            new BugcheckParamLabel("Reserved"),
-            new BugcheckParamLabel("Reserved"),
+            new BugcheckParamLabel("Pointer into the responsible driver module (owner tag)"),
+            new BugcheckParamLabel("Error code of the last failed operation, if available", isStatusCode: true),
+            new BugcheckParamLabel("Internal context-dependent data"),
         },
         [0x00000117] = new[]
         {
             new BugcheckParamLabel("Pointer to the internal TDR recovery context (or 0)"),
-            new BugcheckParamLabel("Reserved"),
-            new BugcheckParamLabel("Reserved"),
-            new BugcheckParamLabel("Reserved"),
+            new BugcheckParamLabel("Pointer into the responsible driver module (owner tag)"),
+            new BugcheckParamLabel("Secondary driver-specific bucketing key"),
+            new BugcheckParamLabel("Internal context-dependent data"),
         },
     };
 

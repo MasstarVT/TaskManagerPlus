@@ -304,9 +304,16 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding CrashClusters.Count}" Value="0">
+                                            <!-- Only a finished, error-free refresh can claim "none found". -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding CrashClusters.Count}" Value="0" />
+                                                    <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                    <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -420,9 +427,16 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding FilteredTimeline.Count}" Value="0">
+                                            <!-- Only a finished, error-free refresh can claim "none found". -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding FilteredTimeline.Count}" Value="0" />
+                                                    <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                    <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -541,7 +555,7 @@
                                         ValueText="{Binding TimeSinceLastCrashText}"
                                         SubText="Unexpected shutdown or BSOD" AccentBrush="{DynamicResource AccentBrush}" />
                         <views:VfdMeter Title="TDR events" Glow="False" Margin="3,0,3,0"
-                                        ValueText="{Binding TdrEventCount}"
+                                        ValueText="{Binding TdrEventCountText}"
                                         SubText="{Binding LastTdrEventText}"
                                         AccentBrush="{DynamicResource WarningBrush}" />
                         <views:VfdMeter Title="Minidumps" Glow="False" Margin="3,0,3,0"
@@ -565,6 +579,15 @@
         <TabItem Header="Crashes">
             <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
+                    <!-- RefreshAsync's loading/failure state, repeated per section - the Overview
+                         banner isn't visible from here. -->
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16"
+                            Visibility="{Binding RefreshErrorText, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Text="{Binding RefreshErrorText}" />
+                    </Border>
+                    <TextBlock Text="Loading stability data..." Style="{StaticResource SubStat}" Margin="0,0,0,16"
+                               Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}" />
                     <!-- #122: "Known-bad IDs present on this PC" - which KB-flagged serious event IDs
                          (#117) actually showed up in the lookback window, with count/last-seen/next-step,
                          worst re-ranked severity first - the "tell me what's wrong" answer the flat grid
@@ -1243,6 +1266,15 @@
         <TabItem Header="Dumps &amp; capture">
             <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
+                    <!-- RefreshAsync's loading/failure state, repeated per section - the Overview
+                         banner isn't visible from here. -->
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16"
+                            Visibility="{Binding RefreshErrorText, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Text="{Binding RefreshErrorText}" />
+                    </Border>
+                    <TextBlock Text="Loading stability data..." Style="{StaticResource SubStat}" Margin="0,0,0,16"
+                               Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}" />
                     <!-- #3: minidump files, timestamp + best-effort bugcheck code correlated from a
                          nearby Kernel-Power 41 event - see EventLogService.ReadMinidumps. -->
                     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
@@ -1411,9 +1443,16 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Minidumps.Count}" Value="0">
+                                            <!-- Only a finished, error-free refresh can claim "none found". -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding Minidumps.Count}" Value="0" />
+                                                    <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                    <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -1663,9 +1702,16 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding DumpRows.Count}" Value="0">
+                                            <!-- Only a finished, error-free refresh can claim "none found". -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding DumpRows.Count}" Value="0" />
+                                                    <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                    <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -2367,7 +2413,7 @@
                                     <DataGridTextColumn Header="Nonpaged growth" Binding="{Binding NonPagedGrowthText}" Width="120" />
                                     <DataGridTextColumn Header="Paged" Binding="{Binding PagedUsedText}" Width="90" />
                                     <DataGridTextColumn Header="Paged growth" Binding="{Binding PagedGrowthText}" Width="110" />
-                                    <DataGridTextColumn Header="Allocations" Binding="{Binding NonPagedAllocs}" Width="90" />
+                                    <DataGridTextColumn Header="Nonpaged allocs" Binding="{Binding NonPagedAllocs}" Width="110" />
                                     <DataGridTemplateColumn Header="" Width="150">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
@@ -2411,11 +2457,12 @@
                     </Border>
                     <!-- #166: WER storage footprint - total size/file count of ReportQueue/ReportArchive,
                          with a reveal-in-Explorer button next to each (reuses EtwTraceService.
-                         RevealInExplorer). This app never deletes anything from either folder. -->
+                         RevealInExplorer). Nothing here deletes - only the separate, confirmed "Purge all
+                         WER reports" action does. -->
                     <Border Style="{StaticResource CardStyle}" Margin="0,0,0,16">
                         <StackPanel>
                             <TextBlock Text="WER storage footprint" Style="{StaticResource CardTitle}" />
-                            <TextBlock Text="No deletion is performed by this app - use the buttons below to review the files yourself in Explorer." Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
+                            <TextBlock Text="This card only measures - use the buttons below to review the files yourself in Explorer. Deleting them is the separate, confirmed &quot;Purge all WER reports&quot; action." Style="{StaticResource SubStat}" Margin="0,-4,0,10" TextWrapping="Wrap" />
                             <Grid Margin="0,0,0,6">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -2498,9 +2545,16 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Minidumps.Count}" Value="0">
+                                            <!-- Only a finished, error-free refresh can claim "none found". -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding Minidumps.Count}" Value="0" />
+                                                    <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                    <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -2513,6 +2567,15 @@
         <TabItem Header="Hangs &amp; errors">
             <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
+                    <!-- RefreshAsync's loading/failure state, repeated per section - the Overview
+                         banner isn't visible from here. -->
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16"
+                            Visibility="{Binding RefreshErrorText, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Text="{Binding RefreshErrorText}" />
+                    </Border>
+                    <TextBlock Text="Loading stability data..." Style="{StaticResource SubStat}" Margin="0,0,0,16"
+                               Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}" />
                     <!-- #239: Windows Error Reporting AppHang reports (Report.wer under ReportArchive/
                          ReportQueue) - richer per-report detail than #240 below, but pruned sooner. -->
                     <Border Margin="0,0,0,16">
@@ -2977,9 +3040,16 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding RecentEvents.Count}" Value="0">
+                                            <!-- Only a finished, error-free refresh can claim "none found". -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding RecentEvents.Count}" Value="0" />
+                                                    <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                    <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -3102,6 +3172,15 @@
         <TabItem Header="Hardware">
             <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
+                    <!-- RefreshAsync's loading/failure state, repeated per section - the Overview
+                         banner isn't visible from here. -->
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16"
+                            Visibility="{Binding RefreshErrorText, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Text="{Binding RefreshErrorText}" />
+                    </Border>
+                    <TextBlock Text="Loading stability data..." Style="{StaticResource SubStat}" Margin="0,0,0,16"
+                               Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}" />
                     <!-- #492: crash/TDR/unexpected-shutdown events preceded by a WHEA hardware error
                          within a short window (5 minutes) - see EventLogService.
                          BuildHardwareErrorCorrelations. A correlation, not a claimed cause: a hardware
@@ -3332,9 +3411,16 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding WheaHardwareErrors.Count}" Value="0">
+                                            <!-- Only a finished, error-free refresh can claim "none found". -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding WheaHardwareErrors.Count}" Value="0" />
+                                                    <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                    <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -3362,7 +3448,10 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="Corrected memory errors (WHEA)" Style="{StaticResource CardTitle}" Margin="0" />
+                                <!-- The list below holds the newest 100; the count keeps going ("N+" past its ceiling). -->
+                                <TextBlock Grid.Column="0" Style="{StaticResource CardTitle}" Margin="0">
+                                    <Run Text="Corrected memory errors (WHEA) · " /><Run Text="{Binding CorrectedMemoryErrorCountText, Mode=OneWay}" /><Run Text=" in 30 days" />
+                                </TextBlock>
                                 <TextBlock Grid.Column="1" Text="{Binding LastCorrectedMemoryErrorText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                             </Grid>
                             <TextBlock Text="Windows' own hardware-error log reported these as corrected in hardware - occasional corrected errors happen on healthy ECC systems, but a high or climbing count is worth a closer look. DIMM/address hints are best-effort, parsed from the event's own text."
@@ -3636,7 +3725,10 @@
                                 </TextBlock.Style>
                             </TextBlock>
 
-                            <UniformGrid Columns="2" Margin="0,0,0,12">
+                            <!-- Hidden until a read succeeds - 0/0 next to "Reading..."/"Couldn't read" would
+                                 read as a clean result. -->
+                            <UniformGrid Columns="2" Margin="0,0,0,12"
+                                         Visibility="{Binding WheaLoadedOk, Converter={StaticResource BoolToVisibilityConverter}}">
                                 <views:VfdMeter Title="Fatal" Glow="False" Margin="0,0,6,0"
                                                 ValueText="{Binding WheaFatalCount}"
                                                 SubText="Uncorrected machine checks" AccentBrush="{DynamicResource DangerBrush}" />
@@ -3724,9 +3816,13 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding WheaEvents.Count}" Value="0">
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding WheaEvents.Count}" Value="0" />
+                                                    <Condition Binding="{Binding WheaLoadedOk}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -3995,6 +4091,15 @@
         <TabItem Header="Power &amp; boot">
             <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
+                    <!-- RefreshAsync's loading/failure state, repeated per section - the Overview
+                         banner isn't visible from here. -->
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16"
+                            Visibility="{Binding RefreshErrorText, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Text="{Binding RefreshErrorText}" />
+                    </Border>
+                    <TextBlock Text="Loading stability data..." Style="{StaticResource SubStat}" Margin="0,0,0,16"
+                               Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}" />
                     <!-- #713: "Power & boot timeline" - correlates EventLog 6005/6006/6008/6013,
                          Kernel-Power 41/109, and User32 1074 into one chronological strip - see
                          PowerTimelineService's remarks. Linked from the Startup tab's boot chart (see
@@ -4054,9 +4159,16 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding PowerTimeline.Count}" Value="0">
+                                            <!-- Only a finished, error-free refresh can claim "none found". -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding PowerTimeline.Count}" Value="0" />
+                                                    <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                    <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -4398,6 +4510,15 @@
         <TabItem Header="History">
             <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
+                    <!-- RefreshAsync's loading/failure state, repeated per section - the Overview
+                         banner isn't visible from here. -->
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16"
+                            Visibility="{Binding RefreshErrorText, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Text="{Binding RefreshErrorText}" />
+                    </Border>
+                    <TextBlock Text="Loading stability data..." Style="{StaticResource SubStat}" Margin="0,0,0,16"
+                               Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}" />
                     <!-- #1/#169: Reliability History - daily Critical/Error counts over the lookback window
                          (this app's own bar series, left axis), the same "crash/failure events over time"
                          chart Windows' own Reliability Monitor shows, bucketed from the same event query as
@@ -4494,9 +4615,25 @@
                             <WrapPanel>
                                 <Button Content="Refresh reliability data" FontSize="{StaticResource FontBody}" Padding="8,4" Margin="0,0,8,0"
                                          Command="{Binding RefreshReliabilityCommand}" />
+                                <!-- Only when collection is off AND not forced off by policy - the service
+                                     refuses the write in the policy case, so the button would only fail. -->
                                 <Button Content="Re-enable collection..." FontSize="{StaticResource FontBody}" Padding="8,4" Margin="0,0,8,0"
-                                         Command="{Binding EnableReliabilityAnalysisCommand}"
-                                         Visibility="{Binding ReliabilityAnalysisStatus.IsCollectionDisabled, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                         Command="{Binding EnableReliabilityAnalysisCommand}">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding ReliabilityAnalysisStatus.IsCollectionDisabled}" Value="True" />
+                                                        <Condition Binding="{Binding ReliabilityAnalysisStatus.IsPolicyManaged}" Value="False" />
+                                                    </MultiDataTrigger.Conditions>
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </MultiDataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
                                 <Button Content="Revert to previous..." FontSize="{StaticResource FontBody}" Padding="8,4" Command="{Binding RevertReliabilityAnalysisCommand}"
                                          Visibility="{Binding CanRevertReliabilityAnalysis, Converter={StaticResource BoolToVisibilityConverter}}" />
                             </WrapPanel>
@@ -4567,9 +4704,16 @@
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource SubStat}">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding ReliabilityRecords.Count}" Value="0">
+                                            <!-- Only a finished, error-free refresh can claim "none found". -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding ReliabilityRecords.Count}" Value="0" />
+                                                    <Condition Binding="{Binding HasLoaded}" Value="True" />
+                                                    <Condition Binding="{Binding IsLoading}" Value="False" />
+                                                    <Condition Binding="{Binding RefreshErrorText}" Value="{x:Null}" />
+                                                </MultiDataTrigger.Conditions>
                                                 <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
+                                            </MultiDataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </TextBlock.Style>
@@ -4733,6 +4877,15 @@
         <TabItem Header="Recovery">
             <ScrollViewer Style="{StaticResource SectionBody}">
                 <StackPanel>
+                    <!-- RefreshAsync's loading/failure state, repeated per section - the Overview
+                         banner isn't visible from here. -->
+                    <Border Background="{DynamicResource DangerMutedBrush}" BorderBrush="{DynamicResource DangerBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,16"
+                            Visibility="{Binding RefreshErrorText, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap" FontSize="{StaticResource FontStrong}" Text="{Binding RefreshErrorText}" />
+                    </Border>
+                    <TextBlock Text="Loading stability data..." Style="{StaticResource SubStat}" Margin="0,0,0,16"
+                               Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}" />
                     <!-- ============================================================================
                          Round 21, items 96-100: "Recovery, escalation and safe operation" - the final
                          chunk of this domain. Every action in this whole section is a genuinely dangerous

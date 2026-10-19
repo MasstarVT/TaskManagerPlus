@@ -367,6 +367,9 @@ public sealed class StabilitySnapshot
     /// <summary>GPU driver timeout/reset (TDR, event 4101) count and most recent occurrence (#5)
     /// within the lookback window.</summary>
     public int TdrEventCount { get; init; }
+    /// <summary>True when more 4101 events existed past the counting ceiling, so TdrEventCount is
+    /// a lower bound (display as "N+").</summary>
+    public bool TdrEventCountCapped { get; init; }
     public DateTime? LastTdrEvent { get; init; }
 
     /// <summary>Timestamp of the most recent crash-like event (unexpected shutdown or a Windows
@@ -457,6 +460,9 @@ public sealed class StabilitySnapshot
     /// independently by SystemSpecsService for the System Specs memory section, so both tabs stay
     /// in sync without a ViewModel-to-ViewModel dependency.</summary>
     public int CorrectedMemoryErrorCount { get; init; }
+    /// <summary>True when CorrectedMemoryErrorCount hit the counting ceiling and is a lower bound.
+    /// CorrectedMemoryErrors itself only holds the newest 100.</summary>
+    public bool CorrectedMemoryErrorCountCapped { get; init; }
     public DateTime? LastCorrectedMemoryError { get; init; }
     public List<CorrectedMemoryErrorEvent> CorrectedMemoryErrors { get; init; } = new();
 

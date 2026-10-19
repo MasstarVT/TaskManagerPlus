@@ -812,8 +812,21 @@ public sealed class WerReportService
             byApp[key] = entry;
         }
 
+        // One crash normally leaves BOTH a WER report and an Application Error 1000 entry, and they
+        // name the app differently (Report.wer's AppName is the product name, 1000 the exe). Both
+        // are keyed by exe name, and a 1000 entry only counts when no WER report for the same exe
+        // sits within DuplicateWindow of it. Hang reports are left out - hangs have their own list.
+        var werTimes = new Dictionary<string, List<DateTime>>(StringComparer.OrdinalIgnoreCase);
+        var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in reports)
-            Add(r.AppName, r.ModName, r.Timestamp);
+        {
+            if (r.EventType?.StartsWith("AppHang", StringComparison.OrdinalIgnoreCase) == true) continue;
+            string key = ExeKey(r);
+            Add(key, r.ModName, r.Timestamp);
+            if (!werTimes.TryGetValue(key, out var times)) werTimes[key] = times = new List<DateTime>();
+            times.Add(r.Timestamp);
+            if (!string.IsNullOrWhiteSpace(r.AppName)) displayNames.TryAdd(key, r.AppName.Trim());
+        }
 
         try
         {
@@ -826,7 +839,10 @@ public sealed class WerReportService
                 {
                     var m = AppCrashRegex.Match(row.Message ?? string.Empty);
                     if (!m.Success) continue;
-                    Add(m.Groups["app"].Value.Trim(), m.Groups["mod"].Value.Trim(), row.TimeCreated);
+                    string exe = m.Groups["app"].Value.Trim();
+                    if (werTimes.TryGetValue(exe, out var times) && times.Any(t => (t - row.TimeCreated).Duration() <= DuplicateWindow))
+                        continue; // already counted from its WER report
+                    Add(exe, m.Groups["mod"].Value.Trim(), row.TimeCreated);
                 }
             }
         }
@@ -835,7 +851,9 @@ public sealed class WerReportService
         return byApp
             .Select(kv => new TopCrashingApplication
             {
-                AppName = kv.Key,
+                AppName = displayNames.TryGetValue(kv.Key, out var friendly) && !friendly.Equals(kv.Key, StringComparison.OrdinalIgnoreCase)
+                    ? $"{friendly} ({kv.Key})"
+                    : kv.Key,
                 CrashCount = kv.Value.Count,
                 MostCommonModule = kv.Value.Modules.Count == 0 ? null : kv.Value.Modules.OrderByDescending(m => m.Value).First().Key,
                 LastCrashTime = kv.Value.LastSeen,
@@ -844,6 +862,21 @@ public sealed class WerReportService
             .ThenByDescending(a => a.LastCrashTime)
             .Take(maxApps)
             .ToList();
+    }
+
+    private static readonly TimeSpan DuplicateWindow = TimeSpan.FromMinutes(5);
+
+    /// <summary>The exe a WER report is about: AppPath's file name, else the "Application Name"
+    /// signature value, else the report's AppName.</summary>
+    private static string ExeKey(WerReportInfo r)
+    {
+        string? exe = null;
+        try { if (!string.IsNullOrWhiteSpace(r.AppPath)) exe = Path.GetFileName(r.AppPath.Trim()); }
+        catch { /* malformed path - fall through */ }
+        if (string.IsNullOrWhiteSpace(exe))
+            exe = r.SignatureParameters.FirstOrDefault(p => p.Name.Equals("Application Name", StringComparison.OrdinalIgnoreCase)).Value;
+        if (string.IsNullOrWhiteSpace(exe)) exe = r.AppName;
+        return string.IsNullOrWhiteSpace(exe) ? "Unknown app" : exe.Trim();
     }
 
     // ==== #164: hang detection ====
@@ -1068,7 +1101,14 @@ public sealed class WerReportService
         try
         {
             if (!File.Exists(BackupPath)) return null;
-            return JsonSerializer.Deserialize<LocalDumpsSettings>(File.ReadAllText(BackupPath));
+            var loaded = JsonSerializer.Deserialize<LocalDumpsSettings>(File.ReadAllText(BackupPath));
+            // A revert writes these values back to HKLM, so out-of-range content is treated as a
+            // corrupt backup (no revert offered) rather than clamped into a value nobody had.
+            if (loaded is null) return null;
+            if (loaded.DumpType is { } t && t is < 0 or > 2) return null;
+            if (loaded.DumpCount is { } c && c < 0) return null;
+            if (loaded.DumpFolder is { } f && string.IsNullOrWhiteSpace(f)) return null;
+            return loaded;
         }
         catch
         {

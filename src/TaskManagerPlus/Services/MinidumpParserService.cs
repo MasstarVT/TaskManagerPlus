@@ -45,14 +45,18 @@ public static class MinidumpParserService
         try
         {
             if (!Directory.Exists(MinidumpFolder)) return result;
-            foreach (var file in Directory.GetFiles(MinidumpFolder, "*.dmp"))
-                result.Add(ParseDumpFile(file));
+            // Newest first by write time - the MMDDYY-nn file names don't sort across years.
+            var files = new DirectoryInfo(MinidumpFolder).GetFiles("*.dmp")
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .ThenByDescending(f => f.Name, StringComparer.OrdinalIgnoreCase);
+            foreach (var file in files)
+                result.Add(ParseDumpFile(file.FullName));
         }
         catch
         {
             // Folder missing/access denied - empty list, same as EventLogService.ReadMinidumps.
         }
-        return result.OrderByDescending(d => d.FileName).ToList();
+        return result;
     }
 
     /// <summary>Item 20: %SystemRoot%\MEMORY.DMP presence/size/timestamp, plus the same binary

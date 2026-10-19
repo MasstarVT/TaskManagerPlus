@@ -179,12 +179,13 @@ public sealed class DwmCompositionService
                 _ => $"Unknown value ({hwSch})",
             };
 
+            // Per Microsoft's TDR registry-key reference: Off / Bugcheck / RecoverVGA / Recover.
             string tdrLevelText = tdrLevel switch
             {
-                0 => "0 - detection/recovery disabled",
-                1 => "1 - detection enabled, kernel-mode recovery only",
-                2 => "2 - detection disabled (reserved)",
-                3 => "3 - full detection and recovery (Windows default)",
+                0 => "0 - detection disabled",
+                1 => "1 - bug check on a detected timeout (no recovery)",
+                2 => "2 - recover to VGA (documented as not implemented)",
+                3 => "3 - recover on timeout (Windows default)",
                 null => "Unknown (using Windows' default - full detection and recovery)",
                 _ => $"Unknown value ({tdrLevel})",
             };
