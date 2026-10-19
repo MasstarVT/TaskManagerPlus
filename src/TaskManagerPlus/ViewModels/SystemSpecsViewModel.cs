@@ -116,6 +116,9 @@ public sealed class SystemSpecsViewModel : ObservableObject
     private int _correctedMemoryErrorCount;
     public int CorrectedMemoryErrorCount { get => _correctedMemoryErrorCount; private set => SetProperty(ref _correctedMemoryErrorCount, value); }
 
+    private string _correctedMemoryErrorCountText = "0";
+    public string CorrectedMemoryErrorCountText { get => _correctedMemoryErrorCountText; private set => SetProperty(ref _correctedMemoryErrorCountText, value); }
+
     private string _lastCorrectedMemoryErrorText = "Unknown";
     public string LastCorrectedMemoryErrorText { get => _lastCorrectedMemoryErrorText; private set => SetProperty(ref _lastCorrectedMemoryErrorText, value); }
 
@@ -516,6 +519,9 @@ public sealed class SystemSpecsViewModel : ObservableObject
 
         // #447
         CorrectedMemoryErrorCount = specs.CorrectedMemoryErrorCount;
+        CorrectedMemoryErrorCountText = specs.CorrectedMemoryErrorCountCapped
+            ? $"{specs.CorrectedMemoryErrorCount:N0}+"
+            : specs.CorrectedMemoryErrorCount.ToString("N0");
         LastCorrectedMemoryErrorText = specs.LastCorrectedMemoryError is { } lastCorrected
             ? $"Last: {lastCorrected:g}" : "None in the last 30 days";
 

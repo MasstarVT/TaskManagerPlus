@@ -1672,11 +1672,15 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
     // of resetting them to "not scanned" - null until the event scan has run at least once this
     // session.
     private Dictionary<string, int>? _usbReenumCountsByNormalizedInstance;
+    private bool _usbReenumScanned;
 
     private void ApplyUsbReenumerationCounts(List<UsbDevicePowerInfo> devices)
     {
-        if (_usbReenumCountsByNormalizedInstance is not { } counts) return;
-        foreach (var d in devices) d.ReenumerationCount = UsbPowerService.FindReenumerationCount(d.DeviceId, counts);
+        if (!_usbReenumScanned) return;
+        foreach (var d in devices)
+            d.ReenumerationCount = _usbReenumCountsByNormalizedInstance is { } counts
+                ? UsbPowerService.FindReenumerationCount(d.DeviceId, counts)
+                : -1; // the removal log couldn't be read - Unknown, not 0
     }
 
     /// <summary>#665/#667: on-demand USB over-current/port-reset event scan plus per-device
@@ -1697,6 +1701,7 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
 
         var (_, counts) = reenumTask.Result;
         _usbReenumCountsByNormalizedInstance = counts;
+        _usbReenumScanned = true;
 
         // UsbDevicePowerInfo isn't INotifyPropertyChanged (see its remarks), so mutating
         // ReenumerationCount on the existing instances wouldn't refresh the bound grid on its own -
@@ -1707,9 +1712,12 @@ public sealed class EnergyThermalsViewModel : ObservableObject, IDisposable
         UsbDevices.Clear();
         foreach (var d in refreshedDevices) UsbDevices.Add(d);
 
-        UsbEventsStatusText = overCurrent.Count == 0 && counts.Count == 0
-            ? "No over-current, port-reset-failure, or re-enumeration events found in the last 14 days."
-            : $"{overCurrent.Count} over-current/port-reset event(s); {counts.Values.Sum()} re-enumeration event(s) across {counts.Count} device instance(s).";
+        if (counts is null)
+            UsbEventsStatusText = $"{overCurrent.Count} over-current/port-reset event(s); re-enumeration counts unknown (the Kernel-PnP device log couldn't be read).";
+        else
+            UsbEventsStatusText = overCurrent.Count == 0 && counts.Count == 0
+                ? "No over-current, port-reset-failure, or re-enumeration events found in the last 14 days."
+                : $"{overCurrent.Count} over-current/port-reset event(s); {counts.Values.Sum()} re-enumeration event(s) across {counts.Count} device instance(s).";
     }
 
     /// <summary>#668: per-device selective-suspend toggle - flips both device-power-policy

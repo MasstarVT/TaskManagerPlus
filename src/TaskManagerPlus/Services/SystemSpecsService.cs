@@ -54,12 +54,12 @@ public sealed class SystemSpecsService
         // remarks on why these are public methods rather than only reachable through the
         // Stability tab's own full Query().
         var eventLog = new EventLogService();
-        var correctedMemoryErrors = eventLog.ReadCorrectedMemoryErrors();
+        var (correctedMemoryErrors, correctedMemoryErrorTotal, correctedMemoryErrorsCapped) = eventLog.ReadCorrectedMemoryErrorsCounted();
         var memoryDiagnosticResult = eventLog.ReadMemoryDiagnosticResult();
         int memoryRelatedBugchecks = eventLog.ReadMemoryRelatedBugcheckCount();
 
         var ramHealth = MemoryDiagnosticsService.BuildRamHealth(
-            memoryModules, channelWarning, correctedMemoryErrors.Count, memoryDiagnosticResult, memoryRelatedBugchecks);
+            memoryModules, channelWarning, correctedMemoryErrorTotal, memoryDiagnosticResult, memoryRelatedBugchecks);
 
         return new SystemSpecs
         {
@@ -93,7 +93,8 @@ public sealed class SystemSpecsService
             MemoryEccStatusText = eccText,
             MemoryChannelText = channelText,
             MemoryChannelWarning = channelWarning,
-            CorrectedMemoryErrorCount = correctedMemoryErrors.Count,
+            CorrectedMemoryErrorCount = correctedMemoryErrorTotal,
+            CorrectedMemoryErrorCountCapped = correctedMemoryErrorsCapped,
             LastCorrectedMemoryError = correctedMemoryErrors.Count > 0 ? correctedMemoryErrors[0].TimeCreated : null,
             CorrectedMemoryErrors = correctedMemoryErrors,
             MemoryDiagnosticResult = memoryDiagnosticResult,

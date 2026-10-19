@@ -76,10 +76,12 @@ public static class UsbEventLogService
     /// join, so EnergyThermalsViewModel can attach a count onto each row of the existing USB device
     /// grid. Arrivals aren't counted: Kernel-PnP only logs a device start (410) when it is
     /// configured, not on every re-plug, so a removal of a device that is present now is the
-    /// re-enumeration signal.</summary>
-    public static (List<UsbPowerEvent> Events, Dictionary<string, int> CountsByNormalizedInstance) ReadReenumerationEvents()
+    /// re-enumeration signal. CountsByNormalizedInstance is null when the Kernel-PnP channel
+    /// couldn't be read at all, so the caller can show Unknown rather than a confirmed zero.</summary>
+    public static (List<UsbPowerEvent> Events, Dictionary<string, int>? CountsByNormalizedInstance) ReadReenumerationEvents()
     {
         var events = ReadUsbSurpriseRemovals();
+        if (events is null) return (new List<UsbPowerEvent>(), null);
 
         var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var e in events)
@@ -92,7 +94,7 @@ public static class UsbEventLogService
         return (events.OrderByDescending(e => e.TimeCreated).ToList(), counts);
     }
 
-    private static List<UsbPowerEvent> ReadUsbSurpriseRemovals()
+    private static List<UsbPowerEvent>? ReadUsbSurpriseRemovals()
     {
         var result = new List<UsbPowerEvent>();
         try
@@ -132,8 +134,8 @@ public static class UsbEventLogService
         }
         catch
         {
-            // Channel missing/disabled or access denied - no removals from this source, same
-            // degrade as the keyword reads below.
+            // Channel missing/disabled or access denied: unknown, not "no removals".
+            return null;
         }
         return result;
     }

@@ -145,6 +145,8 @@ public sealed class SystemSpecs
     /// <summary>#447: corrected-memory-error events (Microsoft-Windows-WHEA-Logger, event ID 47)
     /// found within EventLogService's lookback window - see EventLogService.ReadCorrectedMemoryErrors.</summary>
     public int CorrectedMemoryErrorCount { get; init; }
+    /// <summary>The count stopped at the reader's cap, so the real total is at least this.</summary>
+    public bool CorrectedMemoryErrorCountCapped { get; init; }
     public DateTime? LastCorrectedMemoryError { get; init; }
     public IReadOnlyList<CorrectedMemoryErrorEvent> CorrectedMemoryErrors { get; init; } = Array.Empty<CorrectedMemoryErrorEvent>();
 

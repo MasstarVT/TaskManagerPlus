@@ -540,7 +540,7 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="{Binding CorrectedMemoryErrorCount, StringFormat={}{0} in the last 30 days}" Style="{StaticResource SpecValue}" />
+                                <TextBlock Grid.Column="0" Text="{Binding CorrectedMemoryErrorCountText, StringFormat={}{0} in the last 30 days}" Style="{StaticResource SpecValue}" />
                                 <TextBlock Grid.Column="1" Text="{Binding LastCorrectedMemoryErrorText}" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                             </Grid>
                             <TextBlock Text="Occasional corrected errors happen on healthy ECC systems - a high or climbing count is worth a closer look. See the Stability tab for per-event DIMM/address hints."

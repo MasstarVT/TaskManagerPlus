@@ -1588,7 +1588,7 @@
                             </Style>
                         </Border.Style>
                         <StackPanel>
-                            <TextBlock Text="USB hubs" Style="{StaticResource CardTitle}" />
+                            <TextBlock Text="USB hubs and composite devices" Style="{StaticResource CardTitle}" />
                             <TextBlock Text="Windows doesn't publish a documented per-port milliamp budget/draw figure without deeper hardware interop this app avoids - shown instead is real hub port-count inventory plus a system-wide devices-vs-ports proxy for the same over-subscription risk."
                                        Style="{StaticResource SubStat}" Margin="0,-4,0,8" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding UsbHubStatusText}" Margin="0,0,0,8" TextWrapping="Wrap" Style="{StaticResource SubStat}" />

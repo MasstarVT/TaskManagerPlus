@@ -3909,7 +3909,7 @@
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0" FontSize="{StaticResource FontStrong}" FontWeight="SemiBold" Text="{Binding FriendlyName}" />
                                                     <TextBlock Grid.Column="1" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource DangerBrush}">
-                                                        <Run Text="{Binding TotalCount, Mode=OneWay}" /><Run Text=" event(s)" />
+                                                        <Run Text="{Binding TotalCountText, Mode=OneWay}" /><Run Text=" event(s)" />
                                                     </TextBlock>
                                                 </Grid>
                                                 <ItemsControl ItemsSource="{Binding Hits}" Margin="0,4,0,0">
@@ -3953,7 +3953,7 @@
                             <lvc:CartesianChart Series="{Binding WheaDailySeries}" XAxes="{Binding WheaDailyXAxes}" YAxes="{Binding WheaDailyYAxes}"
                                                  Height="120" TooltipPosition="Top" LegendPosition="Hidden" Background="Transparent" />
                             <TextBlock Margin="0,6,0,0" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}">
-                                <Run Text="{Binding WheaRateSummary.TotalCount, Mode=OneWay}" /><Run Text=" total in the last 30 days · last seen " />
+                                <Run Text="{Binding WheaRateSummary.TotalCountText, Mode=OneWay}" /><Run Text=" total in the last 30 days · last seen " />
                                 <Run Text="{Binding WheaRateSummary.LastSeen, StringFormat={}{0:g}, TargetNullValue='never', Mode=OneWay}" />
                             </TextBlock>
                         </StackPanel>
@@ -4037,12 +4037,18 @@
                                                         <TextBlock.Style>
                                                             <Style TargetType="TextBlock">
                                                                 <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
-                                                                <Setter Property="Text" Value="Completed cleanly" />
+                                                                <Setter Property="Text" Value="{Binding OutcomeText, Mode=OneWay}" />
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding CompletedCleanly}" Value="False">
                                                                         <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
-                                                                        <Setter Property="Text" Value="Ran (outcome unclear)" />
                                                                     </DataTrigger>
+                                                                    <MultiDataTrigger>
+                                                                        <MultiDataTrigger.Conditions>
+                                                                            <Condition Binding="{Binding ProblemsFound}" Value="True" />
+                                                                            <Condition Binding="{Binding MadeCorrections}" Value="False" />
+                                                                        </MultiDataTrigger.Conditions>
+                                                                        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                                    </MultiDataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
                                                         </TextBlock.Style>
