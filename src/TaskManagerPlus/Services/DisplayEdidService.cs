@@ -5,7 +5,8 @@ using TaskManagerPlus.Models;
 namespace TaskManagerPlus.Services;
 
 /// <summary>
-/// #685: raw EDID identity per monitor - root\wmi's WmiMonitorRawEEdidV1Block class, keyed by the
+/// #685: raw EDID identity per monitor - root\wmi's raw EDID base block (read through
+/// WmiMonitorDescriptorMethods.WmiGetMonitorRawEEdidV1Block), keyed by the
 /// same InstanceName WmiMonitorConnectionParams uses (see SystemSpecsService.ReadMonitors for how
 /// the two are paired). Decodes the base 128-byte EDID block per the VESA E-EDID 1.4 standard -
 /// manufacturer ID, product code, serial/model descriptor strings, manufacture week/year, physical
@@ -24,54 +25,74 @@ public static class DisplayEdidService
     public static Dictionary<string, MonitorEdidInfo> ReadAllByInstance()
     {
         var result = new Dictionary<string, MonitorEdidInfo>(StringComparer.OrdinalIgnoreCase);
+        // Enumerating WmiMonitorRawEEdidV1Block itself fails with "Not supported" on current
+        // builds; the same base block is returned by WmiMonitorDescriptorMethods'
+        // WmiGetMonitorRawEEdidV1Block(BlockId = 0) method, keyed by the same InstanceName.
         try
         {
-            using var searcher = new ManagementObjectSearcher(@"root\wmi", "SELECT * FROM WmiMonitorRawEEdidV1Block");
+            using var searcher = new ManagementObjectSearcher(@"root\wmi", "SELECT * FROM WmiMonitorDescriptorMethods");
             foreach (ManagementObject mo in searcher.Get())
             {
-                try
+                using (mo)
                 {
-                    string instanceName = mo["InstanceName"] as string ?? string.Empty;
-                    if (instanceName.Length == 0) continue;
+                    try
+                    {
+                        string instanceName = mo["InstanceName"] as string ?? string.Empty;
+                        if (instanceName.Length == 0) continue;
 
-                    byte[]? bytes = ExtractBytes(mo);
-                    if (bytes is null) continue;
+                        using var inParams = mo.GetMethodParameters("WmiGetMonitorRawEEdidV1Block");
+                        inParams["BlockId"] = (byte)0;
+                        using var outParams = mo.InvokeMethod("WmiGetMonitorRawEEdidV1Block", inParams, null);
+                        if (outParams?["BlockContent"] is not byte[] bytes || bytes.Length < 128) continue;
 
-                    var decoded = Decode(bytes);
-                    if (decoded is not null) result[instanceName] = decoded;
-                }
-                catch
-                {
-                    // This one monitor's block failed to read/decode - skip it, others may still work.
+                        var decoded = Decode(bytes);
+                        if (decoded is not null) result[instanceName] = decoded;
+                    }
+                    catch
+                    {
+                        // This one monitor's block failed to read/decode - skip it, others may still work.
+                    }
                 }
             }
         }
         catch
         {
             // root\wmi monitor classes unavailable entirely (VM/RDP, locked-down policy, or a
-            // provider that doesn't expose instance data on this configuration) - empty result,
-            // System Specs just won't show an EDID panel for any monitor.
+            // provider that doesn't expose instance data on this configuration).
+        }
+        if (result.Count > 0) return result;
+
+        // Older builds that do enumerate the raw-block class directly (its only data property is
+        // Content).
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(@"root\wmi", "SELECT InstanceName, Content FROM WmiMonitorRawEEdidV1Block");
+            foreach (ManagementObject mo in searcher.Get())
+            {
+                using (mo)
+                {
+                    try
+                    {
+                        string instanceName = mo["InstanceName"] as string ?? string.Empty;
+                        if (instanceName.Length == 0) continue;
+                        if (mo["Content"] is not byte[] bytes || bytes.Length < 128) continue;
+
+                        var decoded = Decode(bytes);
+                        if (decoded is not null) result[instanceName] = decoded;
+                    }
+                    catch
+                    {
+                        // Skip this monitor's block.
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Not supported here either - empty result, System Specs just won't show an EDID
+            // panel for any monitor.
         }
         return result;
-    }
-
-    /// <summary>The raw-byte property's exact name isn't documented consistently across Windows
-    /// SDK references, so a few known candidates are tried in order - the first one present and at
-    /// least 128 bytes long wins.</summary>
-    private static byte[]? ExtractBytes(ManagementBaseObject mo)
-    {
-        foreach (var propertyName in new[] { "Content", "WmiEDID", "RawEEdidRawData" })
-        {
-            try
-            {
-                if (mo[propertyName] is byte[] bytes && bytes.Length >= 128) return bytes;
-            }
-            catch
-            {
-                // Property not present on this class version - try the next candidate.
-            }
-        }
-        return null;
     }
 
     /// <summary>Decodes the base 128-byte EDID block. Returns null when the block doesn't start

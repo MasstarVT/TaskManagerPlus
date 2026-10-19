@@ -60,7 +60,15 @@ public static class KnownProblemDriverService
                 if (list is not null)
                 {
                     // ScanAsync reads Drivers.Count and each definition's FileName outside any try.
+                    int rawCount = list.Drivers?.Count ?? 0;
                     list.Drivers = list.Drivers?.Where(d => d is not null).ToList() ?? new List<KnownProblemDriverDefinition>();
+                    if (list.Drivers.Count != rawCount) AppPaths.MarkUnreadable(SettingsPath);
+
+                    // The file is user-writable and the evidence link is opened from this elevated
+                    // process, so only an absolute http(s) URL survives - anything else (a local
+                    // path, a UNC share, another scheme) is dropped and the row shows no link.
+                    foreach (var d in list.Drivers)
+                        if (d.EvidenceUrl is not null && !IsWebUrl(d.EvidenceUrl)) d.EvidenceUrl = null;
                     return list;
                 }
             }
@@ -69,9 +77,14 @@ public static class KnownProblemDriverService
         {
             // Corrupt/unreadable settings-dir copy (e.g. a bad hand-edit) - degrade to "no known-
             // problem-driver data available" rather than throwing out of an on-demand scan.
+            AppPaths.MarkUnreadable(SettingsPath);
         }
         return new KnownProblemDriverList();
     }
+
+    private static bool IsWebUrl(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+        (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
 
     /// <summary>The button-gated scan itself - reads #424's loaded kernel module list (a real
     /// enumeration, not free) plus whatever the Stability tab has already reported this session, so

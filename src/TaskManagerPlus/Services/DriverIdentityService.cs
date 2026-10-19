@@ -97,10 +97,14 @@ public static class DriverIdentityService
 
             string module = cols[idxModule];
             string display = idxDisplay >= 0 && idxDisplay < cols.Count ? cols[idxDisplay] : string.Empty;
-            DateTime? linkDate = idxLinkDate >= 0 && idxLinkDate < cols.Count &&
-                                  DateTime.TryParse(cols[idxLinkDate], CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)
-                ? d
-                : null;
+            // driverquery formats Link Date (and its byte counts) in the user's locale - "4,096",
+            // "9/30/2026 4:34:24 PM" here on en-US - so this is the documented exception to the
+            // invariant-parse rule: current culture first, invariant only as a fallback.
+            DateTime? linkDate = null;
+            if (idxLinkDate >= 0 && idxLinkDate < cols.Count &&
+                (DateTime.TryParse(cols[idxLinkDate], CultureInfo.CurrentCulture, DateTimeStyles.None, out var d) ||
+                 DateTime.TryParse(cols[idxLinkDate], CultureInfo.InvariantCulture, DateTimeStyles.None, out d)))
+                linkDate = d;
             rows.Add(new DqRow(module, display, linkDate));
         }
         return rows;

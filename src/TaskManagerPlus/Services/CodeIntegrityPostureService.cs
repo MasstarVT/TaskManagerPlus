@@ -16,19 +16,22 @@ namespace TaskManagerPlus.Services;
 ///      requirement) and 3033 (Code Integrity found a hash mismatch / policy violation) over the
 ///      same 30-day lookback window EventLogService's own queries use.
 /// Neither throws: a bcdedit failure reports its flags as Unknown (null), and an event-log failure
-/// (locked-down policy, log not present on this Windows edition/SKU, ...) reports "nothing found" -
-/// same convention as every other event-log/shell-out read in this app.
+/// (locked-down policy, log not present on this Windows edition/SKU, ...) reports the event count as
+/// Unknown (null) - never as a clean 0.
 /// </summary>
 public static class CodeIntegrityPostureService
 {
     /// <summary>The three bcdedit flags are null (Unknown) when bcdedit failed or timed out, or
     /// printed a value other than Yes/No/On/Off (its values are localized - "Ja"/"Nein" on a German
-    /// install) - never reported as a clean "off".</summary>
+    /// install) - never reported as a clean "off". BlockedImageEventCount is null when the
+    /// CodeIntegrity log couldn't be read; BlockedImageEventCountCapped means the read stopped at
+    /// the cap, so the real count is higher.</summary>
     public sealed record CodeIntegrityPosture(
         bool? TestSigningEnabled,
         bool? NoIntegrityChecksEnabled,
         bool? DriverSignatureEnforcementDisabled,
-        int BlockedImageEventCount,
+        int? BlockedImageEventCount,
+        bool BlockedImageEventCountCapped,
         DateTime? LastBlockedImageEventTime,
         IReadOnlyList<string> RecentBlockedImageMessages);
 
@@ -42,9 +45,9 @@ public static class CodeIntegrityPostureService
     public static async Task<CodeIntegrityPosture> ReadAsync()
     {
         var (testSigning, noIntegrityChecks, dseDisabled) = await ReadBcdOptionsAsync();
-        // Up to 200 records plus FormatDescription - kept off the caller's (UI) thread.
-        var (count, last, messages) = await Task.Run(ReadBlockedImageEvents);
-        return new CodeIntegrityPosture(testSigning, noIntegrityChecks, dseDisabled, count, last, messages);
+        // Up to 201 records plus FormatDescription - kept off the caller's (UI) thread.
+        var (count, capped, last, messages) = await Task.Run(ReadBlockedImageEvents);
+        return new CodeIntegrityPosture(testSigning, noIntegrityChecks, dseDisabled, count, capped, last, messages);
     }
 
     private static async Task<(bool? TestSigning, bool? NoIntegrityChecks, bool? DseDisabled)> ReadBcdOptionsAsync()
@@ -100,10 +103,13 @@ public static class CodeIntegrityPostureService
         return fields;
     }
 
-    private static (int Count, DateTime? Last, List<string> Messages) ReadBlockedImageEvents()
+    private const int MaxBlockedImageEvents = 200;
+
+    private static (int? Count, bool Capped, DateTime? Last, List<string> Messages) ReadBlockedImageEvents()
     {
         var messages = new List<string>();
         int count = 0;
+        bool capped = false;
         DateTime? last = null;
         try
         {
@@ -116,9 +122,15 @@ public static class CodeIntegrityPostureService
             };
 
             using var reader = new EventLogReader(query);
-            const int maxEvents = 200;
-            while (count < maxEvents && reader.ReadEvent() is { } record)
+            while (reader.ReadEvent() is { } record)
             {
+                // One record past the cap only proves there are more - don't count or format it.
+                if (count == MaxBlockedImageEvents)
+                {
+                    record.Dispose();
+                    capped = true;
+                    break;
+                }
                 using (record)
                 {
                     count++;
@@ -138,9 +150,10 @@ public static class CodeIntegrityPostureService
         catch
         {
             // Log unavailable on this Windows edition, access denied, or provider not registered -
-            // "nothing found", not a false negative report.
+            // Unknown, not "nothing found".
+            return (null, false, null, new List<string>());
         }
-        return (count, last, messages);
+        return (count, capped, last, messages);
     }
 
     /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout

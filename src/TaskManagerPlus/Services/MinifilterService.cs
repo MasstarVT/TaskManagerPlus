@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using System.Globalization;
 using TaskManagerPlus.Models;
 
 namespace TaskManagerPlus.Services;
@@ -13,43 +13,55 @@ namespace TaskManagerPlus.Services;
 /// flagged as a likely (not certain) cause of slow file operations.
 ///
 /// Both fltmc subcommands print a fixed-width table with a "----" separator row marking each
-/// column's span - ParseTable below locates column boundaries from that row rather than splitting
-/// on whitespace, since a filter's own name can occasionally contain spaces.
+/// column's span - MinifilterAuditService.ParseFltmcTable slices rows at those spans (not on
+/// whitespace, and by position rather than by the localized header text).
 /// </summary>
 public static class MinifilterService
 {
+    /// <summary>Throws when either table couldn't be read (fltmc failed, timed out, or printed no
+    /// table) - every Windows install has in-box minifilters attached to the system volume
+    /// (WdFilter, FileInfo, ...), so an empty table is a failed read, never "none". The VM's catch
+    /// shows that as a failure rather than as "no minifilters" / "no AV filters on C:".</summary>
     public static Task<List<MinifilterEntry>> ScanAsync() => Task.Run(async () =>
     {
-        var filtersOutput = await RunCapturedAsync("fltmc.exe", "filters");
-        var instancesOutput = await RunCapturedAsync("fltmc.exe", "instances");
+        var (filtersOutput, filtersExit) = await RunCapturedAsync("fltmc.exe", "filters");
+        var (instancesOutput, instancesExit) = await RunCapturedAsync("fltmc.exe", "instances");
 
-        var filterRows = ParseTable(filtersOutput);
-        var instanceRows = ParseTable(instancesOutput);
+        // Columns are read by position, not by header text - fltmc's headers come from its .mui
+        // and are translated on a non-English install. filters: Filter Name / Num Instances /
+        // Altitude / Frame. instances: Filter / Volume Name / Altitude / Instance Name / ...
+        var filterRows = MinifilterAuditService.ParseFltmcTable(filtersOutput)
+            .Where(c => c.Length >= 3 && c[0].Length > 0 &&
+                        int.TryParse(c[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+            .ToList();
+        if (filterRows.Count == 0)
+            throw new InvalidOperationException($"fltmc filters returned no filter table ({DescribeFailure(filtersOutput, filtersExit)}).");
+
+        var instanceRows = MinifilterAuditService.ParseFltmcTable(instancesOutput)
+            .Where(c => c.Length >= 2 && c[0].Length > 0)
+            .ToList();
+        if (instanceRows.Count == 0 && filterRows.Any(c => c[1] != "0"))
+            throw new InvalidOperationException($"fltmc instances returned no instance table ({DescribeFailure(instancesOutput, instancesExit)}).");
 
         // fltmc instances lists one row per (filter, volume) pair - group volumes by filter name.
-        // Its first column is headed "Filter" on current builds ("Filter Name" is the `fltmc
-        // filters` heading), so accept either.
         var volumesByFilter = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var row in instanceRows)
+        foreach (var cols in instanceRows)
         {
-            string? name = (row.GetValueOrDefault("Filter Name") ?? row.GetValueOrDefault("Filter"))?.Trim();
-            string? volume = row.GetValueOrDefault("Volume Name")?.Trim();
-            if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(volume)) continue;
+            string name = cols[0];
+            string volume = cols[1];
+            if (volume.Length == 0) continue;
             if (!volumesByFilter.TryGetValue(name, out var list)) volumesByFilter[name] = list = new List<string>();
             if (!list.Contains(volume, StringComparer.OrdinalIgnoreCase)) list.Add(volume);
         }
 
         var results = new List<MinifilterEntry>();
-        foreach (var row in filterRows)
+        foreach (var cols in filterRows)
         {
-            string name = row.GetValueOrDefault("Filter Name")?.Trim() ?? string.Empty;
-            if (name.Length == 0) continue;
-
-            string altitudeText = row.GetValueOrDefault("Altitude")?.Trim() ?? string.Empty;
-            double? altitude = double.TryParse(altitudeText, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var a) ? a : null;
-            int instanceCount = int.TryParse(row.GetValueOrDefault("Num Instances")?.Trim(), out var n) ? n : 0;
-            string frame = row.GetValueOrDefault("Frame")?.Trim() ?? string.Empty;
+            string name = cols[0];
+            string altitudeText = cols[2];
+            double? altitude = double.TryParse(altitudeText, NumberStyles.Float, CultureInfo.InvariantCulture, out var a) ? a : null;
+            int instanceCount = int.Parse(cols[1], NumberStyles.Integer, CultureInfo.InvariantCulture);
+            string frame = cols.Length > 3 ? cols[3] : string.Empty;
 
             volumesByFilter.TryGetValue(name, out var volumes);
 
@@ -68,6 +80,13 @@ public static class MinifilterService
         return results.OrderByDescending(r => r.AltitudeValue ?? 0).ToList();
     });
 
+    private static string DescribeFailure(string output, int? exitCode)
+    {
+        if (exitCode is null) return "timed out";
+        string first = output.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? string.Empty;
+        return first.Length > 0 ? first : $"exit code {exitCode}, no output";
+    }
+
     /// <summary>#494: Microsoft's documented minifilter altitude ranges (see "Load Order Groups and
     /// Altitudes for Minifilter Drivers") - a convention vendors are expected to follow when
     /// requesting an altitude from Microsoft, not something Windows enforces. Quick flag, not a
@@ -82,68 +101,9 @@ public static class MinifilterService
         return MinifilterCategory.Other;
     }
 
-    /// <summary>Locates column boundaries from the "----" separator row fltmc prints under its
-    /// header, then slices every subsequent data row at those same character positions - more
-    /// robust than splitting on whitespace, since a filter name can itself contain a space.</summary>
-    private static List<Dictionary<string, string>> ParseTable(string output)
-    {
-        var results = new List<Dictionary<string, string>>();
-        var lines = output.Replace("\r\n", "\n").Split('\n');
-
-        int sepIndex = -1;
-        for (int i = 1; i < lines.Length; i++)
-        {
-            string t = lines[i].TrimStart();
-            if (t.Length > 0 && t.All(c => c == '-' || c == ' ')) { sepIndex = i; break; }
-        }
-        if (sepIndex < 1) return results;
-
-        string headerLine = lines[sepIndex - 1];
-        string sepLine = lines[sepIndex];
-
-        // Column spans: each contiguous run of '-' in the separator line marks one column.
-        var spans = new List<(int Start, int End)>();
-        int pos = 0;
-        while (pos < sepLine.Length)
-        {
-            if (sepLine[pos] != '-') { pos++; continue; }
-            int start = pos;
-            while (pos < sepLine.Length && sepLine[pos] == '-') pos++;
-            spans.Add((start, pos));
-        }
-        if (spans.Count == 0) return results;
-
-        var headers = spans.Select(s => Slice(headerLine, s.Start, s.End).Trim()).ToList();
-
-        for (int i = sepIndex + 1; i < lines.Length; i++)
-        {
-            string line = lines[i];
-            if (line.Trim().Length == 0) continue;
-            if (line.TrimStart().StartsWith('-')) continue; // a later section's own separator row
-
-            var row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            for (int c = 0; c < spans.Count; c++)
-            {
-                // The last column's data can run past its header's own span width - extend it to
-                // the end of the line so a long instance name isn't truncated.
-                int end = c == spans.Count - 1 ? line.Length : spans[c].End;
-                row[headers[c]] = Slice(line, spans[c].Start, end).Trim();
-            }
-            if (row.Values.Any(v => v.Length > 0)) results.Add(row);
-        }
-        return results;
-    }
-
-    private static string Slice(string s, int start, int end)
-    {
-        if (start >= s.Length) return string.Empty;
-        end = Math.Min(end, s.Length);
-        return end > start ? s[start..end] : string.Empty;
-    }
-
     /// <summary>#1084: the shared <see cref="ToolRunner"/> owns the run/capture/kill-on-timeout
-    /// mechanism; this wrapper keeps the service's historical output-only shape (empty string
-    /// for a timed-out run).</summary>
-    private static async Task<string> RunCapturedAsync(string exe, string args, int timeoutMs = 20000)
-        => (await ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: string.Empty)).Output;
+    /// mechanism; this wrapper keeps the service's default timeout (empty output and a null exit
+    /// code for a timed-out run).</summary>
+    private static Task<(string Output, int? ExitCode)> RunCapturedAsync(string exe, string args, int timeoutMs = 20000)
+        => ToolRunner.RunCapturedAsync(exe, args, timeoutMs, timeoutOutput: string.Empty);
 }

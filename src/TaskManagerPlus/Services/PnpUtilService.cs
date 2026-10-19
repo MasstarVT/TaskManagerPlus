@@ -16,10 +16,26 @@ namespace TaskManagerPlus.Services;
 /// </summary>
 public static class PnpUtilService
 {
-    public static Task<(bool Success, string Message)> RemoveDeviceAsync(string deviceId) => RunAsync("remove-device", deviceId);
-    public static Task<(bool Success, string Message)> EnableDeviceAsync(string deviceId) => RunAsync("enable-device", deviceId);
-    public static Task<(bool Success, string Message)> DisableDeviceAsync(string deviceId) => RunAsync("disable-device", deviceId);
-    public static Task<(bool Success, string Message)> RestartDeviceAsync(string deviceId) => RunAsync("restart-device", deviceId);
+    /// <summary>One pnputil verb's outcome. RestartRequired is set for exit code 3010
+    /// (ERROR_SUCCESS_REBOOT_REQUIRED) or 1641 (reboot initiated) - the change succeeded, Windows
+    /// just needs a restart to finish it.</summary>
+    public readonly record struct PnpUtilResult(bool Success, string Message, bool RestartRequired)
+    {
+        public void Deconstruct(out bool success, out string message) { success = Success; message = Message; }
+
+        /// <summary>" Restart Windows to finish." when RestartRequired, otherwise empty - for
+        /// appending to a caller's own success text.</summary>
+        public string RestartNote => RestartRequired ? " Restart Windows to finish." : string.Empty;
+    }
+
+    private const int ErrorSuccessRebootRequired = 3010;
+    private const int ErrorSuccessRebootInitiated = 1641;
+    private const int ErrorNoMoreItems = 259;
+
+    public static Task<PnpUtilResult> RemoveDeviceAsync(string deviceId) => RunAsync("remove-device", deviceId);
+    public static Task<PnpUtilResult> EnableDeviceAsync(string deviceId) => RunAsync("enable-device", deviceId);
+    public static Task<PnpUtilResult> DisableDeviceAsync(string deviceId) => RunAsync("disable-device", deviceId);
+    public static Task<PnpUtilResult> RestartDeviceAsync(string deviceId) => RunAsync("restart-device", deviceId);
 
     /// <summary>#479: lists every package currently in the driver store (oemNN.inf) - the
     /// authoritative "what's actually installed" list DriverStoreService parses, distinct from
@@ -48,7 +64,7 @@ public static class PnpUtilService
     /// refuses to even offer deletion for one (see #484's in-use mapping), so /force here is only
     /// ever reached for a package pnputil considers "in use" for some other reason (e.g. still
     /// referenced by a non-present/ghost device's driver node).</summary>
-    public static Task<(bool Success, string Message)> DeleteDriverAsync(string publishedName, bool force) =>
+    public static Task<PnpUtilResult> DeleteDriverAsync(string publishedName, bool force) =>
         RunArgsAsync($"/delete-driver \"{publishedName}\" /uninstall{(force ? " /force" : string.Empty)}");
 
     /// <summary>#482: backs up every third-party driver package to a user-chosen folder. pnputil
@@ -56,7 +72,7 @@ public static class PnpUtilService
     /// progress to parse - callers show an indeterminate busy state instead. A long 5-minute
     /// timeout, since exporting a large driver store to a slow (network/USB) destination can
     /// genuinely take a while.</summary>
-    public static Task<(bool Success, string Message)> ExportDriversAsync(string destinationFolder) =>
+    public static Task<PnpUtilResult> ExportDriversAsync(string destinationFolder) =>
         RunArgsAsync($"/export-driver * \"{EscapeTrailingBackslashes(destinationFolder)}\"", timeoutMs: 300000);
 
     /// <summary>A drive root from the folder picker ("E:\") would otherwise end in `\"`, which the
@@ -70,25 +86,31 @@ public static class PnpUtilService
     }
 
     /// <summary>#485: installs every .inf found under sourceFolder (recursively, via /subdirs).
-    /// Same long-timeout rationale as ExportDriversAsync above.</summary>
-    public static Task<(bool Success, string Message)> AddDriverAsync(string sourceFolder) =>
-        RunArgsAsync($"/add-driver \"{Path.Combine(sourceFolder, "*.inf")}\" /subdirs /install", timeoutMs: 300000);
+    /// Same long-timeout rationale as ExportDriversAsync above. Exit code 259 (ERROR_NO_MORE_ITEMS)
+    /// here means the packages were staged but no device needed them - not a failure.</summary>
+    public static Task<PnpUtilResult> AddDriverAsync(string sourceFolder) =>
+        RunArgsAsync($"/add-driver \"{Path.Combine(sourceFolder, "*.inf")}\" /subdirs /install",
+            timeoutMs: 300000, alsoSuccess: ErrorNoMoreItems);
 
-    private static async Task<(bool Success, string Message)> RunAsync(string verb, string deviceId) =>
+    private static async Task<PnpUtilResult> RunAsync(string verb, string deviceId) =>
         await RunArgsAsync($"/{verb} \"{deviceId}\"");
 
-    private static async Task<(bool Success, string Message)> RunArgsAsync(string args, int timeoutMs = 30000)
+    private static async Task<PnpUtilResult> RunArgsAsync(string args, int timeoutMs = 30000, int? alsoSuccess = null)
     {
         try
         {
             var (output, exitCode) = await RunCapturedAsync("pnputil.exe", args, timeoutMs);
             string trimmed = output.Trim();
-            bool success = exitCode == 0;
-            return (success, trimmed.Length > 0 ? trimmed : (success ? "Done." : $"pnputil exited with code {exitCode}."));
+            bool restart = exitCode is ErrorSuccessRebootRequired or ErrorSuccessRebootInitiated;
+            bool success = exitCode == 0 || restart || (alsoSuccess is not null && exitCode == alsoSuccess);
+            string fallback = exitCode is null
+                ? "pnputil timed out."
+                : success ? "Done." : $"pnputil exited with code {exitCode}.";
+            return new PnpUtilResult(success, trimmed.Length > 0 ? trimmed : fallback, restart);
         }
         catch (Exception ex)
         {
-            return (false, ex.Message);
+            return new PnpUtilResult(false, ex.Message, false);
         }
     }
 

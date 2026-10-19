@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using Microsoft.Win32;
 using TaskManagerPlus.Models;
@@ -88,19 +87,14 @@ public static class DriverRollbackService
     /// <summary>Opens Device Manager's driver-properties sheet directly on this device - the same
     /// devmgr.dll entry point Device Manager's own "Properties" context-menu item uses internally.
     /// Fire-and-forget, matching MemoryDiagnosticLauncherService's launch-and-return-immediately
-    /// shape for a tool that shows its own UI.</summary>
+    /// shape for a tool that shows its own UI. Started from System32's own rundll32.exe (no
+    /// search-path or association lookup), since the sheet runs elevated.</summary>
     public static (bool Success, string? Error) OpenDeviceProperties(string deviceId)
     {
-        try
-        {
-            string args = $"devmgr.dll,DeviceProperties_RunDLL /MachineName \"\" /DeviceID \"{deviceId}\"";
-            var startInfo = new ProcessStartInfo("rundll32.exe", args) { UseShellExecute = true };
-            using var process = Process.Start(startInfo);
-            return process is not null ? (true, null) : (false, "rundll32.exe didn't start.");
-        }
-        catch (Exception ex)
-        {
-            return (false, ex.Message);
-        }
+        if (deviceId.Contains('"')) return (false, "the device ID contains a quote character.");
+        string args = $"devmgr.dll,DeviceProperties_RunDLL /MachineName \"\" /DeviceID \"{deviceId}\"";
+        return SafeLaunchService.StartSystemTool("rundll32.exe", args)
+            ? (true, null)
+            : (false, "System32\\rundll32.exe didn't start.");
     }
 }

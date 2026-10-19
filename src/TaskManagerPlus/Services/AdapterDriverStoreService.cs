@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 
 namespace TaskManagerPlus.Services;
@@ -45,37 +44,18 @@ public static class AdapterDriverStoreService
     /// specific <see cref="AdapterDriverInfo"/> via <see cref="MarkInstalled"/>.</summary>
     public static async Task<List<StagedDriverPackage>> ReadNetDriverPackagesAsync()
     {
-        var packages = new List<StagedDriverPackage>();
+        // ToolRunner rather than a local Process copy, so the tool is resolved the same way as
+        // every other shell-out. A failed or timed-out run still reads as an empty list.
         string output;
         try
         {
-            var psi = new ProcessStartInfo("pnputil.exe", "/enum-drivers")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = Process.Start(psi);
-            if (proc is null) return packages;
-
-            var outputTask = proc.StandardOutput.ReadToEndAsync();
-            var errorTask = proc.StandardError.ReadToEndAsync();
-            using var cts = new CancellationTokenSource(TimeoutMs);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-                return packages;
-            }
-            output = (await outputTask) + (await errorTask);
+            var (captured, exitCode) = await ToolRunner.RunCapturedAsync("pnputil.exe", "/enum-drivers", TimeoutMs);
+            if (exitCode is null) return new List<StagedDriverPackage>();
+            output = captured;
         }
         catch
         {
-            return packages;
+            return new List<StagedDriverPackage>();
         }
 
         return Parse(output);
@@ -124,8 +104,9 @@ public static class AdapterDriverStoreService
             }
         }
 
+        // Parse already kept only Net-class GUID rows (pnputil prints their Class Name as "Net"),
+        // so every staged package here is a candidate - not just the installed one.
         return copy
-            .Where(p => p.ClassName.Contains("Network", StringComparison.OrdinalIgnoreCase) || p.IsCurrentlyInstalled)
             .OrderByDescending(p => p.IsCurrentlyInstalled)
             .ThenByDescending(p => p.DriverDate)
             .ToList();

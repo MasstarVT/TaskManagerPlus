@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Windows;
@@ -107,10 +106,16 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
     private bool? _driverSignatureEnforcementDisabled;
     public bool? DriverSignatureEnforcementDisabled { get => _driverSignatureEnforcementDisabled; private set => SetProperty(ref _driverSignatureEnforcementDisabled, value); }
 
-    private int _codeIntegrityBlockedEventCount;
-    public int CodeIntegrityBlockedEventCount { get => _codeIntegrityBlockedEventCount; private set => SetProperty(ref _codeIntegrityBlockedEventCount, value); }
+    // Null = the CodeIntegrity log couldn't be read (Unknown, not 0).
+    private int? _codeIntegrityBlockedEventCount;
+    public int? CodeIntegrityBlockedEventCount { get => _codeIntegrityBlockedEventCount; private set => SetProperty(ref _codeIntegrityBlockedEventCount, value); }
 
-    private string _lastCodeIntegrityBlockedEventText = "None in the last 30 days";
+    /// <summary>The count as shown: "200+" when the read stopped at its cap, "Unknown" when the
+    /// log couldn't be read.</summary>
+    private string _codeIntegrityBlockedEventCountText = "Unknown";
+    public string CodeIntegrityBlockedEventCountText { get => _codeIntegrityBlockedEventCountText; private set => SetProperty(ref _codeIntegrityBlockedEventCountText, value); }
+
+    private string _lastCodeIntegrityBlockedEventText = string.Empty;
     public string LastCodeIntegrityBlockedEventText { get => _lastCodeIntegrityBlockedEventText; private set => SetProperty(ref _lastCodeIntegrityBlockedEventText, value); }
 
     public ObservableCollection<string> CodeIntegrityRecentMessages { get; } = new();
@@ -210,10 +215,9 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
 
     public AsyncRelayCommand ScanKnownProblemDriversCommand { get; }
 
-    /// <summary>Opens a KnownProblemDriverMatch's EvidenceUrl in the default browser - same
-    /// shell-out-via-UseShellExecute convention MainViewModel.OpenUpdateUrlCommand already uses for
-    /// its own "open this URL" button, reused here rather than inventing a Hyperlink/RequestNavigate
-    /// code-behind path for a single button.</summary>
+    /// <summary>Opens a KnownProblemDriverMatch's EvidenceUrl in the user's browser, unelevated,
+    /// through SafeLaunchService.OpenUrl (http/https only - the list file is user-writable, and
+    /// LoadDefinitions already drops any other kind of link). Falls back to the clipboard.</summary>
     public RelayCommand OpenEvidenceLinkCommand { get; }
 
     // ------------------------------------------------------------------------------------------
@@ -375,7 +379,7 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
             {
                 // The non-present set is "every devnode minus the present list", so it needs the
                 // present list first - a Load already in flight picks the toggle up when it lands.
-                if (_presentDeviceNodes.Count > 0) _ = LoadNonPresentDevicesAsync();
+                if (_presentDeviceNodes.Count > 0) _ = LoadNonPresentDevicesAsync(refreshPresent: true);
                 else if (!IsLoadingDeviceTree) _ = LoadDeviceTreeAsync();
             }
             else RebuildDeviceTree();
@@ -595,8 +599,16 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         OpenEvidenceLinkCommand = new RelayCommand(param =>
         {
             if (param is not string url || string.IsNullOrWhiteSpace(url)) return;
-            try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
-            catch { /* best-effort - the row still shows the plain URL text either way */ }
+            if (SafeLaunchService.OpenUrl(url)) return;
+            try
+            {
+                Clipboard.SetText(url);
+                KnownProblemDriversStatusText = $"Couldn't open the link in a browser - copied it to the clipboard instead: {url}";
+            }
+            catch
+            {
+                KnownProblemDriversStatusText = $"Couldn't open the link in a browser: {url}";
+            }
         });
 
         LoadMinifiltersCommand = new AsyncRelayCommand(LoadMinifiltersAsync);
@@ -684,8 +696,12 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         NoIntegrityChecksEnabled = posture.NoIntegrityChecksEnabled;
         DriverSignatureEnforcementDisabled = posture.DriverSignatureEnforcementDisabled;
         CodeIntegrityBlockedEventCount = posture.BlockedImageEventCount;
-        LastCodeIntegrityBlockedEventText = posture.LastBlockedImageEventTime is { } t
-            ? $"Last: {t:g}" : "None in the last 30 days";
+        CodeIntegrityBlockedEventCountText = posture.BlockedImageEventCount is not { } n
+            ? "Unknown"
+            : posture.BlockedImageEventCountCapped ? $"{n}+" : n.ToString();
+        LastCodeIntegrityBlockedEventText = posture.BlockedImageEventCount is null
+            ? "Couldn't read the CodeIntegrity event log"
+            : posture.LastBlockedImageEventTime is { } t ? $"Last: {t:g}" : "None in the last 30 days";
 
         CodeIntegrityRecentMessages.Clear();
         foreach (var m in posture.RecentBlockedImageMessages) CodeIntegrityRecentMessages.Add(m);
@@ -1140,6 +1156,11 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
+            // Don't leave a previous scan's list and AV verdict standing under a failed re-read.
+            Minifilters.Clear();
+            AvMinifilterBootVolumeCount = 0;
+            AvMinifilterFlagText = string.Empty;
+            IsAvMinifilterFlagConcerning = false;
             MinifiltersStatusText = $"Couldn't read the minifilter stack: {ex.Message}";
         }
         finally
@@ -1281,8 +1302,12 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>#471: the one-time (per Load) SetupDiGetClassDevs sweep for non-present devices.</summary>
-    private async Task LoadNonPresentDevicesAsync()
+    /// <summary>#471: the one-time (per Load) SetupDiGetClassDevs sweep for non-present devices.
+    /// The diff needs a current present list: LoadDeviceTreeAsync has just read one, but the toggle
+    /// can be switched on long after the last Load, so that path re-reads it first
+    /// (<paramref name="refreshPresent"/>) - otherwise a device connected since would be listed
+    /// "Not present" and offered for removal.</summary>
+    private async Task LoadNonPresentDevicesAsync(bool refreshPresent = false)
     {
         // Against an empty present list every devnode would be listed "Not present" - and offered
         // for pnputil /remove-device.
@@ -1295,6 +1320,16 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         IsLoadingDeviceTree = true;
         try
         {
+            if (refreshPresent)
+            {
+                var presentNow = await PnpDeviceTreeService.ListPresentAsync();
+                if (presentNow.Count == 0)
+                {
+                    DeviceTreeStatusText = "Non-present devices weren't listed: couldn't re-read the present-device list.";
+                    return;
+                }
+                _presentDeviceNodes = presentNow;
+            }
             _nonPresentDeviceNodes = await PnpDeviceTreeService.ListNonPresentAsync(_presentDeviceNodes.Select(n => n.DeviceId));
             RebuildDeviceTree();
         }
@@ -1351,13 +1386,13 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         DeviceActionStatusText = $"{(enable ? "Enabling" : "Disabling")} \"{node.Name}\"...";
         try
         {
-            var (success, message) = enable
+            var result = enable
                 ? await PnpUtilService.EnableDeviceAsync(node.DeviceId)
                 : await PnpUtilService.DisableDeviceAsync(node.DeviceId);
-            DeviceActionStatusText = success
-                ? $"{(enable ? "Enabled" : "Disabled")} \"{node.Name}\"."
-                : $"Couldn't {(enable ? "enable" : "disable")} \"{node.Name}\": {message}";
-            if (success) await LoadDeviceTreeAsync();
+            DeviceActionStatusText = result.Success
+                ? $"{(enable ? "Enabled" : "Disabled")} \"{node.Name}\".{result.RestartNote}"
+                : $"Couldn't {(enable ? "enable" : "disable")} \"{node.Name}\": {result.Message}";
+            if (result.Success) await LoadDeviceTreeAsync();
         }
         finally
         {
@@ -1392,9 +1427,11 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         DeviceActionStatusText = $"Restarting \"{node.Name}\"...";
         try
         {
-            var (success, message) = await PnpUtilService.RestartDeviceAsync(node.DeviceId);
-            DeviceActionStatusText = success ? $"Restarted \"{node.Name}\"." : $"Couldn't restart \"{node.Name}\": {message}";
-            if (success) await LoadDeviceTreeAsync();
+            var result = await PnpUtilService.RestartDeviceAsync(node.DeviceId);
+            DeviceActionStatusText = result.Success
+                ? $"Restarted \"{node.Name}\".{result.RestartNote}"
+                : $"Couldn't restart \"{node.Name}\": {result.Message}";
+            if (result.Success) await LoadDeviceTreeAsync();
         }
         finally
         {
@@ -1437,18 +1474,35 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         if (confirm != MessageBoxResult.Yes) return;
 
         IsPerformingDeviceAction = true;
-        int done = 0, failed = 0;
+        int done = 0, failed = 0, nowPresent = 0;
+        bool restartNeeded = false;
         try
         {
+            // The non-present list may be older than the device that was plugged in since - re-read
+            // the present set right before removing, and never remove a device that is in it. An
+            // empty read is a failed WMI query, not "nothing present", so nothing is removed.
+            DeviceActionStatusText = "Checking which devices are present now...";
+            var presentNow = await PnpDeviceTreeService.ListPresentAsync();
+            if (presentNow.Count == 0)
+            {
+                DeviceActionStatusText = "Nothing was removed: couldn't re-read the present-device list to confirm these devices are still disconnected.";
+                return;
+            }
+            var presentIds = new HashSet<string>(presentNow.Select(n => n.DeviceId), StringComparer.OrdinalIgnoreCase);
+
             foreach (var t in targets)
             {
-                DeviceActionStatusText = $"Removing \"{t.Name}\"... ({done + failed + 1}/{targets.Count})";
-                var (success, _) = await PnpUtilService.RemoveDeviceAsync(t.DeviceId);
-                if (success) done++; else failed++;
+                if (presentIds.Contains(t.DeviceId)) { nowPresent++; continue; }
+                DeviceActionStatusText = $"Removing \"{t.Name}\"... ({done + failed + nowPresent + 1}/{targets.Count})";
+                var result = await PnpUtilService.RemoveDeviceAsync(t.DeviceId);
+                if (result.Success) done++; else failed++;
+                restartNeeded |= result.RestartRequired;
             }
+            string skipped = nowPresent > 0 ? $" {nowPresent} skipped because the device is connected now." : string.Empty;
+            string restart = restartNeeded ? " Restart Windows to finish." : string.Empty;
             DeviceActionStatusText = failed == 0
-                ? $"Removed {done} device entr{(done == 1 ? "y" : "ies")}."
-                : $"Removed {done}, {failed} failed - click Load above to see what's left.";
+                ? $"Removed {done} device entr{(done == 1 ? "y" : "ies")}.{skipped}{restart}"
+                : $"Removed {done}, {failed} failed - click Load above to see what's left.{skipped}{restart}";
             await LoadDeviceTreeAsync();
         }
         finally
@@ -1694,13 +1748,15 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
 
         IsPerformingDriverStoreAction = true;
         int done = 0, failed = 0;
+        bool restartNeeded = false;
         try
         {
             foreach (var p in deletable)
             {
                 DriverStoreActionStatusText = $"Deleting {p.PublishedName}... ({done + failed + 1}/{deletable.Count})";
-                var (success, message) = await PnpUtilService.DeleteDriverAsync(p.PublishedName, force: false);
-                if (success) { done++; continue; }
+                var result = await PnpUtilService.DeleteDriverAsync(p.PublishedName, force: false);
+                var (success, message) = result;
+                if (success) { done++; restartNeeded |= result.RestartRequired; continue; }
 
                 bool looksInUse = message.Contains("use", StringComparison.OrdinalIgnoreCase) ||
                                    message.Contains("force", StringComparison.OrdinalIgnoreCase);
@@ -1718,13 +1774,15 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
                     MessageBoxImage.Error);
                 if (forceConfirm != MessageBoxResult.Yes) { failed++; continue; }
 
-                var (forceSuccess, _) = await PnpUtilService.DeleteDriverAsync(p.PublishedName, force: true);
-                if (forceSuccess) done++; else failed++;
+                var forceResult = await PnpUtilService.DeleteDriverAsync(p.PublishedName, force: true);
+                if (forceResult.Success) done++; else failed++;
+                restartNeeded |= forceResult.RestartRequired;
             }
 
+            string restart = restartNeeded ? " Restart Windows to finish." : string.Empty;
             DriverStoreActionStatusText = failed == 0
-                ? $"Deleted {done} package(s)."
-                : $"Deleted {done}, {failed} failed.";
+                ? $"Deleted {done} package(s).{restart}"
+                : $"Deleted {done}, {failed} failed.{restart}";
             await LoadDriverStoreAsync();
         }
         finally
@@ -1810,10 +1868,12 @@ public sealed class DevicesDriversViewModel : ObservableObject, IDisposable
         InstallDriverOutputText = string.Empty;
         try
         {
-            var (success, message) = await PnpUtilService.AddDriverAsync(folder);
-            InstallDriverOutputText = message;
-            InstallDriverStatusText = success ? "Finished - see output below." : "pnputil reported a problem - see output below.";
-            if (success) await LoadDriverStoreAsync();
+            var result = await PnpUtilService.AddDriverAsync(folder);
+            InstallDriverOutputText = result.Message;
+            InstallDriverStatusText = result.Success
+                ? $"Finished - see output below.{result.RestartNote}"
+                : "pnputil reported a problem - see output below.";
+            if (result.Success) await LoadDriverStoreAsync();
         }
         catch (Exception ex)
         {

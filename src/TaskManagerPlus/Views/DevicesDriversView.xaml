@@ -190,13 +190,16 @@
                         </StackPanel>
                         <StackPanel>
                             <TextBlock Text="Blocked/unverified images (30d)" FontSize="{StaticResource FontBody}" Foreground="{DynamicResource TextSecondaryBrush}" />
-                            <TextBlock Text="{Binding CodeIntegrityBlockedEventCount}" FontSize="{StaticResource FontSection}" FontWeight="SemiBold">
+                            <TextBlock Text="{Binding CodeIntegrityBlockedEventCountText}" FontSize="{StaticResource FontSection}" FontWeight="SemiBold">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding CodeIntegrityBlockedEventCount, Converter={StaticResource IntEqualsConverter}, ConverterParameter=0}" Value="False">
                                                 <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding CodeIntegrityBlockedEventCount}" Value="{x:Null}">
+                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
@@ -835,6 +838,11 @@
                                                 <DataTrigger Binding="{Binding VerifierStatus.IsActiveThisBoot}" Value="True">
                                                     <Setter Property="Text" Value="Yes" />
                                                     <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+                                                </DataTrigger>
+                                                <!-- verifier /query failed: the active state was never read. -->
+                                                <DataTrigger Binding="{Binding VerifierStatus.QueryError, Converter={StaticResource StringNotEmptyConverter}}" Value="True">
+                                                    <Setter Property="Text" Value="Unknown" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
